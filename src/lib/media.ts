@@ -35,6 +35,23 @@ export async function requestMedia(): Promise<void> {
   return inFlight;
 }
 
+// Probe the browser permissions API and silently call requestMedia if camera +
+// microphone are already granted. Lets a refreshed app skip the gate when the
+// browser still remembers the user's earlier consent.
+export async function tryAutoGrantMedia(): Promise<void> {
+  const perms = (navigator as Navigator & { permissions?: Permissions }).permissions;
+  if (!perms || typeof perms.query !== "function") return;
+  try {
+    const cam = await perms.query({ name: "camera" as PermissionName });
+    const mic = await perms.query({ name: "microphone" as PermissionName });
+    if (cam.state === "granted" && mic.state === "granted") {
+      await requestMedia();
+    }
+  } catch {
+    // Some browsers throw on unsupported permission names; safe to ignore.
+  }
+}
+
 export function stopMedia(): void {
   const state = useAppStore.getState();
   if (state.media.stream) {

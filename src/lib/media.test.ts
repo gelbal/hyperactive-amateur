@@ -1,6 +1,6 @@
 // ABOUTME: media tests — status transitions on grant + denial + idempotent in-flight requests.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { requestMedia, stopMedia, __resetMediaForTesting } from "./media";
+import { requestMedia, stopMedia, tryAutoGrantMedia, __resetMediaForTesting } from "./media";
 import { useAppStore } from "../store/useAppStore";
 
 function makeFakeStream() {
@@ -76,6 +76,84 @@ describe("media", () => {
     });
     await requestMedia();
     expect(calls).toBe(0);
+  });
+
+  describe("tryAutoGrantMedia", () => {
+    let originalPermissions: Permissions | undefined;
+
+    afterEach(() => {
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: originalPermissions,
+      });
+    });
+
+    function stubPermissions(states: Record<string, PermissionState>) {
+      originalPermissions = (navigator as Navigator & { permissions?: Permissions })
+        .permissions;
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: {
+          query: vi.fn(async ({ name }: { name: string }) => ({
+            state: states[name] ?? "prompt",
+          })),
+        },
+      });
+    }
+
+    it("calls requestMedia when both camera and mic are already granted", async () => {
+      const fake = makeFakeStream();
+      stubGetUserMedia(async () => fake);
+      stubPermissions({ camera: "granted", microphone: "granted" });
+      await tryAutoGrantMedia();
+      expect(useAppStore.getState().media.status).toBe("granted");
+      expect(useAppStore.getState().media.stream).toBe(fake);
+    });
+
+    it("does NOT call requestMedia when one is in 'prompt'", async () => {
+      const getUserMedia = vi.fn();
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia },
+      });
+      stubPermissions({ camera: "granted", microphone: "prompt" });
+      await tryAutoGrantMedia();
+      expect(getUserMedia).not.toHaveBeenCalled();
+      expect(useAppStore.getState().media.status).toBe("idle");
+    });
+
+    it("does NOT call requestMedia when one is denied", async () => {
+      const getUserMedia = vi.fn();
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia },
+      });
+      stubPermissions({ camera: "denied", microphone: "granted" });
+      await tryAutoGrantMedia();
+      expect(getUserMedia).not.toHaveBeenCalled();
+    });
+
+    it("silently no-ops when permissions API is missing", async () => {
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: undefined,
+      });
+      await expect(tryAutoGrantMedia()).resolves.toBeUndefined();
+      expect(useAppStore.getState().media.status).toBe("idle");
+    });
+
+    it("swallows errors thrown by query() (e.g. unsupported names)", async () => {
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: {
+          query: vi.fn(async () => {
+            throw new TypeError("name not supported");
+          }),
+        },
+      });
+      await expect(tryAutoGrantMedia()).resolves.toBeUndefined();
+      expect(useAppStore.getState().media.status).toBe("idle");
+    });
   });
 
   it("stopMedia stops all tracks and resets state", async () => {

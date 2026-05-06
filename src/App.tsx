@@ -18,6 +18,7 @@ import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
 import { startAutoSave, stopAutoSave } from "./lib/autoSave";
+import { tryAutoGrantMedia } from "./lib/media";
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
@@ -33,6 +34,8 @@ export function App() {
           startAutoSave();
         }
       });
+    // If the browser already remembers the camera+mic grant, skip the gate.
+    void tryAutoGrantMedia();
     return () => {
       cancelled = true;
       stopAutoSave();

@@ -38,6 +38,10 @@ vi.mock("./lib/autoSave", () => ({
   startAutoSave: vi.fn(),
   stopAutoSave: vi.fn(),
 }));
+vi.mock("./lib/media", () => ({
+  tryAutoGrantMedia: vi.fn().mockResolvedValue(undefined),
+  requestMedia: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { App } from "./App";
 
