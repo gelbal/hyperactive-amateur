@@ -35,6 +35,15 @@ const trims = new Map<number, { startMs: number; endMs: number }>();
 let triggers: TriggerEvent[] = [];
 let storeUnsubscribe: (() => void) | null = null;
 let initialized = false;
+let activeCanvas: HTMLCanvasElement | null = null;
+
+export function setActiveCanvas(canvas: HTMLCanvasElement | null): void {
+  activeCanvas = canvas;
+}
+
+export function getActiveCanvas(): HTMLCanvasElement | null {
+  return activeCanvas;
+}
 
 function ensureHost(): HTMLDivElement {
   if (host) return host;

@@ -2,7 +2,7 @@
 // ABOUTME: Each rAF frame asks the videoEngine for the active clip's frame.
 import { useEffect, useRef } from "react";
 import * as Tone from "tone";
-import { drawCurrentFrame, initVideoEngine } from "../lib/videoEngine";
+import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 
 const SIZE = 480;
 
@@ -11,6 +11,11 @@ export function Viewport() {
 
   useEffect(() => {
     initVideoEngine();
+  }, []);
+
+  useEffect(() => {
+    setActiveCanvas(canvasRef.current);
+    return () => setActiveCanvas(null);
   }, []);
 
   useEffect(() => {

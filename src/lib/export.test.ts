@@ -1,16 +1,22 @@
-// ABOUTME: buildExportStream tests — mocks canvas.captureStream + audio destination tap.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+// ABOUTME: export tests — buildExportStream + exportSong with a fake MediaRecorder.
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const destinationConnect = vi.fn();
 const destinationDisconnect = vi.fn();
+const transport = {
+  start: vi.fn(),
+  stop: vi.fn(),
+  position: 0,
+};
 vi.mock("tone", () => ({
   getDestination: vi.fn(() => ({
     connect: destinationConnect,
     disconnect: destinationDisconnect,
   })),
+  getTransport: vi.fn(() => transport),
 }));
 
-import { buildExportStream } from "./export";
+import { buildExportStream, exportSong, defaultExportFilename } from "./export";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -56,5 +62,68 @@ describe("buildExportStream", () => {
     const { cleanup } = buildExportStream(canvas, ctx);
     cleanup();
     expect(destinationDisconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("exportSong", () => {
+  let originalRecorder: typeof MediaRecorder | undefined;
+
+  class FakeMediaRecorder {
+    static isTypeSupported = vi.fn(() => true);
+    state: "inactive" | "recording" = "inactive";
+    ondataavailable: ((e: BlobEvent) => void) | null = null;
+    onstop: (() => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    constructor(_stream: MediaStream, _opts: MediaRecorderOptions) {}
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      queueMicrotask(() => {
+        this.ondataavailable?.({
+          data: new Blob([new Uint8Array([9, 8, 7])], { type: "video/webm" }),
+        } as BlobEvent);
+        this.onstop?.();
+      });
+    }
+  }
+
+  beforeEach(() => {
+    originalRecorder = (globalThis as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
+    transport.start.mockClear();
+    transport.stop.mockClear();
+    transport.position = 0;
+  });
+
+  afterEach(() => {
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+  });
+
+  it("resolves with a Blob and reports progress", async () => {
+    const canvas = makeCanvas();
+    const ctx = makeAudioContext();
+    const onProgress = vi.fn();
+    const blob = await exportSong(canvas, ctx, { bars: 1, bpm: 240, onProgress });
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBeGreaterThan(0);
+    expect(onProgress).toHaveBeenCalled();
+    // Always called with 1 at the end.
+    expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+  });
+
+  it("starts and stops the Transport", async () => {
+    const canvas = makeCanvas();
+    const ctx = makeAudioContext();
+    await exportSong(canvas, ctx, { bars: 1, bpm: 240 });
+    expect(transport.start).toHaveBeenCalled();
+    expect(transport.stop).toHaveBeenCalled();
+  });
+});
+
+describe("defaultExportFilename", () => {
+  it("matches the hyperpad-YYYYMMDD-HHmm.webm shape", () => {
+    expect(defaultExportFilename()).toMatch(/^hyperpad-\d{8}-\d{4}\.webm$/);
   });
 });

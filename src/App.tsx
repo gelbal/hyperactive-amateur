@@ -5,6 +5,7 @@ import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
+import { ExportButton } from "./components/ExportButton";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -41,6 +42,7 @@ export function App() {
         <h1 className="text-2xl font-bold">Hyperpad</h1>
         <PlayButton />
         <BpmInput />
+        <ExportButton />
         <CameraPreview />
       </header>
       <main className="flex flex-col items-center gap-6 py-6">
