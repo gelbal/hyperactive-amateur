@@ -119,4 +119,4 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 ## Smoke test
 
-- [ ] **v1.1-15** — Manual end-to-end smoke walkthrough
+- [ ] **v1.1-15** — Manual end-to-end smoke walkthrough *(needs hands-on browser session)*
