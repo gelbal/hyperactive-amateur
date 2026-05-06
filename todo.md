@@ -89,7 +89,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 - [x] **v1.1-1** — `showVideo: boolean` on Track; store action; persistence schema v2 + migration
 - [x] **v1.1-2** — Gate `videoEngine.trigger` in `triggerTrack` on `track.showVideo`
-- [ ] **v1.1-3** — Eye / EyeOff toggle button on each TrackRow
+- [x] **v1.1-3** — Eye / EyeOff toggle button on each TrackRow
 
 ## User-controlled visual cut subdivision (§ 3.2)
 

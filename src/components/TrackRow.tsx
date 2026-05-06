@@ -1,7 +1,7 @@
 // ABOUTME: TrackRow — one row of the sequencer: clip preview/record + tag picker + step toggles.
 // ABOUTME: Owns the per-track record flow; thumbnails enable re-record on hover.
 import { useState } from "react";
-import { Mic } from "lucide-react";
+import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
@@ -111,6 +111,7 @@ export function TrackRow({ trackId }: TrackRowProps) {
           </button>
         )}
       </div>
+      <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-32" />}
       <div className="grid grid-cols-16 gap-1 flex-1">
         {Array.from({ length: STEP_COUNT }, (_, i) => (
@@ -119,6 +120,30 @@ export function TrackRow({ trackId }: TrackRowProps) {
       </div>
       {error && <span className="text-xs text-red-400">{error}</span>}
     </div>
+  );
+}
+
+interface ShowVideoToggleProps {
+  trackId: number;
+}
+
+function ShowVideoToggle({ trackId }: ShowVideoToggleProps) {
+  const showVideo = useAppStore((s) => s.project.tracks[trackId].showVideo);
+  const label = showVideo ? "Show video on cut" : "Audio only — no video cut";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-show-video={showVideo}
+      onClick={() => useAppStore.getState().actions.setTrackShowVideo(trackId, !showVideo)}
+      className={
+        "w-7 h-7 rounded flex items-center justify-center transition-colors " +
+        (showVideo ? "text-orange-500 hover:text-orange-400" : "text-zinc-500 hover:text-zinc-300")
+      }
+    >
+      {showVideo ? <Eye size={16} /> : <EyeOff size={16} />}
+    </button>
   );
 }
 

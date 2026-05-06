@@ -120,4 +120,19 @@ describe("TrackRow", () => {
       expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
     });
   });
+
+  describe("show-video toggle", () => {
+    it("renders the Show-video state by default", () => {
+      render(<TrackRow trackId={0} />);
+      const toggle = screen.getByLabelText("Show video on cut");
+      expect(toggle).toHaveAttribute("data-show-video", "true");
+    });
+
+    it("clicking the toggle flips showVideo and updates label", () => {
+      render(<TrackRow trackId={2} />);
+      fireEvent.click(screen.getByLabelText("Show video on cut"));
+      expect(useAppStore.getState().project.tracks[2].showVideo).toBe(false);
+      expect(screen.getByLabelText(/Audio only/)).toHaveAttribute("data-show-video", "false");
+    });
+  });
 });
