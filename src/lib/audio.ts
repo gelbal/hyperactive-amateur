@@ -99,7 +99,7 @@ export function triggerTrack(trackId: number, when: number): void {
     } catch {
       // Player can reject restart-too-soon at the same time slot; safe to swallow.
     }
-    videoEngine.trigger(trackId, when);
+    if (track.showVideo) videoEngine.trigger(trackId, when);
     useAppStore.getState().actions.markTriggered(trackId);
     return;
   }

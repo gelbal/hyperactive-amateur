@@ -9,7 +9,14 @@ const transportMock = {
   clear: vi.fn(),
   scheduleRepeat: vi.fn<(cb: RepeatCb, interval: string) => number>(() => 1),
   bpm: { value: 90 },
+  swing: 0,
+  swingSubdivision: "16n",
 };
+
+const videoEngineTrigger = vi.fn();
+vi.mock("./videoEngine", () => ({
+  trigger: (...args: unknown[]) => videoEngineTrigger(...args),
+}));
 
 const drawMock = { schedule: vi.fn((fn: () => void) => fn()) };
 
@@ -75,6 +82,7 @@ describe("audio module", () => {
     drawMock.schedule.mockClear();
     synthInstances.length = 0;
     playerInstances.length = 0;
+    videoEngineTrigger.mockClear();
     (Tone.start as ReturnType<typeof vi.fn>).mockClear();
   });
 
@@ -196,6 +204,27 @@ describe("audio module", () => {
       const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
       callback?.(1);
       expect(playerInstances[0].start).toHaveBeenCalledWith(1, 0.2, 0.6);
+    });
+
+    it("fires videoEngine.trigger when track.showVideo is true (default)", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      useAppStore.getState().actions.toggleStep(0, 0);
+      const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+      callback?.(0.1);
+      expect(videoEngineTrigger).toHaveBeenCalledWith(0, 0.1);
+    });
+
+    it("does NOT fire videoEngine.trigger when track.showVideo is false", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      useAppStore.getState().actions.toggleStep(0, 0);
+      useAppStore.getState().actions.setTrackShowVideo(0, false);
+      const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+      callback?.(0.1);
+      expect(videoEngineTrigger).not.toHaveBeenCalled();
+      // Audio still fires.
+      expect(playerInstances[0].start).toHaveBeenCalled();
     });
 
     it("falls back to synth on tracks without a clip", () => {
