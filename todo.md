@@ -48,7 +48,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 ## Phase 8 · Persistence
 
-- [ ] **Step 24** — `persistence.ts` save/load/clear via `idb-keyval` + temporary Save/Load buttons
+- [x] **Step 24** — `persistence.ts` save/load/clear via `idb-keyval` + temporary Save/Load buttons
 - [ ] **Step 25** — Debounced auto-save (500ms), rehydrate on mount, decode blobs back to `AudioBuffer`
 
 ## Phase 9 · Export
