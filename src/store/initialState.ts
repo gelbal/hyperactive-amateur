@@ -45,5 +45,8 @@ export function createInitialState(): AppState {
       status: "idle",
       error: null,
     },
+    session: {
+      manuallyToggledShowVideo: [],
+    },
   };
 }

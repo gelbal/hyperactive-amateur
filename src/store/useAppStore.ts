@@ -23,7 +23,11 @@ export interface AppActions {
   setTrackClip: (trackId: number, clip: Clip) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (trackId: number, tag: Tag | null) => void;
-  setTrackShowVideo: (trackId: number, showVideo: boolean) => void;
+  setTrackShowVideo: (
+    trackId: number,
+    showVideo: boolean,
+    source?: "user" | "system",
+  ) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
@@ -144,15 +148,20 @@ export const useAppStore = create<AppStore>((set) => ({
         },
       })),
 
-    setTrackShowVideo: (trackId, showVideo) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId ? { ...track, showVideo } : track,
-          ),
-        },
-      })),
+    setTrackShowVideo: (trackId, showVideo, source = "user") =>
+      set((state) => {
+        const next = state.project.tracks.map((track) =>
+          track.id === trackId ? { ...track, showVideo } : track,
+        );
+        const session =
+          source === "user" && !state.session.manuallyToggledShowVideo.includes(trackId)
+            ? {
+                ...state.session,
+                manuallyToggledShowVideo: [...state.session.manuallyToggledShowVideo, trackId],
+              }
+            : state.session;
+        return { project: { ...state.project, tracks: next }, session };
+      }),
 
     setMedia: (next) => set({ media: next }),
 

@@ -6,7 +6,16 @@ import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
 import { autoTrim } from "../lib/autoTrim";
+import { autoTag } from "../lib/aiAutoTag";
 import type { Clip, Tag } from "../types";
+
+const AUTO_TAG_CONFIDENCE_THRESHOLD = 0.6;
+const AUTO_TAG_TOAST_MS = 3000;
+type AutoTagState =
+  | { kind: "idle" }
+  | { kind: "tagging" }
+  | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
+  | { kind: "miss" };
 
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
@@ -56,6 +65,7 @@ export function TrackRow({ trackId }: TrackRowProps) {
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const [error, setError] = useState<string | null>(null);
+  const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
 
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
 
@@ -83,10 +93,35 @@ export function TrackRow({ trackId }: TrackRowProps) {
       };
       actions.setTrackClip(trackId, newClip);
       actions.setRecordingState("idle", null);
+      void runAutoTag(result.audioBuffer);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       actions.setRecordingState("idle", null);
     }
+  };
+
+  const runAutoTag = async (audioBuffer: AudioBuffer) => {
+    setAutoTagState({ kind: "tagging" });
+    const result = await autoTag(audioBuffer);
+    if (!result || result.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
+      setAutoTagState({ kind: "miss" });
+      window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+      return;
+    }
+    const actions = useAppStore.getState().actions;
+    actions.setTrackTag(trackId, result.tag);
+    let hatAudioOnly = false;
+    if (result.tag === "hat") {
+      const manuallyToggled = useAppStore
+        .getState()
+        .session.manuallyToggledShowVideo.includes(trackId);
+      if (!manuallyToggled) {
+        actions.setTrackShowVideo(trackId, false, "system");
+        hatAudioOnly = true;
+      }
+    }
+    setAutoTagState({ kind: "applied", tag: result.tag, hatAudioOnly });
+    window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
   };
 
   return (
@@ -113,6 +148,7 @@ export function TrackRow({ trackId }: TrackRowProps) {
       </div>
       <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-32" />}
+      <AutoTagStatus state={autoTagState} />
       <div className="grid grid-cols-16 gap-1 flex-1">
         {Array.from({ length: STEP_COUNT }, (_, i) => (
           <StepCell key={i} trackId={trackId} stepIndex={i} />
@@ -120,6 +156,27 @@ export function TrackRow({ trackId }: TrackRowProps) {
       </div>
       {error && <span className="text-xs text-red-400">{error}</span>}
     </div>
+  );
+}
+
+function AutoTagStatus({ state }: { state: AutoTagState }) {
+  if (state.kind === "idle") return null;
+  let text = "";
+  let cls = "text-zinc-400";
+  if (state.kind === "tagging") {
+    text = "tagging…";
+    cls = "text-zinc-400 animate-pulse";
+  } else if (state.kind === "applied") {
+    text = state.hatAudioOnly ? `tagged ${state.tag} → audio-only` : `tagged ${state.tag}`;
+    cls = "text-orange-400";
+  } else {
+    text = "couldn't auto-tag — pick one";
+    cls = "text-zinc-500";
+  }
+  return (
+    <span role="status" className={`text-[10px] uppercase tracking-wide ${cls} w-32 truncate`}>
+      {text}
+    </span>
   );
 }
 

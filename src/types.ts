@@ -83,10 +83,17 @@ export interface MediaSlice {
   error: string | null;
 }
 
+export interface SessionSlice {
+  // Track ids whose showVideo has been manually toggled in this session.
+  // Transient — not persisted, cleared on reset and on page load.
+  manuallyToggledShowVideo: number[];
+}
+
 export interface AppState {
   project: ProjectState;
   playback: PlaybackState;
   recording: RecordingSlice;
   ui: UiState;
   media: MediaSlice;
+  session: SessionSlice;
 }

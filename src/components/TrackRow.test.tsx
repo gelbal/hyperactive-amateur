@@ -1,7 +1,11 @@
-// ABOUTME: TrackRow tests — record button visibility, placeholder for non-recordable tracks,
-// ABOUTME: thumbnail-after-clip, re-record clears the clip.
+// ABOUTME: TrackRow tests — record button visibility, thumbnail-after-clip, tags, eye toggle, auto-tag.
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const autoTag = vi.fn();
+vi.mock("../lib/aiAutoTag", () => ({
+  autoTag: (...args: unknown[]) => autoTag(...args),
+}));
 
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +44,7 @@ function makeFakeClip(): Clip {
 describe("TrackRow", () => {
   beforeEach(() => {
     useAppStore.getState().actions.reset();
+    autoTag.mockReset();
   });
 
   it("track 0 shows a record button when no clip is present", () => {
@@ -133,6 +138,19 @@ describe("TrackRow", () => {
       fireEvent.click(screen.getByLabelText("Show video on cut"));
       expect(useAppStore.getState().project.tracks[2].showVideo).toBe(false);
       expect(screen.getByLabelText(/Audio only/)).toHaveAttribute("data-show-video", "false");
+    });
+
+    it("user toggle marks the track as manually-toggled in session", () => {
+      render(<TrackRow trackId={4} />);
+      fireEvent.click(screen.getByLabelText("Show video on cut"));
+      const session = useAppStore.getState().session;
+      expect(session.manuallyToggledShowVideo).toContain(4);
+    });
+
+    it("system toggle does NOT mark the track", () => {
+      useAppStore.getState().actions.setTrackShowVideo(0, false, "system");
+      const session = useAppStore.getState().session;
+      expect(session.manuallyToggledShowVideo).not.toContain(0);
     });
   });
 });
