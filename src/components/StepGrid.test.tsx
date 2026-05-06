@@ -37,4 +37,26 @@ describe("StepGrid", () => {
       expect(screen.getByText(`T${i}`)).toBeInTheDocument();
     }
   });
+
+  it("highlights the current step column while playing", () => {
+    useAppStore.setState((s) => ({
+      playback: { ...s.playback, isPlaying: true, currentStep: 5 },
+    }));
+    render(<StepGrid />);
+    for (let trackId = 0; trackId < 8; trackId++) {
+      const cell = screen.getByLabelText(`track ${trackId + 1} step 6`);
+      expect(cell).toHaveAttribute("data-current", "true");
+    }
+    const otherCell = screen.getByLabelText("track 1 step 1");
+    expect(otherCell).toHaveAttribute("data-current", "false");
+  });
+
+  it("does not highlight when isPlaying is false", () => {
+    useAppStore.setState((s) => ({
+      playback: { ...s.playback, isPlaying: false, currentStep: 5 },
+    }));
+    render(<StepGrid />);
+    const cell = screen.getByLabelText("track 1 step 6");
+    expect(cell).toHaveAttribute("data-current", "false");
+  });
 });

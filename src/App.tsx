@@ -4,11 +4,13 @@ import { useEffect } from "react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { initTransport } from "./lib/audio";
+import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 
 export function App() {
   useEffect(() => {
     initTransport();
   }, []);
+  useSpacebarPlayToggle();
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">

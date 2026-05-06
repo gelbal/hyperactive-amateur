@@ -13,7 +13,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 - [x] **Step 5** — Tone.js bootstrap, Transport ticks 16ths, metronome on every step
 - [x] **Step 6** — Triggers gated on `track.steps[i] === true`, mute respected, per-track pitches
-- [ ] **Step 7** — Play/stop button, spacebar toggle, visual playhead overlay
+- [x] **Step 7** — Play/stop button, spacebar toggle, visual playhead overlay
 - [ ] **Step 8** — `<BpmInput />` updates Transport live, clamping at store level
 
 ## Phase 3 · Recording

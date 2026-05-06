@@ -1,5 +1,5 @@
 // ABOUTME: 8x16 step sequencer grid — clickable cells toggle steps in the store.
-// ABOUTME: Downbeat columns (0, 4, 8, 12) get a slightly lighter background.
+// ABOUTME: Renders a column-highlight playhead while playback is active.
 import { useAppStore } from "../store/useAppStore";
 
 const STEP_COUNT = 16;
@@ -12,6 +12,9 @@ interface StepCellProps {
 
 function StepCell({ trackId, stepIndex }: StepCellProps) {
   const active = useAppStore((s) => s.project.tracks[trackId].steps[stepIndex]);
+  const isCurrent = useAppStore(
+    (s) => s.playback.isPlaying && s.playback.currentStep === stepIndex,
+  );
   const isDownbeat = stepIndex % 4 === 0;
 
   const onClick = () => {
@@ -26,6 +29,9 @@ function StepCell({ trackId, stepIndex }: StepCellProps) {
   } else {
     className += "bg-zinc-800 hover:bg-zinc-600";
   }
+  if (isCurrent) {
+    className += " ring-2 ring-orange-300";
+  }
 
   return (
     <button
@@ -33,6 +39,7 @@ function StepCell({ trackId, stepIndex }: StepCellProps) {
       aria-label={`track ${trackId + 1} step ${stepIndex + 1}`}
       aria-pressed={active}
       data-active={active}
+      data-current={isCurrent}
       data-track={trackId}
       data-step={stepIndex}
       onClick={onClick}
