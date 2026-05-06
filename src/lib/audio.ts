@@ -70,25 +70,35 @@ function onStep(stepIndex: number, time: number): void {
   const tracks = useAppStore.getState().project.tracks;
   for (const track of tracks) {
     if (!track.steps[stepIndex] || track.muted) continue;
-
-    const player = players.get(track.id);
-    if (player && player.loaded && track.clip) {
-      const offset = track.clip.trimStartMs / 1000;
-      const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
-      try {
-        player.start(time, offset, duration);
-      } catch {
-        // Player can throw if start is called while a previous start hasn't
-        // happened yet at the same time slot. Safe to swallow — the next
-        // trigger schedules anew.
-      }
-      videoEngine.trigger(track.id, time);
-      continue;
-    }
-
-    const synth = metronomeSynths[track.id];
-    if (synth) synth.triggerAttackRelease(TRACK_PITCHES[track.id], "16n", time);
+    triggerTrack(track.id, time);
   }
+}
+
+// Unified trigger entry point used by the Transport, the keyboard hook, and
+// the on-screen pads. Fires audio + video at the same audio-context time.
+export function triggerTrack(trackId: number, when: number): void {
+  const track = useAppStore.getState().project.tracks[trackId];
+  if (!track || track.muted) return;
+
+  const player = players.get(trackId);
+  if (player && player.loaded && track.clip) {
+    const offset = track.clip.trimStartMs / 1000;
+    const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
+    try {
+      player.start(when, offset, duration);
+    } catch {
+      // Player can reject restart-too-soon at the same time slot; safe to swallow.
+    }
+    videoEngine.trigger(trackId, when);
+    return;
+  }
+
+  const synth = metronomeSynths[trackId];
+  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when);
+}
+
+export function nowSeconds(): number {
+  return Tone.now();
 }
 
 // Diff the current track list against the last clip we wired and create / dispose

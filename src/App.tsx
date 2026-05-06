@@ -8,12 +8,14 @@ import { CameraPreview } from "./components/CameraPreview";
 import { Viewport } from "./components/Viewport";
 import { initTransport } from "./lib/audio";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
+import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 
 export function App() {
   useEffect(() => {
     initTransport();
   }, []);
   useSpacebarPlayToggle();
+  useKeyboardTriggers();
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">

@@ -43,7 +43,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 ## Phase 7 · Live mode
 
-- [ ] **Step 22** — `useKeyboardTriggers` hook for `1`–`8` (and Numpad), `triggerTrack` extracted
+- [x] **Step 22** — `useKeyboardTriggers` hook for `1`–`8` (and Numpad), `triggerTrack` extracted
 - [ ] **Step 23** — `<PadGrid />` 4×2 clickable pads with flash-on-trigger feedback
 
 ## Phase 8 · Persistence
