@@ -48,6 +48,9 @@ export interface ProjectState {
   // Visual-only quantization for the hard-cut renderer. Audio scheduling
   // stays at 16ths regardless. See spec-v1.1 § 3.2.
   cutSubdivision: CutSubdivision;
+  // Minimum time the renderer holds the current frame before cutting to a
+  // same-priority-tier event. Higher-tier events bypass this. ms, 0..2000.
+  sameTierHoldMs: number;
   tracks: Track[];
 }
 

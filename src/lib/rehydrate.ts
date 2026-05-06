@@ -59,6 +59,7 @@ export async function rehydrateFromStorage(): Promise<boolean> {
     bpm: persisted.bpm,
     swing: persisted.swing,
     cutSubdivision: persisted.cutSubdivision,
+    sameTierHoldMs: persisted.sameTierHoldMs,
     tracks: tracks.length === 8 ? tracks : empty.project.tracks,
   };
   useAppStore.getState().actions.hydrateProject(project);

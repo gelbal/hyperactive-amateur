@@ -20,6 +20,7 @@ import {
   drawCurrentFrame,
   initVideoEngine,
   pickActiveEvent,
+  pickWithDucking,
   quantizeToBoundary,
   setVideoCutSubdivision,
   resetPlaybackState,
@@ -87,6 +88,60 @@ describe("pickActiveEvent", () => {
       [1, { tag: "kick", muted: false }],
     ]);
     expect(pickActiveEvent(events, contexts)?.trackId).toBe(1);
+  });
+});
+
+describe("pickWithDucking", () => {
+  it("returns the priority winner when no current is set", () => {
+    const candidates: TriggerEvent[] = [{ trackId: 0, startTime: 0 }];
+    expect(pickWithDucking(candidates, null, 0, 400)?.trackId).toBe(0);
+  });
+
+  it("falls back to current when candidates are empty", () => {
+    const current: TriggerEvent = { trackId: 7, startTime: 0 };
+    expect(pickWithDucking([], current, 0.5, 400)).toBe(current);
+  });
+
+  it("ducks: same-tier candidate within hold time keeps current", () => {
+    const current: TriggerEvent = { trackId: 0, startTime: 1.0 };
+    const candidates: TriggerEvent[] = [{ trackId: 1, startTime: 1.2 }];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "vocal", muted: false }],
+      [1, { tag: "vocal", muted: false }],
+    ]);
+    // 200ms elapsed, 400ms hold → keep current.
+    expect(pickWithDucking(candidates, current, 1.2, 400, contexts)?.trackId).toBe(0);
+  });
+
+  it("does NOT duck once hold time has elapsed", () => {
+    const current: TriggerEvent = { trackId: 0, startTime: 1.0 };
+    const candidates: TriggerEvent[] = [{ trackId: 1, startTime: 1.5 }];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "vocal", muted: false }],
+      [1, { tag: "vocal", muted: false }],
+    ]);
+    // 500ms elapsed, 400ms hold → cut.
+    expect(pickWithDucking(candidates, current, 1.5, 400, contexts)?.trackId).toBe(1);
+  });
+
+  it("higher-tier candidate always wins regardless of hold", () => {
+    const current: TriggerEvent = { trackId: 0, startTime: 1.0 };
+    const candidates: TriggerEvent[] = [{ trackId: 1, startTime: 1.05 }];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "kick", muted: false }],
+      [1, { tag: "vocal", muted: false }],
+    ]);
+    expect(pickWithDucking(candidates, current, 1.05, 1000, contexts)?.trackId).toBe(1);
+  });
+
+  it("hold time of 0 always cuts (regression for v1 behavior)", () => {
+    const current: TriggerEvent = { trackId: 0, startTime: 1.0 };
+    const candidates: TriggerEvent[] = [{ trackId: 1, startTime: 1.001 }];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "vocal", muted: false }],
+      [1, { tag: "vocal", muted: false }],
+    ]);
+    expect(pickWithDucking(candidates, current, 1.001, 0, contexts)?.trackId).toBe(1);
   });
 });
 

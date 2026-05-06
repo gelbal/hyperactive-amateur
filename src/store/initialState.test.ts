@@ -4,11 +4,12 @@ import { describe, it, expect } from "vitest";
 import { createInitialState } from "./initialState";
 
 describe("createInitialState", () => {
-  it("defaults bpm to 90, swing to 0, and cutSubdivision to '8n'", () => {
+  it("defaults bpm to 90, swing to 0, cutSubdivision '8n', sameTierHoldMs 400", () => {
     const state = createInitialState();
     expect(state.project.bpm).toBe(90);
     expect(state.project.swing).toBe(0);
     expect(state.project.cutSubdivision).toBe("8n");
+    expect(state.project.sameTierHoldMs).toBe(400);
   });
 
   it("creates exactly 8 tracks", () => {

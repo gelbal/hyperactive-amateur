@@ -103,6 +103,11 @@ export function trigger(trackId: number, when: number): void {
   else setTimeout(start, delaySeconds * 1000);
 }
 
+function tagScore(trackId: number, contexts?: Map<number, TrackContext>): number {
+  const tag = contexts?.get(trackId)?.tag ?? null;
+  return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
+}
+
 // Pure: pick the visually-winning event by tag priority, ties broken by
 // most-recent startTime. Muted tracks are stripped before comparison.
 export function pickActiveEvent(
@@ -113,16 +118,11 @@ export function pickActiveEvent(
   const eligible = events.filter((e) => !contexts?.get(e.trackId)?.muted);
   if (eligible.length === 0) return null;
 
-  const score = (e: TriggerEvent): number => {
-    const tag = contexts?.get(e.trackId)?.tag ?? null;
-    return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
-  };
-
   let winner = eligible[0];
-  let winnerScore = score(winner);
+  let winnerScore = tagScore(winner.trackId, contexts);
   for (let i = 1; i < eligible.length; i++) {
     const candidate = eligible[i];
-    const candidateScore = score(candidate);
+    const candidateScore = tagScore(candidate.trackId, contexts);
     if (
       candidateScore > winnerScore ||
       (candidateScore === winnerScore && candidate.startTime > winner.startTime)
@@ -130,6 +130,32 @@ export function pickActiveEvent(
       winner = candidate;
       winnerScore = candidateScore;
     }
+  }
+  return winner;
+}
+
+// Pure: same as pickActiveEvent but takes the currently-displayed event into
+// account. If a candidate ties on priority tier with `current` AND the elapsed
+// time since `current.startTime` is below the hold, we duck — keep current.
+// Higher-tier candidates always win regardless of hold time.
+export function pickWithDucking(
+  candidates: TriggerEvent[],
+  current: TriggerEvent | null,
+  audioTime: number,
+  sameTierHoldMs: number,
+  contexts?: Map<number, TrackContext>,
+): TriggerEvent | null {
+  const winner = pickActiveEvent(candidates, contexts);
+  if (!winner) return current;
+  if (!current) return winner;
+
+  const winnerTier = tagScore(winner.trackId, contexts);
+  const currentTier = tagScore(current.trackId, contexts);
+  if (winnerTier > currentTier) return winner;
+
+  const elapsedMs = (audioTime - current.startTime) * 1000;
+  if (winnerTier === currentTier && elapsedMs < sameTierHoldMs) {
+    return current;
   }
   return winner;
 }
@@ -171,7 +197,10 @@ function onCutBoundary(boundaryTime: number): void {
   const contexts = readTrackContexts();
   const result = quantizeToBoundary(pendingTriggers, windowStart, windowEnd, contexts);
   pendingTriggers = result.remaining;
-  if (result.winner) currentlyDisplayed = result.winner;
+
+  const holdMs = useAppStore.getState().project.sameTierHoldMs;
+  const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
+  currentlyDisplayed = next;
 }
 
 function subdivisionToSeconds(value: CutSubdivision): number {

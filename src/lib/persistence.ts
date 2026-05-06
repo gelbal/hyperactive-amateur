@@ -29,6 +29,7 @@ export interface PersistedProject {
   bpm: number;
   swing: number;
   cutSubdivision: CutSubdivision;
+  sameTierHoldMs: number;
   tracks: PersistedTrack[];
   updatedAt: number;
 }
@@ -39,6 +40,7 @@ export function snapshot(state: AppState): PersistedProject {
     bpm: state.project.bpm,
     swing: state.project.swing,
     cutSubdivision: state.project.cutSubdivision,
+    sameTierHoldMs: state.project.sameTierHoldMs,
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,
@@ -85,6 +87,8 @@ export function migrate(value: unknown): PersistedProject | null {
     swing: typeof v.swing === "number" ? v.swing : 0,
     // v2: cutSubdivision defaults to '8n' on legacy v1 saves.
     cutSubdivision: isCutSubdivision(v.cutSubdivision) ? v.cutSubdivision : "8n",
+    // v2: sameTierHoldMs defaults to 400 on legacy v1 saves.
+    sameTierHoldMs: typeof v.sameTierHoldMs === "number" ? v.sameTierHoldMs : 400,
     tracks,
     updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : Date.now(),
   };

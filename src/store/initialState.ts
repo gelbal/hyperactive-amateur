@@ -23,6 +23,7 @@ export function createInitialState(): AppState {
       bpm: 90,
       swing: 0,
       cutSubdivision: "8n",
+      sameTierHoldMs: 400,
       tracks: Array.from({ length: TRACK_COUNT }, (_, i) => createEmptyTrack(i)),
     },
     playback: {

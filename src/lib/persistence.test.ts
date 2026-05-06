@@ -91,6 +91,7 @@ describe("persistence", () => {
       expect(migrated?.version).toBe(CURRENT_SCHEMA_VERSION);
       expect(migrated?.bpm).toBe(100);
       expect(migrated?.cutSubdivision).toBe("8n");
+      expect(migrated?.sameTierHoldMs).toBe(400);
       expect(migrated?.tracks).toHaveLength(8);
       for (const track of migrated!.tracks) {
         expect(track.showVideo).toBe(true);

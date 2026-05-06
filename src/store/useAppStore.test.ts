@@ -68,6 +68,17 @@ describe("useAppStore", () => {
     });
   });
 
+  describe("setSameTierHoldMs", () => {
+    it("clamps to [0, 2000]", () => {
+      get().actions.setSameTierHoldMs(-100);
+      expect(get().project.sameTierHoldMs).toBe(0);
+      get().actions.setSameTierHoldMs(5000);
+      expect(get().project.sameTierHoldMs).toBe(2000);
+      get().actions.setSameTierHoldMs(750);
+      expect(get().project.sameTierHoldMs).toBe(750);
+    });
+  });
+
   describe("setTrackVolume", () => {
     it("only mutates the targeted track", () => {
       get().actions.setTrackVolume(3, 0.25);

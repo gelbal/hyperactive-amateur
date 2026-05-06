@@ -14,6 +14,7 @@ export interface AppActions {
   setBpm: (bpm: number) => void;
   setSwing: (swing: number) => void;
   setCutSubdivision: (value: CutSubdivision) => void;
+  setSameTierHoldMs: (ms: number) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -62,6 +63,11 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setCutSubdivision: (value) =>
       set((state) => ({ project: { ...state.project, cutSubdivision: value } })),
+
+    setSameTierHoldMs: (ms) =>
+      set((state) => ({
+        project: { ...state.project, sameTierHoldMs: clamp(ms, 0, 2000) },
+      })),
 
     setTrackVolume: (trackId, volume) =>
       set((state) => ({
