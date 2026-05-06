@@ -39,7 +39,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 - [x] **Step 18** — `videoEngine` module: 1 hidden video for track 0 → drawn to canvas on trigger
 - [x] **Step 19** — All 8 hidden videos, naive most-recent-wins swap
 - [x] **Step 20** — *Critical:* render loop reads `Tone.now()`, scheduled-event queue with GC
-- [ ] **Step 21** — Tag-based priority resolution (vocal > fx > snare > kick > hat > untagged)
+- [x] **Step 21** — Tag-based priority resolution (vocal > fx > snare > kick > hat > untagged)
 
 ## Phase 7 · Live mode
 

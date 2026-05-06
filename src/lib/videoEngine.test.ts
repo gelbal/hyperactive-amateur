@@ -14,6 +14,7 @@ import {
   findActiveEvents,
   pickActiveEvent,
   __resetVideoEngineForTesting,
+  type TrackContext,
   type TriggerEvent,
 } from "./videoEngine";
 import { useAppStore } from "../store/useAppStore";
@@ -61,13 +62,52 @@ describe("videoEngine pure helpers", () => {
     expect(findActiveEvents(events, 1.6).map((e) => e.trackId)).toEqual([]);
   });
 
-  it("pickActiveEvent returns the event with the latest startTime", () => {
+  it("findActiveEvents skips muted tracks", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 },
+      { trackId: 1, startTime: 0, endTime: 1 },
+    ];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "kick", muted: true }],
+      [1, { tag: "snare", muted: false }],
+    ]);
+    const active = findActiveEvents(events, 0.5, contexts);
+    expect(active.map((e) => e.trackId)).toEqual([1]);
+  });
+
+  it("pickActiveEvent without contexts falls back to most-recent startTime", () => {
     const events: TriggerEvent[] = [
       { trackId: 0, startTime: 0, endTime: 1 },
       { trackId: 5, startTime: 0.4, endTime: 1.4 },
     ];
     expect(pickActiveEvent(events)?.trackId).toBe(5);
     expect(pickActiveEvent([])).toBeNull();
+  });
+
+  it("pickActiveEvent prefers vocal over kick over hat", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 }, // vocal
+      { trackId: 1, startTime: 0, endTime: 1 }, // kick
+      { trackId: 2, startTime: 0, endTime: 1 }, // hat
+    ];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: "vocal", muted: false }],
+      [1, { tag: "kick", muted: false }],
+      [2, { tag: "hat", muted: false }],
+    ]);
+    expect(pickActiveEvent(events, contexts)?.trackId).toBe(0);
+  });
+
+  it("pickActiveEvent ties on tag are broken by most-recent startTime", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 },
+      { trackId: 1, startTime: 0.3, endTime: 1.3 },
+    ];
+    const contexts = new Map<number, TrackContext>([
+      [0, { tag: null, muted: false }],
+      [1, { tag: null, muted: false }],
+    ]);
+    expect(pickActiveEvent(events, contexts)?.trackId).toBe(1);
   });
 });
 

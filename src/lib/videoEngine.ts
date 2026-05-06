@@ -1,8 +1,25 @@
 // ABOUTME: videoEngine — hidden <video> elements per track + scheduled-event canvas renderer.
 // ABOUTME: Render decisions read the audio clock (Tone.now seconds) so A/V stays locked.
 import * as Tone from "tone";
-import type { Clip } from "../types";
+import type { Clip, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
+
+export type TagOrUntagged = Tag | "untagged";
+
+// Higher number wins. Vocal/fx are loud-statement clips; hats are filler.
+const TAG_PRIORITY: Record<TagOrUntagged, number> = {
+  vocal: 5,
+  fx: 4,
+  snare: 3,
+  kick: 2,
+  hat: 1,
+  untagged: 0,
+};
+
+export interface TrackContext {
+  tag: Tag | null;
+  muted: boolean;
+}
 
 export interface TriggerEvent {
   trackId: number;
@@ -86,20 +103,56 @@ export function gcEvents(events: TriggerEvent[], audioTime: number): TriggerEven
   return events.filter((e) => e.endTime >= cutoff);
 }
 
-// Pure: which events should be visible at a given audio time.
-export function findActiveEvents(events: TriggerEvent[], audioTime: number): TriggerEvent[] {
-  return events.filter((e) => e.startTime <= audioTime && audioTime <= e.endTime);
+// Pure: which events should be visible at a given audio time. Muted tracks
+// are filtered out as defense in depth.
+export function findActiveEvents(
+  events: TriggerEvent[],
+  audioTime: number,
+  contexts?: Map<number, TrackContext>,
+): TriggerEvent[] {
+  return events.filter((e) => {
+    if (e.startTime > audioTime || audioTime > e.endTime) return false;
+    const ctx = contexts?.get(e.trackId);
+    if (ctx?.muted) return false;
+    return true;
+  });
 }
 
-// Pure: pick the visually-winning event from a list of active events.
-// Default policy is most-recent-startTime; tag-based priority arrives in step 21.
-export function pickActiveEvent(events: TriggerEvent[]): TriggerEvent | null {
+// Pure: pick the visually-winning event by tag priority, ties broken by
+// most-recent startTime.
+export function pickActiveEvent(
+  events: TriggerEvent[],
+  contexts?: Map<number, TrackContext>,
+): TriggerEvent | null {
   if (events.length === 0) return null;
+
+  const score = (e: TriggerEvent): number => {
+    const tag = contexts?.get(e.trackId)?.tag ?? null;
+    return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
+  };
+
   let winner = events[0];
-  for (const e of events) {
-    if (e.startTime > winner.startTime) winner = e;
+  let winnerScore = score(winner);
+  for (let i = 1; i < events.length; i++) {
+    const candidate = events[i];
+    const candidateScore = score(candidate);
+    if (
+      candidateScore > winnerScore ||
+      (candidateScore === winnerScore && candidate.startTime > winner.startTime)
+    ) {
+      winner = candidate;
+      winnerScore = candidateScore;
+    }
   }
   return winner;
+}
+
+function readTrackContexts(): Map<number, TrackContext> {
+  const map = new Map<number, TrackContext>();
+  for (const track of useAppStore.getState().project.tracks) {
+    map.set(track.id, { tag: track.tag, muted: track.muted });
+  }
+  return map;
 }
 
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
@@ -111,8 +164,9 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, w, h);
 
-  const active = findActiveEvents(triggers, audioTime);
-  const winner = pickActiveEvent(active);
+  const contexts = readTrackContexts();
+  const active = findActiveEvents(triggers, audioTime, contexts);
+  const winner = pickActiveEvent(active, contexts);
   if (!winner) return;
   const video = videos.get(winner.trackId);
   if (!video) return;
@@ -145,7 +199,10 @@ export function initVideoEngine(): void {
 
 export function getDebugInfo(): { activeEvents: TriggerEvent[]; audioTime: number } {
   const audioTime = Tone.now();
-  return { activeEvents: findActiveEvents(triggers, audioTime), audioTime };
+  return {
+    activeEvents: findActiveEvents(triggers, audioTime, readTrackContexts()),
+    audioTime,
+  };
 }
 
 export function __resetVideoEngineForTesting(): void {
