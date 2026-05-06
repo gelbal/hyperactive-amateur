@@ -53,7 +53,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 ## Phase 9 · Export
 
-- [ ] **Step 26** — `buildExportStream()` combines `canvas.captureStream(30)` + Tone audio dest
+- [x] **Step 26** — `buildExportStream()` combines `canvas.captureStream(30)` + Tone audio dest
 - [ ] **Step 27** — `exportSong()` + `<ExportDialog />` with bars slider, progress, WebM download
 
 ## Phase 10 · AI + polish

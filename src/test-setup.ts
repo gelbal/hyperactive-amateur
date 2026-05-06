@@ -71,6 +71,33 @@ if (typeof HTMLMediaElement !== "undefined") {
   };
 }
 
+// MediaStream — JSDOM has no implementation. Tiny polyfill that wraps a tracks array.
+if (typeof globalThis.MediaStream === "undefined") {
+  class FakeMediaStream {
+    private _tracks: MediaStreamTrack[];
+    constructor(tracks: MediaStreamTrack[] = []) {
+      this._tracks = [...tracks];
+    }
+    getTracks() {
+      return this._tracks;
+    }
+    getVideoTracks() {
+      return this._tracks.filter((t) => t.kind === "video" || t.kind === undefined);
+    }
+    getAudioTracks() {
+      return this._tracks.filter((t) => t.kind === "audio");
+    }
+    addTrack(track: MediaStreamTrack) {
+      this._tracks.push(track);
+    }
+    removeTrack(track: MediaStreamTrack) {
+      this._tracks = this._tracks.filter((t) => t !== track);
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).MediaStream = FakeMediaStream;
+}
+
 // requestAnimationFrame — JSDOM has it but installing a no-op stop gives us
 // deterministic teardown. Leave the original alone otherwise.
 if (typeof window !== "undefined" && typeof window.requestAnimationFrame !== "function") {
