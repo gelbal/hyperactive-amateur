@@ -104,7 +104,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 ## Auto-tag clips on record (§ 3.4)
 
-- [ ] **v1.1-9** — `wavEncoder.ts` + Gemini SDK install + env-var warning
+- [x] **v1.1-9** — `wavEncoder.ts` + Gemini SDK install + env-var warning
 - [ ] **v1.1-10** — `aiAutoTag.ts` Gemini classification call with confidence
 - [ ] **v1.1-11** — Wire into recording flow; hat → audio-only auto-default; user-toggle bookkeeping
 
