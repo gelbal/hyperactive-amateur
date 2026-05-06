@@ -46,18 +46,22 @@ export function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
-      <header className="flex items-center gap-4 p-4 border-b border-zinc-800">
-        <h1 className="text-2xl font-bold">Amateur Hyperactive</h1>
-        <PlayButton />
-        <span className="text-[10px] text-zinc-500 -ml-2">space</span>
-        <BpmInput />
-        <SwingSlider />
-        <CutSubdivisionSelect />
-        <HoldTimeControl />
-        <SuggestButton />
-        <VariationButtons />
-        <ExportButton />
-        <CameraPreview />
+      <header className="border-b border-zinc-800">
+        <div className="flex items-center gap-4 px-4 pt-3 pb-2">
+          <h1 className="text-2xl font-bold">Amateur Hyperactive</h1>
+          <PlayButton />
+          <span className="text-[10px] text-zinc-500 -ml-2">space</span>
+          <BpmInput />
+          <SwingSlider />
+          <CutSubdivisionSelect />
+          <HoldTimeControl />
+        </div>
+        <div className="flex items-center gap-4 px-4 pt-2 pb-3 border-t border-zinc-900">
+          <SuggestButton />
+          <VariationButtons />
+          <ExportButton />
+          <CameraPreview />
+        </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6">
         {hydrating ? (
