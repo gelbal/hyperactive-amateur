@@ -88,4 +88,36 @@ describe("TrackRow", () => {
     fireEvent.click(screen.getByLabelText("re-record"));
     expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
   });
+
+  describe("tag picker", () => {
+    it("does not render tag chips for an empty track", () => {
+      render(<TrackRow trackId={0} />);
+      expect(screen.queryByLabelText("tag kick for track 1")).not.toBeInTheDocument();
+    });
+
+    it("renders unselected chips after a clip is added", () => {
+      useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
+      render(<TrackRow trackId={0} />);
+      for (const tag of ["kick", "snare", "hat", "vocal", "fx"]) {
+        const chip = screen.getByLabelText(`tag ${tag} for track 1`);
+        expect(chip).toHaveAttribute("data-selected", "false");
+      }
+    });
+
+    it("clicking a chip selects it and updates the store", () => {
+      useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
+      render(<TrackRow trackId={0} />);
+      fireEvent.click(screen.getByLabelText("tag kick for track 1"));
+      expect(useAppStore.getState().project.tracks[0].tag).toBe("kick");
+      expect(screen.getByLabelText("tag kick for track 1")).toHaveAttribute("data-selected", "true");
+    });
+
+    it("clicking the selected chip clears the tag", () => {
+      useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
+      useAppStore.getState().actions.setTrackTag(0, "snare");
+      render(<TrackRow trackId={0} />);
+      fireEvent.click(screen.getByLabelText("tag snare for track 1"));
+      expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
+    });
+  });
 });

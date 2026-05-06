@@ -1,11 +1,13 @@
-// ABOUTME: TrackRow — one row of the sequencer: clip preview/record + 16 step toggles.
-// ABOUTME: Track 0 has a working record button; other tracks show a placeholder until step 13.
+// ABOUTME: TrackRow — one row of the sequencer: clip preview/record + tag picker + step toggles.
+// ABOUTME: Owns the per-track record flow; thumbnails enable re-record on hover.
 import { useState } from "react";
 import { Mic } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
-import type { Clip } from "../types";
+import type { Clip, Tag } from "../types";
+
+const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
 const STEP_COUNT = 16;
 const RECORD_DURATION_MS = 2000;
@@ -47,6 +49,7 @@ interface TrackRowProps {
 
 export function TrackRow({ trackId }: TrackRowProps) {
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
+  const tag = useAppStore((s) => s.project.tracks[trackId].tag);
   const stream = useAppStore((s) => s.media.stream);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
@@ -103,12 +106,50 @@ export function TrackRow({ trackId }: TrackRowProps) {
           </button>
         )}
       </div>
+      {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-32" />}
       <div className="grid grid-cols-16 gap-1 flex-1">
         {Array.from({ length: STEP_COUNT }, (_, i) => (
           <StepCell key={i} trackId={trackId} stepIndex={i} />
         ))}
       </div>
       {error && <span className="text-xs text-red-400">{error}</span>}
+    </div>
+  );
+}
+
+interface TagPickerProps {
+  trackId: number;
+  selected: Tag | null;
+}
+
+function TagPicker({ trackId, selected }: TagPickerProps) {
+  const onClick = (tag: Tag) => {
+    const next = selected === tag ? null : tag;
+    useAppStore.getState().actions.setTrackTag(trackId, next);
+  };
+  return (
+    <div className="flex gap-1 flex-wrap w-32" role="group" aria-label={`tags for track ${trackId + 1}`}>
+      {TAGS.map((tag) => {
+        const isSelected = selected === tag;
+        return (
+          <button
+            key={tag}
+            type="button"
+            aria-label={`tag ${tag} for track ${trackId + 1}`}
+            aria-pressed={isSelected}
+            data-selected={isSelected}
+            onClick={() => onClick(tag)}
+            className={
+              "px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide " +
+              (isSelected
+                ? "bg-orange-500 text-zinc-950"
+                : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600")
+            }
+          >
+            {tag}
+          </button>
+        );
+      })}
     </div>
   );
 }

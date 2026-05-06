@@ -26,7 +26,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 ## Phase 4 · Multi-track sound
 
 - [x] **Step 13** — Recording enabled on all 8 tracks
-- [ ] **Step 14** — Tag picker (kick/snare/hat/vocal/fx) chips per track
+- [x] **Step 14** — Tag picker (kick/snare/hat/vocal/fx) chips per track
 
 ## Phase 5 · Auto-trim
 
