@@ -123,7 +123,7 @@ describe("exportSong", () => {
 });
 
 describe("defaultExportFilename", () => {
-  it("matches the hyperpad-YYYYMMDD-HHmm.webm shape", () => {
-    expect(defaultExportFilename()).toMatch(/^hyperpad-\d{8}-\d{4}\.webm$/);
+  it("matches the amateur-hyperactive-YYYYMMDD-HHmm.webm shape", () => {
+    expect(defaultExportFilename()).toMatch(/^amateur-hyperactive-\d{8}-\d{4}\.webm$/);
   });
 });

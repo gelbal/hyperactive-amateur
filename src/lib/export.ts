@@ -126,7 +126,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 export function defaultExportFilename(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `hyperpad-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(
+  return `amateur-hyperactive-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(
     d.getHours(),
   )}${pad(d.getMinutes())}.webm`;
 }

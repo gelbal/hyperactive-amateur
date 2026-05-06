@@ -1,19 +1,26 @@
 # AI key migration
 
-The Hyperpad v1 build includes an Anthropic API key in the client bundle via
-`VITE_ANTHROPIC_API_KEY`. **This is fine for local development only.** Anything
-publicly deployed will leak the key to anyone who opens DevTools.
+The current Amateur Hyperactive build includes two API keys in the
+client bundle:
+
+- `VITE_ANTHROPIC_API_KEY` for "Suggest a beat" + variations.
+- `VITE_GEMINI_API_KEY` for clip auto-tagging.
+
+**This is fine for local development only.** Anything publicly deployed
+will leak both keys to anyone who opens DevTools.
 
 ## Migration checklist
 
 Before deploying to a real domain:
 
-1. **Remove the key from `.env.local`**, `.env`, and the build environment.
-2. **Add a server proxy.** On Vercel / Cloudflare Pages, drop in an Edge
-   Function at `/api/suggest-pattern`. A reference implementation:
+1. **Remove both keys** from `.env.local`, `.env`, and the build
+   environment.
+2. **Add server proxies** for each provider. On Vercel / Cloudflare
+   Pages, drop in two Edge Functions.
+
+   `api/suggest-pattern.ts` (Anthropic):
 
    ```ts
-   // api/suggest-pattern.ts (Vercel Edge Function)
    export const config = { runtime: "edge" };
 
    export default async function handler(req: Request): Promise<Response> {
@@ -35,23 +42,20 @@ Before deploying to a real domain:
    }
    ```
 
-3. **Point the client at the proxy.** Replace the `Anthropic` SDK call in
-   `src/lib/aiSuggest.ts` with:
+   `api/auto-tag.ts` (Gemini): same shape, forwarding to
+   `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`
+   with the `x-goog-api-key` header.
 
-   ```ts
-   const r = await fetch("/api/suggest-pattern", {
-     method: "POST",
-     headers: { "content-type": "application/json" },
-     body: JSON.stringify(messagesParams),
-   });
-   const response = await r.json();
-   ```
+3. **Point the client at the proxies.** Replace the SDK calls in
+   `src/lib/aiSuggest.ts` and `src/lib/aiAutoTag.ts` with `fetch` to
+   `/api/suggest-pattern` and `/api/auto-tag`. Drop
+   `dangerouslyAllowBrowser` and the env-var reads.
 
-   Drop `dangerouslyAllowBrowser` and the env-var read.
+4. **Verify in DevTools.** The Network panel should show
+   `POST /api/suggest-pattern` and `POST /api/auto-tag` — never
+   `api.anthropic.com` or `generativelanguage.googleapis.com` directly.
 
-4. **Verify in DevTools.** The Network panel for a `Suggest a beat` click
-   should show `POST /api/suggest-pattern`, never `api.anthropic.com`.
+5. **Remove the build-time warnings** (`src/main.tsx`) once the keys
+   are gone.
 
-5. **Remove the build-time warning** (`src/main.tsx`) once the key is gone.
-
-That's it — about 30 lines of code total.
+That's it — about 60 lines of code total across both functions.

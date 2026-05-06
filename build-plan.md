@@ -1,4 +1,4 @@
-# build-plan.md — Hyperpad implementation plan
+# build-plan.md — Amateur Hyperactive implementation plan
 
 Pair this document with `spec.md`. The spec answers *what* we're building; this
 document answers *how* and *in what order*. The end of this document is a
@@ -164,7 +164,7 @@ React Testing Library, and the project's runtime dependencies installed.
 **Builds on:** Nothing.
 
 ```text
-Initialize a new Vite + React + TypeScript project named "hyperpad" in the
+Initialize a new Vite + React + TypeScript project named "amateur-hyperactive" in the
 current directory.
 
 Install runtime dependencies:
@@ -197,16 +197,16 @@ Create the directory structure:
 - src/lib/
 - src/types.ts (empty file with `export {};`)
 
-Create `src/App.tsx` rendering a single header: `<h1>Hyperpad</h1>` styled
+Create `src/App.tsx` rendering a single header: `<h1>Amateur Hyperactive</h1>` styled
 with Tailwind (text-3xl, font-bold, p-8, bg-zinc-950, text-white,
 min-h-screen).
 
 Add `src/App.test.tsx` with one test: `App renders the title`. The test
-should mount `<App />` and assert that the text "Hyperpad" is in the
+should mount `<App />` and assert that the text "Amateur Hyperactive" is in the
 document.
 
 Verify by running `npm test` — the test should pass. Verify by running
-`npm run dev` — the page should display "Hyperpad" on a dark background.
+`npm run dev` — the page should display "Amateur Hyperactive" on a dark background.
 
 Do NOT add any business logic, state, or other components. This step is
 exclusively scaffolding.
@@ -352,7 +352,7 @@ Write `src/components/StepGrid.test.tsx`:
 3. After toggling, that button has the active class
 
 All tests pass. The dev page now shows a clickable 8×16 grid below the
-"Hyperpad" header.
+"Amateur Hyperactive" header.
 
 Do NOT add play/stop, BPM input, or any audio. UI only.
 ```
@@ -1338,7 +1338,7 @@ Create `src/components/ExportDialog.tsx`:
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `hyperpad-${formatDate()}.webm`;
+  a.download = `amateur-hyperactive-${formatDate()}.webm`;
   a.click();
   URL.revokeObjectURL(url);
   ```
@@ -1512,7 +1512,7 @@ all present.
    - On mount, detect browser support: required APIs are MediaRecorder,
      MediaStreamDestination, canvas.captureStream, IndexedDB.
    - On Safari (no MediaRecorder VP9 support): show a banner at the top
-     of the page: "Hyperpad needs Chrome or Edge for v1. Safari support is
+     of the page: "Amateur Hyperactive needs Chrome or Edge for v1. Safari support is
      coming."
    - Banner is dismissible (localStorage).
    - Detect via feature detection, not user-agent sniffing.

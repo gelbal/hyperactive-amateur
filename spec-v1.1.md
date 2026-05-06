@@ -1,4 +1,4 @@
-# spec-v1.1.md — Hyperpad v1.1
+# spec-v1.1.md — Amateur Hyperactive v1.1
 
 > **Builds on:** v1 as specified in `spec.md` and built per `build-plan.md`.
 > Assumes everything in v1 is shipped and working. This document is a delta.
@@ -509,7 +509,7 @@ v2 roadmap):
 ```markdown
 ## Recording for best results
 
-Hyperpad cuts between your clips on every musical hit. If all 8 of
+Amateur Hyperactive cuts between your clips on every musical hit. If all 8 of
 your clips are shot from exactly the same distance with the same
 framing and the same background, those cuts read as a strobe instead of
 a performance. The fix is in your hands, not the app's.
@@ -631,7 +631,7 @@ order.
 ### Step v1.1-1 — Add `showVideo` to Track + persistence migration
 
 ```text
-Modify the Hyperpad codebase to add a `showVideo` field to the Track
+Modify the Amateur Hyperactive codebase to add a `showVideo` field to the Track
 type.
 
 1. In `src/types.ts`, add `showVideo: boolean` to the Track interface.

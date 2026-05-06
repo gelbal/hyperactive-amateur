@@ -1,10 +1,10 @@
-# Hyperpad — implementation checklist
+# Amateur Hyperactive — implementation checklist
 
 Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items as they ship; each step ends with `npm test` green plus, where applicable, manual verification in the browser.
 
 ## Phase 1 · Foundation
 
-- [x] **Step 1** — Vite + React + TS scaffolding, Tailwind, Vitest, deps installed, blank `<h1>Hyperpad</h1>` page
+- [x] **Step 1** — Vite + React + TS scaffolding, Tailwind, Vitest, deps installed, blank `<h1>Amateur Hyperactive</h1>` page
 - [x] **Step 2** — Type definitions in `src/types.ts`, `createInitialState()` factory + tests
 - [x] **Step 3** — Zustand store skeleton with `toggleStep`, `setBpm`, `setSwing`, `setTrackVolume`, `setTrackMuted` + tests
 - [x] **Step 4** — `<StepGrid />` renders 8×16 buttons wired to store, downbeats emphasized

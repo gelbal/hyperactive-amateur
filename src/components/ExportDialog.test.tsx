@@ -11,7 +11,7 @@ vi.mock("../lib/export", () => ({
   exportSong: (canvas: HTMLCanvasElement, ctx: AudioContext, opts: { bars: number; bpm: number; onProgress?: (n: number) => void }) =>
     exportSong(canvas, ctx, opts),
   downloadBlob: (blob: Blob, filename: string) => downloadBlob(blob, filename),
-  defaultExportFilename: () => "hyperpad-test.webm",
+  defaultExportFilename: () => "amateur-hyperactive-test.webm",
 }));
 
 vi.mock("../lib/audio", () => ({

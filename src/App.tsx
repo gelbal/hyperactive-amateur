@@ -1,4 +1,4 @@
-// ABOUTME: Root React component for Hyperpad — top bar (play button) plus the step grid.
+// ABOUTME: Root React component for Amateur Hyperactive — top bar (play button) plus the step grid.
 // ABOUTME: Subsequent build steps will mount the viewport, pads, BPM input, and tags here.
 import { useEffect, useState } from "react";
 import { StepGrid } from "./components/StepGrid";
@@ -47,7 +47,7 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="flex items-center gap-4 p-4 border-b border-zinc-800">
-        <h1 className="text-2xl font-bold">Hyperpad</h1>
+        <h1 className="text-2xl font-bold">Amateur Hyperactive</h1>
         <PlayButton />
         <span className="text-[10px] text-zinc-500 -ml-2">space</span>
         <BpmInput />

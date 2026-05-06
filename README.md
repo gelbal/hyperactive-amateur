@@ -1,30 +1,32 @@
-# Hyperpad
+# Amateur Hyperactive
 
-A web app for making Lasse Gjertsen-style "Hyperactive" videos: record 8 short
-clips of yourself making sounds, arrange them on a 16-step grid, and watch a
-hard-cut hip-hop music video play back in real time. Export to WebM.
+A web app for making Lasse Gjertsen-style "Hyperactive" / "Amateur"
+videos: record 8 short clips of yourself making sounds, arrange them on
+a 16-step grid, and watch a hard-cut hip-hop music video play back in
+real time. Export to WebM.
 
 This repo follows the spec in [`spec.md`](spec.md) and the staged
-implementation plan in [`build-plan.md`](build-plan.md). Progress is tracked
-in [`todo.md`](todo.md).
+implementation plan in [`build-plan.md`](build-plan.md), with the v1.1
+delta in [`spec-v1.1.md`](spec-v1.1.md). Progress is tracked in
+[`todo.md`](todo.md).
 
 ## Quick start
 
 ```bash
 # requires node 20+
 npm install
-cp .env.example .env.local   # then add your Anthropic key — see below
+cp .env.example .env.local   # then add your API keys — see below
 npm run dev                  # http://localhost:5173
 ```
 
 You'll be prompted to grant camera + microphone access on first record.
-**Hyperpad targets desktop Chrome / Edge ≥120.** Safari is unsupported in v1.
+**Amateur Hyperactive targets desktop Chrome / Edge ≥120.** Safari is
+unsupported.
 
 ## API keys
 
-Hyperpad uses two AI providers, each for a different job. Both are
-optional — the app runs fine without them, only the corresponding
-features go quiet.
+Two AI providers, each for a different job. Both are optional — the app
+runs fine without them, only the corresponding features go quiet.
 
 | Variable | Used for | Get a key |
 |---|---|---|
@@ -39,8 +41,9 @@ VITE_GEMINI_API_KEY=AIza...
 ```
 
 > **Important:** dev keys are bundled into the client. Before deploying
-> Hyperpad anywhere public, follow [`docs/AI-MIGRATION.md`](docs/AI-MIGRATION.md)
-> to move both calls behind a server proxy.
+> Amateur Hyperactive anywhere public, follow
+> [`docs/AI-MIGRATION.md`](docs/AI-MIGRATION.md) to move both calls
+> behind a server proxy.
 
 ## Scripts
 
@@ -55,10 +58,10 @@ VITE_GEMINI_API_KEY=AIza...
 
 ## Recording for best results
 
-Hyperpad cuts between your clips on every musical hit. If all 8 of
-your clips are shot from exactly the same distance with the same
-framing and the same background, those cuts read as a strobe instead of
-a performance. The fix is in your hands, not the app's.
+Amateur Hyperactive cuts between your clips on every musical hit. If
+all 8 of your clips are shot from exactly the same distance with the
+same framing and the same background, those cuts read as a strobe
+instead of a performance. The fix is in your hands, not the app's.
 
 ### Vary at least one of these per clip
 
@@ -90,7 +93,7 @@ clip removes most of the strobe effect.
 Keep the lighting the same across clips. Different framings work; wildly
 different exposures look like errors.
 
-### Visual cut controls (v1.1)
+### Visual cut controls
 
 Three knobs in the top bar tame the visual feel without re-recording:
 
@@ -112,14 +115,20 @@ to a placeholder synth so the metronome stays audible.
 
 **Video.** A canvas in the centre of the page is the visible "viewport." The
 `videoEngine` keeps one hidden `<video>` element per track and a queue of
-scheduled `TriggerEvent`s in audio-context seconds. The rAF loop reads
-`Tone.now()` (the audio clock — never `performance.now()`), runs gc + active
-+ priority resolution, and `drawImage`s the winning track's video frame.
-Priority is `vocal > fx > snare > kick > hat > untagged`.
+pending `TriggerEvent`s. A `Tone.Transport.scheduleRepeat` at the configured
+cut subdivision picks the priority winner per window (vocal > fx > snare >
+kick > hat > untagged) with same-tier ducking, then `drawImage`s that
+clip's video frame. Audio-clock-driven so A/V stays locked.
 
 **Live mode.** Keys `1`–`8` (and Numpad), pad clicks, and Transport step
-triggers all funnel through `triggerTrack(trackId, when)` so the audio,
+triggers all funnel through `triggerTrack(trackId, when)` so audio,
 canvas, and pad-flash feedback line up regardless of source.
+
+**Auto-tag.** When a clip lands, the recorded `AudioBuffer` is encoded to
+a tiny WAV and sent to Gemini 3 Flash Preview, which returns one of the
+five tags plus a confidence score. Confidence ≥ 0.6 applies the tag;
+hat clips also auto-flip to audio-only unless the user has already set
+the eye toggle.
 
 **Persistence.** A debounced subscriber in `autoSave.ts` writes the project
 to IndexedDB 500ms after any edit. On mount, `rehydrate.ts` decodes each
@@ -138,16 +147,20 @@ After any non-trivial change, walk this end-to-end:
 
 - [ ] Enable camera (top right) and grant permission.
 - [ ] Record a clip on track 1 — see the 3-2-1 countdown, then the thumbnail.
-- [ ] Tag it (kick/snare/hat/vocal/fx).
+- [ ] Verify auto-tag assigns a plausible tag (with the Gemini key set).
+- [ ] Verify a hat clip auto-flips its eye to closed.
 - [ ] Repeat for 3+ more tracks.
 - [ ] Toggle a few steps; click play; hear the rhythm.
-- [ ] Watch the viewport — frames should cut on each beat.
+- [ ] Watch the viewport — frames should cut on the chosen subdivision.
 - [ ] Adjust BPM (type or scroll); playback should retune live.
 - [ ] Push the swing slider; hats should shuffle.
+- [ ] Change cut rate to 1/4 mid-playback — cuts land cleanly on beats.
+- [ ] Push the hold slider; same-tier transitions should hold.
 - [ ] Press keys `1`–`8` over a playing pattern — pads flash, viewport cuts.
 - [ ] Click "Suggest a beat"; confirm a pattern applies; click Undo to revert.
+- [ ] Click each variation (Busier / Fill / Half-time / Strip); each undoes cleanly.
 - [ ] Export → render 4 bars → WebM downloads and plays correctly in VLC.
-- [ ] Refresh the page — clips, tags, BPM, and pattern all return.
+- [ ] Refresh the page — clips, tags, BPM, cut rate, hold, and pattern all return.
 
 ## Project layout
 
@@ -159,21 +172,24 @@ src/
     StepGrid.tsx, TrackRow.tsx, PadGrid.tsx
     Viewport.tsx             # canvas + rAF render loop
     PlayButton.tsx, BpmInput.tsx, SwingSlider.tsx
+    CutSubdivisionSelect.tsx, HoldTimeControl.tsx
     CameraPreview.tsx
     ExportButton.tsx, ExportDialog.tsx
-    SuggestButton.tsx
+    SuggestButton.tsx, VariationButtons.tsx
     RecordCountdown.tsx, CompatibilityBanner.tsx
   lib/
     audio.ts                 # Tone.Transport, Players, triggerTrack
-    videoEngine.ts           # hidden videos, scheduled-event renderer
+    videoEngine.ts           # hidden videos, quantized renderer
     recorder.ts              # MediaRecorder wrapper
     autoTrim.ts              # RMS-based clip trim
+    wavEncoder.ts            # AudioBuffer → 16-bit PCM WAV
     useMediaStream.ts        # getUserMedia hook
     useKeyboardTriggers.ts   # 1-8 keybinds
     useSpacebarPlayToggle.ts # play/stop shortcut
     persistence.ts, autoSave.ts, rehydrate.ts
     export.ts                # buildExportStream + exportSong
-    aiSuggest.ts             # Anthropic SDK wrapper
+    aiSuggest.ts             # Anthropic wrapper (suggest + variations)
+    aiAutoTag.ts             # Gemini wrapper (auto-tag clips)
   store/
     useAppStore.ts           # Zustand store + actions
     initialState.ts          # 8 empty tracks, 90 BPM
@@ -188,4 +204,5 @@ src/
 2. WebCodecs MP4 export (faster than realtime).
 3. Manual trim handles on the clip waveform.
 4. Multiple named projects.
-5. AI variations ("make it busier" / "half-time it").
+5. Free-text tags beyond the 5 categories.
+6. Arrangement / song mode (chain multiple patterns).

@@ -1,4 +1,4 @@
-# spec.md — Hyperpad (working title)
+# spec.md — Amateur Hyperactive
 
 > A web app for making Lasse Gjertsen–style "Hyperactive" videos: record 8 short
 > clips of yourself making sounds, arrange them in a step sequencer, get a
@@ -340,7 +340,7 @@ async function exportSong(durationMs: number): Promise<Blob> {
 **Default export length.** 4 bars at current BPM (~10s at 90 BPM). Slider
 1–8 bars in the export dialog.
 
-**Filename.** `hyperpad-{projectName}-{YYYYMMDD-HHmm}.webm`.
+**Filename.** `amateur-hyperactive-{projectName}-{YYYYMMDD-HHmm}.webm`.
 
 **v2 path: WebCodecs.** Same canvas renderer, but instead of MediaRecorder,
 encode frames offline via `VideoEncoder` and mux to MP4 using `mp4-muxer`.
@@ -549,8 +549,8 @@ These are the gotchas that will eat days if missed.
 
 ## 11. Open questions
 
-- **App name.** Working title "Hyperpad." Alternatives: Beatscope, Glitchpad,
-  Choppr, Mouthbox. Pick before first deploy.
+- **App name.** **Amateur Hyperactive** (after Lasse Gjertsen's two source
+  videos). Earlier working name "Hyperpad" was dropped before v1.2.
 - **Visual aesthetic accent color.** Suggested options:
   hip-hop-orange (`#FF5C00`), glitch-magenta (`#FF1F8F`),
   classic-MPC-red (`#E60012`). Pick one for shadcn theme.
