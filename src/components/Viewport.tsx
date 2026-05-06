@@ -1,11 +1,17 @@
 // ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
-// ABOUTME: Step 17 sets up the rAF loop with a dark-fill placeholder; step 18+ wires real video.
+// ABOUTME: Each rAF frame asks the videoEngine for the active clip's frame.
 import { useEffect, useRef } from "react";
+import * as Tone from "tone";
+import { drawCurrentFrame, initVideoEngine } from "../lib/videoEngine";
 
 const SIZE = 480;
 
 export function Viewport() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    initVideoEngine();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -15,15 +21,10 @@ export function Viewport() {
 
     let rafId = 0;
     const draw = () => {
-      ctx.fillStyle = "#0a0a0a";
-      ctx.fillRect(0, 0, SIZE, SIZE);
-
-      ctx.fillStyle = "#52525b";
-      ctx.font = "14px ui-sans-serif, system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("VIEWPORT", SIZE / 2, SIZE / 2);
-
+      // Audio time is the source of truth for "what should be on screen".
+      // rAF only decides when we paint.
+      const audioTime = Tone.now();
+      drawCurrentFrame(ctx, audioTime);
       rafId = requestAnimationFrame(draw);
     };
 

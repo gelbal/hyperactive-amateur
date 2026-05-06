@@ -2,6 +2,7 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
+import * as videoEngine from "./videoEngine";
 import type { Clip, Track } from "../types";
 
 const STEP_COUNT = 16;
@@ -81,6 +82,7 @@ function onStep(stepIndex: number, time: number): void {
         // happened yet at the same time slot. Safe to swallow — the next
         // trigger schedules anew.
       }
+      videoEngine.trigger(track.id, time);
       continue;
     }
 

@@ -33,9 +33,10 @@ if (typeof HTMLCanvasElement !== "undefined") {
     getContext: (id: string) => unknown;
   };
   const original = proto.getContext;
-  proto.getContext = function (contextId: string) {
+  proto.getContext = function (this: HTMLCanvasElement, contextId: string) {
     if (contextId === "2d") {
       return {
+        canvas: this,
         fillStyle: "",
         font: "",
         textAlign: "",
@@ -48,9 +49,25 @@ if (typeof HTMLCanvasElement !== "undefined") {
         restore: () => undefined,
         scale: () => undefined,
         translate: () => undefined,
+        getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+        putImageData: () => undefined,
       };
     }
     return original.call(this, contextId);
+  };
+}
+
+// HTMLMediaElement.play / load — JSDOM emits "not implemented" warnings for
+// these. Stub them so video-element tests run quietly.
+if (typeof HTMLMediaElement !== "undefined") {
+  HTMLMediaElement.prototype.play = function play() {
+    return Promise.resolve();
+  };
+  HTMLMediaElement.prototype.pause = function pause() {
+    return undefined;
+  };
+  HTMLMediaElement.prototype.load = function load() {
+    return undefined;
   };
 }
 

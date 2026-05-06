@@ -1,6 +1,9 @@
 // ABOUTME: Viewport tests — canvas mounts at the expected dimensions and is labeled.
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("tone", () => ({ now: vi.fn(() => 0) }));
+
 import { Viewport } from "./Viewport";
 
 describe("Viewport", () => {
