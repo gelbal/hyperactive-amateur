@@ -47,6 +47,7 @@ export function createInitialState(): AppState {
     },
     session: {
       manuallyToggledShowVideo: [],
+      recordingStationDismissed: false,
     },
   };
 }

@@ -60,7 +60,7 @@ describe("Viewport", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the gate and shows the record prompt once granted with no clips", () => {
+  it("hides the gate and mounts the recording station once granted with no clips", () => {
     act(() => {
       useAppStore.getState().actions.setMedia({
         stream: {} as MediaStream,
@@ -72,6 +72,20 @@ describe("Viewport", () => {
     expect(
       screen.queryByRole("button", { name: /enable camera & mic/i }),
     ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("recording station")).toBeInTheDocument();
+  });
+
+  it("shows the record-prompt copy after the station is dismissed and no clips exist", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: {} as MediaStream,
+        status: "granted",
+        error: null,
+      });
+      useAppStore.getState().actions.dismissRecordingStation();
+    });
+    render(<Viewport />);
+    expect(screen.queryByLabelText("recording station")).not.toBeInTheDocument();
     expect(screen.getByText(/record a sound on any track/i)).toBeInTheDocument();
   });
 });

@@ -3,14 +3,9 @@
 import { useState } from "react";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
-import { recordClip } from "../lib/recorder";
-import { getAudioContext } from "../lib/audio";
-import { autoTrim } from "../lib/autoTrim";
-import { autoTag } from "../lib/aiAutoTag";
-import { requestMedia } from "../lib/media";
+import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import type { Clip, Tag } from "../types";
 
-const AUTO_TAG_CONFIDENCE_THRESHOLD = 0.6;
 const AUTO_TAG_TOAST_MS = 3000;
 type AutoTagState =
   | { kind: "idle" }
@@ -21,8 +16,6 @@ type AutoTagState =
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
 const STEP_COUNT = 16;
-const RECORD_DURATION_MS = 2000;
-const COUNTDOWN_MS = 3000;
 
 interface StepCellProps {
   trackId: number;
@@ -62,7 +55,6 @@ interface TrackRowProps {
 export function TrackRow({ trackId }: TrackRowProps) {
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
-  const stream = useAppStore((s) => s.media.stream);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const [error, setError] = useState<string | null>(null);
@@ -71,60 +63,21 @@ export function TrackRow({ trackId }: TrackRowProps) {
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
 
   const startRecording = async () => {
-    if (!stream) {
-      // Trigger the permission flow instead of nagging the user; the viewport
-      // gate will surface the prompt prominently.
-      void requestMedia();
-      return;
-    }
     setError(null);
-    const actions = useAppStore.getState().actions;
-    actions.setRecordingState("countdown", trackId);
-    await new Promise((r) => setTimeout(r, COUNTDOWN_MS));
-    actions.setRecordingState("recording", trackId);
-    try {
-      const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext());
-      const url = URL.createObjectURL(result.blob);
-      const trim = autoTrim(result.audioBuffer);
-      const newClip: Clip = {
-        blob: result.blob,
-        url,
-        audioBuffer: result.audioBuffer,
-        trimStartMs: trim.trimStartMs,
-        trimEndMs: trim.trimEndMs,
-        durationMs: result.durationMs,
-      };
-      actions.setTrackClip(trackId, newClip);
-      actions.setRecordingState("idle", null);
-      void runAutoTag(result.audioBuffer);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      actions.setRecordingState("idle", null);
-    }
-  };
-
-  const runAutoTag = async (audioBuffer: AudioBuffer) => {
-    setAutoTagState({ kind: "tagging" });
-    const result = await autoTag(audioBuffer);
-    if (!result || result.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
-      setAutoTagState({ kind: "miss" });
-      window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
-      return;
-    }
-    const actions = useAppStore.getState().actions;
-    actions.setTrackTag(trackId, result.tag);
-    let hatAudioOnly = false;
-    if (result.tag === "hat") {
-      const manuallyToggled = useAppStore
-        .getState()
-        .session.manuallyToggledShowVideo.includes(trackId);
-      if (!manuallyToggled) {
-        actions.setTrackShowVideo(trackId, false, "system");
-        hatAudioOnly = true;
-      }
-    }
-    setAutoTagState({ kind: "applied", tag: result.tag, hatAudioOnly });
-    window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+    await recordIntoTrack(trackId, {
+      onAutoTag: (event: AutoTagEvent) => {
+        if (event.kind === "applied") {
+          setAutoTagState({ kind: "applied", tag: event.tag, hatAudioOnly: event.hatAudioOnly });
+          window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+        } else if (event.kind === "miss") {
+          setAutoTagState({ kind: "miss" });
+          window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+        } else {
+          setAutoTagState(event);
+        }
+      },
+      onError: setError,
+    });
   };
 
   return (

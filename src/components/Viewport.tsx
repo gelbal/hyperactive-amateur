@@ -1,19 +1,32 @@
 // ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
-// ABOUTME: Owns the empty state: camera-permission gate first, then "record some sounds" prompt.
+// ABOUTME: Owns the empty state: camera-permission gate, recording station, then "record more" affordance.
 import { useEffect, useRef } from "react";
 import * as Tone from "tone";
-import { Camera, Video } from "lucide-react";
+import { Camera, Mic, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import { requestMedia } from "../lib/media";
+import { RecordingStation } from "./RecordingStation";
 
 const SIZE = 480;
+const TRACK_COUNT = 8;
 
 export function Viewport() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
+  const emptyTrackCount = useAppStore(
+    (s) => s.project.tracks.filter((t) => !t.clip).length,
+  );
+  const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
+  const showStation =
+    mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+  const showRecordMore =
+    mediaStatus === "granted" &&
+    emptyTrackCount > 0 &&
+    emptyTrackCount < TRACK_COUNT &&
+    stationDismissed;
 
   useEffect(() => {
     initVideoEngine();
@@ -44,18 +57,35 @@ export function Viewport() {
   }, []);
 
   return (
-    <div className="relative" style={{ width: SIZE, height: SIZE }}>
-      <canvas
-        ref={canvasRef}
-        width={SIZE}
-        height={SIZE}
-        aria-label="hard-cut video viewport"
-        className="block bg-zinc-950 rounded shadow-lg"
-        style={{ width: SIZE, height: SIZE }}
-      />
-      {mediaStatus !== "granted" && <PermissionGate status={mediaStatus} error={mediaError} />}
-      {mediaStatus === "granted" && !hasClips && <RecordPrompt />}
+    <div className="flex flex-col items-center gap-3">
+      <div className="relative" style={{ width: SIZE, height: SIZE }}>
+        <canvas
+          ref={canvasRef}
+          width={SIZE}
+          height={SIZE}
+          aria-label="hard-cut video viewport"
+          className="block bg-zinc-950 rounded shadow-lg"
+          style={{ width: SIZE, height: SIZE }}
+        />
+        {mediaStatus !== "granted" && <PermissionGate status={mediaStatus} error={mediaError} />}
+        {showStation && <RecordingStation size={SIZE} />}
+        {mediaStatus === "granted" && !hasClips && stationDismissed && <RecordPrompt />}
+      </div>
+      {showRecordMore && <RecordMoreButton />}
     </div>
+  );
+}
+
+function RecordMoreButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => useAppStore.getState().actions.reopenRecordingStation()}
+      className="flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 rounded-full bg-zinc-900 border border-zinc-700 hover:bg-zinc-800"
+    >
+      <Mic size={12} />
+      Record more
+    </button>
   );
 }
 

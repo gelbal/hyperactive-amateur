@@ -87,6 +87,9 @@ export interface SessionSlice {
   // Track ids whose showVideo has been manually toggled in this session.
   // Transient — not persisted, cleared on reset and on page load.
   manuallyToggledShowVideo: number[];
+  // True after the user has clicked "Done" on the in-viewport recording
+  // walkthrough; the station goes away until they re-open it. Transient.
+  recordingStationDismissed: boolean;
 }
 
 export interface AppState {

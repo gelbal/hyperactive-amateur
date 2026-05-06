@@ -32,6 +32,8 @@ export interface AppActions {
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
+  dismissRecordingStation: () => void;
+  reopenRecordingStation: () => void;
   reset: () => void;
 }
 
@@ -172,6 +174,12 @@ export const useAppStore = create<AppStore>((set) => ({
           activeTrackId: activeTrackId === undefined ? state.recording.activeTrackId : activeTrackId,
         },
       })),
+
+    dismissRecordingStation: () =>
+      set((state) => ({ session: { ...state.session, recordingStationDismissed: true } })),
+
+    reopenRecordingStation: () =>
+      set((state) => ({ session: { ...state.session, recordingStationDismissed: false } })),
 
     hydrateProject: (project) => set({ project }),
 
