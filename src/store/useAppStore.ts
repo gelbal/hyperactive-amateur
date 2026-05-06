@@ -15,6 +15,8 @@ export interface AppActions {
   setSwing: (swing: number) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
+  setIsPlaying: (playing: boolean) => void;
+  setCurrentStep: (step: number) => void;
   reset: () => void;
 }
 
@@ -67,6 +69,12 @@ export const useAppStore = create<AppStore>((set) => ({
           ),
         },
       })),
+
+    setIsPlaying: (playing) =>
+      set((state) => ({ playback: { ...state.playback, isPlaying: playing } })),
+
+    setCurrentStep: (step) =>
+      set((state) => ({ playback: { ...state.playback, currentStep: step } })),
 
     reset: () => set({ ...createInitialState() }),
   },

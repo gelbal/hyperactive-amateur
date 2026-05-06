@@ -1,11 +1,21 @@
-// ABOUTME: Root React component for Hyperpad — header plus the step sequencer grid.
-// ABOUTME: Subsequent build steps will mount the top bar, viewport, and pads here.
+// ABOUTME: Root React component for Hyperpad — top bar (play button) plus the step grid.
+// ABOUTME: Subsequent build steps will mount the viewport, pads, BPM input, and tags here.
+import { useEffect } from "react";
 import { StepGrid } from "./components/StepGrid";
+import { PlayButton } from "./components/PlayButton";
+import { initTransport } from "./lib/audio";
 
 export function App() {
+  useEffect(() => {
+    initTransport();
+  }, []);
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <h1 className="text-3xl font-bold p-8">Hyperpad</h1>
+      <header className="flex items-center gap-4 p-4 border-b border-zinc-800">
+        <h1 className="text-2xl font-bold">Hyperpad</h1>
+        <PlayButton />
+      </header>
       <StepGrid />
     </div>
   );
