@@ -1,14 +1,22 @@
-// ABOUTME: videoEngine tests — clip lifecycle, trigger swaps active video, store binding.
-// ABOUTME: Skips canvas pixel assertions; verifies element creation and active-trigger state.
-import { describe, it, expect, beforeEach } from "vitest";
-import { useAppStore } from "../store/useAppStore";
+// ABOUTME: videoEngine tests — pure helpers (gc, find, pick) plus integration smoke tests.
+// ABOUTME: Tone is mocked so tests can manipulate "now" deterministically.
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("tone", () => ({ now: vi.fn(() => 0) }));
+
+import * as Tone from "tone";
 import {
   setClipForTrack,
   trigger,
   drawCurrentFrame,
   initVideoEngine,
+  gcEvents,
+  findActiveEvents,
+  pickActiveEvent,
   __resetVideoEngineForTesting,
+  type TriggerEvent,
 } from "./videoEngine";
+import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
 function makeClip(seed: number): Clip {
@@ -31,24 +39,52 @@ function getCtx() {
   return ctx;
 }
 
-describe("videoEngine", () => {
+describe("videoEngine pure helpers", () => {
+  it("gcEvents drops events whose endTime is more than 0.5s in the past", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 },
+      { trackId: 1, startTime: 1, endTime: 2 },
+    ];
+    expect(gcEvents(events, 1.5)).toHaveLength(2);
+    expect(gcEvents(events, 1.6)).toHaveLength(1);
+    expect(gcEvents(events, 5)).toHaveLength(0);
+  });
+
+  it("findActiveEvents returns events whose window covers the audio time", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 },
+      { trackId: 1, startTime: 0.5, endTime: 1.5 },
+      { trackId: 2, startTime: 2, endTime: 3 },
+    ];
+    expect(findActiveEvents(events, 0.7).map((e) => e.trackId)).toEqual([0, 1]);
+    expect(findActiveEvents(events, 1.2).map((e) => e.trackId)).toEqual([1]);
+    expect(findActiveEvents(events, 1.6).map((e) => e.trackId)).toEqual([]);
+  });
+
+  it("pickActiveEvent returns the event with the latest startTime", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0, endTime: 1 },
+      { trackId: 5, startTime: 0.4, endTime: 1.4 },
+    ];
+    expect(pickActiveEvent(events)?.trackId).toBe(5);
+    expect(pickActiveEvent([])).toBeNull();
+  });
+});
+
+describe("videoEngine integration", () => {
   beforeEach(() => {
     __resetVideoEngineForTesting();
     useAppStore.getState().actions.reset();
+    (Tone.now as ReturnType<typeof vi.fn>).mockReturnValue(0);
   });
 
-  it("setClipForTrack appends a hidden video element", () => {
+  it("setClipForTrack appends and removes hidden video elements", () => {
     setClipForTrack(0, makeClip(1));
-    const host = document.querySelector('[data-hidden-videos="true"]');
-    expect(host).not.toBeNull();
-    expect(host?.querySelectorAll("video")).toHaveLength(1);
-  });
-
-  it("setClipForTrack with null removes the existing video", () => {
-    setClipForTrack(0, makeClip(1));
+    let videos = document.querySelectorAll('[data-hidden-videos="true"] video');
+    expect(videos).toHaveLength(1);
     setClipForTrack(0, null);
-    const host = document.querySelector('[data-hidden-videos="true"]');
-    expect(host?.querySelectorAll("video") ?? []).toHaveLength(0);
+    videos = document.querySelectorAll('[data-hidden-videos="true"] video');
+    expect(videos).toHaveLength(0);
   });
 
   it("initVideoEngine syncs with the store on track changes", () => {
@@ -58,20 +94,23 @@ describe("videoEngine", () => {
     expect(videos).toHaveLength(1);
   });
 
-  it("drawCurrentFrame is a no-op when nothing is triggered", () => {
+  it("trigger pushes onto the queue and drawCurrentFrame is a no-op outside the window", () => {
+    setClipForTrack(0, makeClip(1));
+    trigger(0, 0);
     const ctx = getCtx();
-    expect(() => drawCurrentFrame(ctx, 0)).not.toThrow();
+    // 10s later — well past the trigger window — should clear and not draw.
+    expect(() => drawCurrentFrame(ctx, 10)).not.toThrow();
   });
 
-  it("trigger updates the active video to the most recent track", () => {
+  it("multiple triggers leave the most-recent active during overlap", () => {
     setClipForTrack(0, makeClip(1));
-    setClipForTrack(3, makeClip(2));
-    const ctx = getCtx();
+    setClipForTrack(1, makeClip(2));
     trigger(0, 0);
-    drawCurrentFrame(ctx, 0);
-    trigger(3, 0);
-    // No throw means the new active is reachable; the actual draw is skipped
-    // in jsdom because video elements lack pixel data.
-    expect(() => drawCurrentFrame(ctx, 0)).not.toThrow();
+    trigger(1, 0.1);
+    const ctx = getCtx();
+    drawCurrentFrame(ctx, 0.2);
+    // Both windows overlap at 0.2s; pickActiveEvent should pick track 1.
+    // We can't assert the actual draw in jsdom, but the call must not throw.
+    expect(() => drawCurrentFrame(ctx, 0.2)).not.toThrow();
   });
 });

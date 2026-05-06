@@ -1,18 +1,21 @@
-// ABOUTME: videoEngine — owns hidden <video> elements per track and the canvas draw routine.
-// ABOUTME: Step 19 uses naive most-recent-wins; the audio-clock-driven refactor lands in step 20.
+// ABOUTME: videoEngine — hidden <video> elements per track + scheduled-event canvas renderer.
+// ABOUTME: Render decisions read the audio clock (Tone.now seconds) so A/V stays locked.
+import * as Tone from "tone";
 import type { Clip } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
-interface ActiveTrigger {
+export interface TriggerEvent {
   trackId: number;
-  startedAt: number;
-  durationMs: number;
+  startTime: number; // audio context seconds (Tone.now base)
+  endTime: number;
 }
+
+const GC_GRACE_SECONDS = 0.5;
 
 let host: HTMLDivElement | null = null;
 const videos = new Map<number, HTMLVideoElement>();
 const trims = new Map<number, { startMs: number; endMs: number }>();
-let activeTrigger: ActiveTrigger | null = null;
+let triggers: TriggerEvent[] = [];
 let storeUnsubscribe: (() => void) | null = null;
 let initialized = false;
 
@@ -48,40 +51,75 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   trims.set(trackId, { startMs: clip.trimStartMs, endMs: clip.trimEndMs });
 }
 
-export function trigger(trackId: number, _when: number): void {
-  const video = videos.get(trackId);
-  if (!video) return;
+// Schedule a trigger event for the renderer to consume. `when` is in audio
+// context seconds (Tone.now base). Also queues the actual <video> playback to
+// start at the same wall-clock moment.
+export function trigger(trackId: number, when: number): void {
   const trim = trims.get(trackId);
-  const startSeconds = trim ? trim.startMs / 1000 : 0;
-  try {
-    video.currentTime = startSeconds;
-    void video.play();
-  } catch {
-    // currentTime can throw before metadata loads; later triggers succeed.
-  }
-  const durationMs = trim ? Math.max(50, trim.endMs - trim.startMs) : 1000;
-  activeTrigger = { trackId, startedAt: performance.now(), durationMs };
+  if (!trim) return;
+  const durationSeconds = Math.max(0.05, (trim.endMs - trim.startMs) / 1000);
+
+  triggers.push({
+    trackId,
+    startTime: when,
+    endTime: when + durationSeconds,
+  });
+
+  const delaySeconds = Math.max(0, when - Tone.now());
+  const start = () => {
+    const video = videos.get(trackId);
+    if (!video) return;
+    try {
+      video.currentTime = trim.startMs / 1000;
+    } catch {
+      // currentTime can throw before metadata loads; the next trigger will retry.
+    }
+    void video.play().catch(() => undefined);
+  };
+  if (delaySeconds <= 0) start();
+  else setTimeout(start, delaySeconds * 1000);
 }
 
-export function drawCurrentFrame(ctx: CanvasRenderingContext2D, _audioTime: number): void {
+// Pure: drop trigger events whose endTime is well in the past.
+export function gcEvents(events: TriggerEvent[], audioTime: number): TriggerEvent[] {
+  const cutoff = audioTime - GC_GRACE_SECONDS;
+  return events.filter((e) => e.endTime >= cutoff);
+}
+
+// Pure: which events should be visible at a given audio time.
+export function findActiveEvents(events: TriggerEvent[], audioTime: number): TriggerEvent[] {
+  return events.filter((e) => e.startTime <= audioTime && audioTime <= e.endTime);
+}
+
+// Pure: pick the visually-winning event from a list of active events.
+// Default policy is most-recent-startTime; tag-based priority arrives in step 21.
+export function pickActiveEvent(events: TriggerEvent[]): TriggerEvent | null {
+  if (events.length === 0) return null;
+  let winner = events[0];
+  for (const e of events) {
+    if (e.startTime > winner.startTime) winner = e;
+  }
+  return winner;
+}
+
+export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
+
+  triggers = gcEvents(triggers, audioTime);
+
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, w, h);
 
-  if (!activeTrigger) return;
-  const elapsedMs = performance.now() - activeTrigger.startedAt;
-  if (elapsedMs > activeTrigger.durationMs + 100) {
-    activeTrigger = null;
-    return;
-  }
-  const video = videos.get(activeTrigger.trackId);
+  const active = findActiveEvents(triggers, audioTime);
+  const winner = pickActiveEvent(active);
+  if (!winner) return;
+  const video = videos.get(winner.trackId);
   if (!video) return;
   ctx.drawImage(video, 0, 0, w, h);
 }
 
-// Wires the engine to the Zustand store: hidden videos stay in sync with each
-// track's current clip. Idempotent.
+// Wires the engine to the store so hidden videos stay in sync with track clips.
 export function initVideoEngine(): void {
   if (initialized) return;
   initialized = true;
@@ -105,6 +143,11 @@ export function initVideoEngine(): void {
   });
 }
 
+export function getDebugInfo(): { activeEvents: TriggerEvent[]; audioTime: number } {
+  const audioTime = Tone.now();
+  return { activeEvents: findActiveEvents(triggers, audioTime), audioTime };
+}
+
 export function __resetVideoEngineForTesting(): void {
   if (storeUnsubscribe) {
     storeUnsubscribe();
@@ -113,7 +156,7 @@ export function __resetVideoEngineForTesting(): void {
   for (const video of videos.values()) video.remove();
   videos.clear();
   trims.clear();
-  activeTrigger = null;
+  triggers = [];
   if (host) {
     host.remove();
     host = null;
