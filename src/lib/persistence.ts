@@ -1,7 +1,12 @@
 // ABOUTME: persistence — save and rehydrate the project state to IndexedDB via idb-keyval.
 // ABOUTME: AudioBuffer and object URLs are derived; only the blob and trim numbers are stored.
 import { get, set, del } from "idb-keyval";
-import type { AppState, Tag } from "../types";
+import type { AppState, CutSubdivision, Tag } from "../types";
+
+const CUT_SUBDIVISIONS: readonly CutSubdivision[] = ["16n", "8n", "4n", "2n", "1m"];
+function isCutSubdivision(v: unknown): v is CutSubdivision {
+  return typeof v === "string" && (CUT_SUBDIVISIONS as readonly string[]).includes(v);
+}
 
 export const PROJECT_KEY = "current-project";
 export const CURRENT_SCHEMA_VERSION = 2;
@@ -23,6 +28,7 @@ export interface PersistedProject {
   version: typeof CURRENT_SCHEMA_VERSION;
   bpm: number;
   swing: number;
+  cutSubdivision: CutSubdivision;
   tracks: PersistedTrack[];
   updatedAt: number;
 }
@@ -32,6 +38,7 @@ export function snapshot(state: AppState): PersistedProject {
     version: CURRENT_SCHEMA_VERSION,
     bpm: state.project.bpm,
     swing: state.project.swing,
+    cutSubdivision: state.project.cutSubdivision,
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,
@@ -76,6 +83,8 @@ export function migrate(value: unknown): PersistedProject | null {
     version: CURRENT_SCHEMA_VERSION,
     bpm: typeof v.bpm === "number" ? v.bpm : 90,
     swing: typeof v.swing === "number" ? v.swing : 0,
+    // v2: cutSubdivision defaults to '8n' on legacy v1 saves.
+    cutSubdivision: isCutSubdivision(v.cutSubdivision) ? v.cutSubdivision : "8n",
     tracks,
     updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : Date.now(),
   };

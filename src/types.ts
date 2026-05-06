@@ -38,10 +38,16 @@ export interface ActiveTrigger {
   durationMs: number;
 }
 
+// Tone.js note-value notation for the visual cut subdivision.
+export type CutSubdivision = "16n" | "8n" | "4n" | "2n" | "1m";
+
 export interface ProjectState {
   bpm: number;
   // 0..1 — Tone.Transport swing amount.
   swing: number;
+  // Visual-only quantization for the hard-cut renderer. Audio scheduling
+  // stays at 16ths regardless. See spec-v1.1 § 3.2.
+  cutSubdivision: CutSubdivision;
   tracks: Track[];
 }
 

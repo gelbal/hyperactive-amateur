@@ -59,6 +59,15 @@ describe("useAppStore", () => {
     });
   });
 
+  describe("setCutSubdivision", () => {
+    it("stores the new note value", () => {
+      get().actions.setCutSubdivision("4n");
+      expect(get().project.cutSubdivision).toBe("4n");
+      get().actions.setCutSubdivision("1m");
+      expect(get().project.cutSubdivision).toBe("1m");
+    });
+  });
+
   describe("setTrackVolume", () => {
     it("only mutates the targeted track", () => {
       get().actions.setTrackVolume(3, 0.25);

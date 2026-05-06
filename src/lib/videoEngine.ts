@@ -1,7 +1,7 @@
 // ABOUTME: videoEngine — hidden <video> elements per track + scheduled-event canvas renderer.
 // ABOUTME: Render decisions read the audio clock (Tone.now seconds) so A/V stays locked.
 import * as Tone from "tone";
-import type { Clip, Tag } from "../types";
+import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
 export type TagOrUntagged = Tag | "untagged";
@@ -204,6 +204,11 @@ export function initVideoEngine(): void {
     }
     lastClips = next;
   });
+}
+
+// Stub for v1.1-4 — wired up in v1.1-5 with the boundary scheduleRepeat.
+export function setVideoCutSubdivision(_value: CutSubdivision): void {
+  // intentionally no-op until the boundary scheduler lands.
 }
 
 export function getDebugInfo(): { activeEvents: TriggerEvent[]; audioTime: number } {

@@ -93,7 +93,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 ## User-controlled visual cut subdivision (§ 3.2)
 
-- [ ] **v1.1-4** — `cutSubdivision` state + store action + persistence migration
+- [x] **v1.1-4** — `cutSubdivision` state + store action + persistence migration
 - [ ] **v1.1-5** — *Meaty:* video engine pendingTriggers + boundary scheduleRepeat + quantize-to-window
 - [ ] **v1.1-6** — `<CutSubdivisionSelect />` dropdown in top bar
 

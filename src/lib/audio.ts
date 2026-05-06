@@ -113,6 +113,15 @@ export function nowSeconds(): number {
   return Tone.now();
 }
 
+// Forwards a new cut-subdivision setting to the video engine. Implementation
+// arrives with the boundary scheduler in step v1.1-5.
+import type { CutSubdivision } from "../types";
+import { setVideoCutSubdivision as videoEngineSetCutSubdivision } from "./videoEngine";
+
+export function setVideoCutSubdivision(value: CutSubdivision): void {
+  videoEngineSetCutSubdivision(value);
+}
+
 // Diff the current track list against the last clip we wired and create / dispose
 // Tone.Players accordingly. Cheap to call repeatedly.
 function syncPlayers(tracks: Track[]): void {

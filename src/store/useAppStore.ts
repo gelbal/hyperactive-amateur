@@ -1,7 +1,7 @@
 // ABOUTME: Zustand store for Hyperpad — holds AppState and the actions that mutate it.
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
-import type { AppState, Clip, MediaStatus, RecordingState, Tag } from "../types";
+import type { AppState, Clip, CutSubdivision, MediaStatus, RecordingState, Tag } from "../types";
 import { createInitialState } from "./initialState";
 
 function clamp(value: number, min: number, max: number): number {
@@ -13,6 +13,7 @@ export interface AppActions {
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
   setSwing: (swing: number) => void;
+  setCutSubdivision: (value: CutSubdivision) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -58,6 +59,9 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({
         project: { ...state.project, swing: clamp(swing, 0, 1) },
       })),
+
+    setCutSubdivision: (value) =>
+      set((state) => ({ project: { ...state.project, cutSubdivision: value } })),
 
     setTrackVolume: (trackId, volume) =>
       set((state) => ({

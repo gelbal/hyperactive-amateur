@@ -67,7 +67,7 @@ describe("persistence", () => {
   });
 
   describe("migration", () => {
-    it("migrates a v1 fixture by defaulting showVideo to true on every track", () => {
+    it("migrates a v1 fixture by defaulting showVideo + cutSubdivision", () => {
       const v1 = {
         version: 1,
         bpm: 100,
@@ -90,6 +90,7 @@ describe("persistence", () => {
       expect(migrated).not.toBeNull();
       expect(migrated?.version).toBe(CURRENT_SCHEMA_VERSION);
       expect(migrated?.bpm).toBe(100);
+      expect(migrated?.cutSubdivision).toBe("8n");
       expect(migrated?.tracks).toHaveLength(8);
       for (const track of migrated!.tracks) {
         expect(track.showVideo).toBe(true);
