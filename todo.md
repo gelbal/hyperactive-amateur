@@ -7,7 +7,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 - [x] **Step 1** — Vite + React + TS scaffolding, Tailwind, Vitest, deps installed, blank `<h1>Hyperpad</h1>` page
 - [x] **Step 2** — Type definitions in `src/types.ts`, `createInitialState()` factory + tests
 - [x] **Step 3** — Zustand store skeleton with `toggleStep`, `setBpm`, `setSwing`, `setTrackVolume`, `setTrackMuted` + tests
-- [ ] **Step 4** — `<StepGrid />` renders 8×16 buttons wired to store, downbeats emphasized
+- [x] **Step 4** — `<StepGrid />` renders 8×16 buttons wired to store, downbeats emphasized
 
 ## Phase 2 · Audio sequencer
 
