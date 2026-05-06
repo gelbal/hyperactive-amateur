@@ -31,7 +31,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 ## Phase 5 · Auto-trim
 
 - [x] **Step 15** — `autoTrim()` pure function (RMS windows, peak detect, 5% threshold) + tests
-- [ ] **Step 16** — Recording flow stores trim values; `Player.start` uses trim offsets
+- [x] **Step 16** — Recording flow stores trim values; `Player.start` uses trim offsets
 
 ## Phase 6 · Hard-cut video
 

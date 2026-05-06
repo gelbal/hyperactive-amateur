@@ -5,6 +5,7 @@ import { Mic } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
+import { autoTrim } from "../lib/autoTrim";
 import type { Clip, Tag } from "../types";
 
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
@@ -68,12 +69,13 @@ export function TrackRow({ trackId }: TrackRowProps) {
     try {
       const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext());
       const url = URL.createObjectURL(result.blob);
+      const trim = autoTrim(result.audioBuffer);
       const newClip: Clip = {
         blob: result.blob,
         url,
         audioBuffer: result.audioBuffer,
-        trimStartMs: 0,
-        trimEndMs: result.durationMs,
+        trimStartMs: trim.trimStartMs,
+        trimEndMs: trim.trimEndMs,
         durationMs: result.durationMs,
       };
       actions.setTrackClip(trackId, newClip);

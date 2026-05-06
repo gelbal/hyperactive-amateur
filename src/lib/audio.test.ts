@@ -186,6 +186,18 @@ describe("audio module", () => {
       expect(player.dispose).toHaveBeenCalled();
     });
 
+    it("honors trim offsets when starting the player", () => {
+      initTransport();
+      const clip = makeClip();
+      clip.trimStartMs = 200;
+      clip.trimEndMs = 800;
+      useAppStore.getState().actions.setTrackClip(0, clip);
+      useAppStore.getState().actions.toggleStep(0, 0);
+      const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+      callback?.(1);
+      expect(playerInstances[0].start).toHaveBeenCalledWith(1, 0.2, 0.6);
+    });
+
     it("falls back to synth on tracks without a clip", () => {
       initTransport();
       useAppStore.getState().actions.setTrackClip(0, makeClip());
