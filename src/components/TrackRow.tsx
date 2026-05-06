@@ -1,14 +1,13 @@
 // ABOUTME: TrackRow — one row of the sequencer: clip preview/record + 16 step toggles.
 // ABOUTME: Track 0 has a working record button; other tracks show a placeholder until step 13.
 import { useState } from "react";
-import { Mic, Video } from "lucide-react";
+import { Mic } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
 import type { Clip } from "../types";
 
 const STEP_COUNT = 16;
-const RECORDABLE_TRACKS = new Set([0]);
 const RECORD_DURATION_MS = 2000;
 
 interface StepCellProps {
@@ -53,7 +52,6 @@ export function TrackRow({ trackId }: TrackRowProps) {
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const [error, setError] = useState<string | null>(null);
 
-  const isRecordable = RECORDABLE_TRACKS.has(trackId);
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
 
   const startRecording = async () => {
@@ -89,7 +87,7 @@ export function TrackRow({ trackId }: TrackRowProps) {
       <div className="w-16 h-12 flex items-center justify-center">
         {clip ? (
           <ClipThumbnail clip={clip} onClear={() => useAppStore.getState().actions.clearTrackClip(trackId)} />
-        ) : isRecordable ? (
+        ) : (
           <button
             type="button"
             disabled={isRecordingThis}
@@ -103,13 +101,6 @@ export function TrackRow({ trackId }: TrackRowProps) {
               <Mic size={18} className="text-zinc-400" />
             )}
           </button>
-        ) : (
-          <div
-            aria-label={`track ${trackId + 1} disabled`}
-            className="w-12 h-12 rounded bg-zinc-900 border border-dashed border-zinc-800 flex items-center justify-center text-zinc-700"
-          >
-            <Video size={16} />
-          </div>
         )}
       </div>
       <div className="grid grid-cols-16 gap-1 flex-1">

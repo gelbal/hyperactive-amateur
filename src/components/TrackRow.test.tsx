@@ -47,10 +47,27 @@ describe("TrackRow", () => {
     expect(screen.getByLabelText("record clip for track 1")).toBeInTheDocument();
   });
 
-  it("non-recordable track shows a disabled placeholder", () => {
-    render(<TrackRow trackId={1} />);
-    expect(screen.queryByLabelText("record clip for track 2")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("track 2 disabled")).toBeInTheDocument();
+  it("every track exposes a record button when no clip is present", () => {
+    for (let id = 0; id < 8; id++) {
+      const { unmount } = render(<TrackRow trackId={id} />);
+      expect(screen.getByLabelText(`record clip for track ${id + 1}`)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("multi-track integration: thumbnails appear for each clipped track", () => {
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, makeFakeClip());
+    actions.setTrackClip(3, makeFakeClip());
+    render(
+      <>
+        <TrackRow trackId={0} />
+        <TrackRow trackId={3} />
+        <TrackRow trackId={5} />
+      </>,
+    );
+    expect(screen.getAllByLabelText("re-record")).toHaveLength(2);
+    expect(screen.getByLabelText("record clip for track 6")).toBeInTheDocument();
   });
 
   it("renders 16 step buttons", () => {
