@@ -24,6 +24,9 @@ export interface Track {
   volume: number;
   muted: boolean;
   tag: Tag | null;
+  // When false, the track fires audio but does not cause a viewport cut.
+  // Hats/ghost notes typically benefit from this. Default true.
+  showVideo: boolean;
 }
 
 export type RecordingState = "idle" | "countdown" | "recording" | "reviewing";

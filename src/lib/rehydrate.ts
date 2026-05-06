@@ -50,6 +50,7 @@ export async function rehydrateFromStorage(): Promise<boolean> {
         volume: pt.volume,
         muted: pt.muted,
         tag: pt.tag,
+        showVideo: pt.showVideo,
       };
     }),
   );

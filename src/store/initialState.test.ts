@@ -23,6 +23,13 @@ describe("createInitialState", () => {
     }
   });
 
+  it("defaults every track to showVideo: true", () => {
+    const state = createInitialState();
+    for (const track of state.project.tracks) {
+      expect(track.showVideo).toBe(true);
+    }
+  });
+
   it("assigns ids 0 through 7 in order", () => {
     const state = createInitialState();
     expect(state.project.tracks.map((t) => t.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);

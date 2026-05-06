@@ -13,6 +13,7 @@ function createEmptyTrack(id: number): Track {
     volume: 1,
     muted: false,
     tag: null,
+    showVideo: true,
   };
 }
 

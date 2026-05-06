@@ -78,3 +78,45 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 ## API key milestone
 
 The Anthropic key is needed at **Step 28**. Until then, no env var required. When we get there I'll prompt for it and explain where to drop it (`.env.local` → `VITE_ANTHROPIC_API_KEY=…`).
+
+---
+
+# v1.1 (per `spec-v1.1.md`)
+
+Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.local`.
+
+## Per-track "show video" toggle (§ 3.1)
+
+- [x] **v1.1-1** — `showVideo: boolean` on Track; store action; persistence schema v2 + migration
+- [ ] **v1.1-2** — Gate `videoEngine.trigger` in `triggerTrack` on `track.showVideo`
+- [ ] **v1.1-3** — Eye / EyeOff toggle button on each TrackRow
+
+## User-controlled visual cut subdivision (§ 3.2)
+
+- [ ] **v1.1-4** — `cutSubdivision` state + store action + persistence migration
+- [ ] **v1.1-5** — *Meaty:* video engine pendingTriggers + boundary scheduleRepeat + quantize-to-window
+- [ ] **v1.1-6** — `<CutSubdivisionSelect />` dropdown in top bar
+
+## Same-tier ducking (§ 3.3)
+
+- [ ] **v1.1-7** — `sameTierHoldMs` state + extend `pickPriority` with hold-time logic
+- [ ] **v1.1-8** — Hold-time slider in top bar (or popover)
+
+## Auto-tag clips on record (§ 3.4)
+
+- [ ] **v1.1-9** — `wavEncoder.ts` + Gemini SDK install + env-var warning
+- [ ] **v1.1-10** — `aiAutoTag.ts` Gemini classification call with confidence
+- [ ] **v1.1-11** — Wire into recording flow; hat → audio-only auto-default; user-toggle bookkeeping
+
+## Pattern variations (§ 3.5)
+
+- [ ] **v1.1-12** — `varyPattern()` (busier / fill / halftime / strip)
+- [ ] **v1.1-13** — Variation buttons next to Suggest with same Undo flow
+
+## Docs (§ 3.6)
+
+- [ ] **v1.1-14** — README "Recording for best results" guide
+
+## Smoke test
+
+- [ ] **v1.1-15** — Manual end-to-end smoke walkthrough

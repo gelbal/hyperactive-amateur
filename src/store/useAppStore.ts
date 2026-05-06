@@ -21,6 +21,7 @@ export interface AppActions {
   setTrackClip: (trackId: number, clip: Clip) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (trackId: number, tag: Tag | null) => void;
+  setTrackShowVideo: (trackId: number, showVideo: boolean) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
@@ -129,6 +130,16 @@ export const useAppStore = create<AppStore>((set) => ({
           ...state.project,
           tracks: state.project.tracks.map((track) =>
             track.id === trackId ? { ...track, tag } : track,
+          ),
+        },
+      })),
+
+    setTrackShowVideo: (trackId, showVideo) =>
+      set((state) => ({
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.map((track) =>
+            track.id === trackId ? { ...track, showVideo } : track,
           ),
         },
       })),

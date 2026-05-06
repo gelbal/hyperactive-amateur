@@ -84,6 +84,22 @@ describe("useAppStore", () => {
     });
   });
 
+  describe("setTrackShowVideo", () => {
+    it("only mutates the targeted track", () => {
+      get().actions.setTrackShowVideo(3, false);
+      expect(get().project.tracks[3].showVideo).toBe(false);
+      const others = get().project.tracks.filter((t) => t.id !== 3);
+      expect(others.every((t) => t.showVideo)).toBe(true);
+    });
+
+    it("can be toggled true → false → true", () => {
+      get().actions.setTrackShowVideo(0, false);
+      expect(get().project.tracks[0].showVideo).toBe(false);
+      get().actions.setTrackShowVideo(0, true);
+      expect(get().project.tracks[0].showVideo).toBe(true);
+    });
+  });
+
   describe("reset", () => {
     it("returns the store to a fresh initial state", () => {
       get().actions.setBpm(150);
