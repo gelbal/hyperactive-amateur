@@ -54,15 +54,17 @@ export function SuggestButton() {
 
   return (
     <div className="flex items-center gap-2">
-      <select
-        aria-label="subgenre"
-        value={subgenre}
-        onChange={(e) => setSubgenre(e.target.value as Subgenre)}
-        className="bg-zinc-900 text-sm rounded border border-zinc-700 px-2 py-1 focus:outline-none focus:border-orange-500"
-      >
-        <option value="boom-bap">boom-bap</option>
-        <option value="trap">trap</option>
-      </select>
+      {!disabled && (
+        <select
+          aria-label="subgenre"
+          value={subgenre}
+          onChange={(e) => setSubgenre(e.target.value as Subgenre)}
+          className="bg-zinc-900 text-sm rounded border border-zinc-700 px-2 py-1 focus:outline-none focus:border-orange-500"
+        >
+          <option value="boom-bap">boom-bap</option>
+          <option value="trap">trap</option>
+        </select>
+      )}
       <button
         type="button"
         aria-label="Suggest a beat"

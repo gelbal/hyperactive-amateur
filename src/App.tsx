@@ -10,9 +10,7 @@ import { SuggestButton } from "./components/SuggestButton";
 import { VariationButtons } from "./components/VariationButtons";
 import { RecordCountdown } from "./components/RecordCountdown";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
-import { SwingSlider } from "./components/SwingSlider";
-import { CutSubdivisionSelect } from "./components/CutSubdivisionSelect";
-import { HoldTimeControl } from "./components/HoldTimeControl";
+import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -47,16 +45,19 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="border-b border-zinc-800">
-        <div className="flex items-center gap-4 px-4 pt-3 pb-2">
-          <h1 className="text-2xl font-bold">Amateur Hyperactive</h1>
-          <PlayButton />
-          <span className="text-[10px] text-zinc-500 -ml-2">space</span>
-          <BpmInput />
-          <SwingSlider />
-          <CutSubdivisionSelect />
-          <HoldTimeControl />
+        <div className="flex items-center gap-5 px-4 pt-3 pb-2">
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-300">
+            Amateur Hyperactive
+          </h1>
+          <div className="flex items-center gap-3">
+            <PlayButton />
+            <span className="text-[10px] text-zinc-500 -ml-1">space</span>
+            <BpmInput />
+          </div>
+          <span className="h-6 w-px bg-zinc-800" aria-hidden />
+          <FeelDisclosure />
         </div>
-        <div className="flex items-center gap-4 px-4 pt-2 pb-3 border-t border-zinc-900">
+        <div className="flex items-center gap-3 px-4 pt-2 pb-3 border-t border-zinc-900">
           <SuggestButton />
           <VariationButtons />
           <ExportButton />
