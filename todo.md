@@ -115,7 +115,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 ## Docs (§ 3.6)
 
-- [ ] **v1.1-14** — README "Recording for best results" guide
+- [x] **v1.1-14** — README "Recording for best results" guide
 
 ## Smoke test
 

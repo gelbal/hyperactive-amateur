@@ -20,22 +20,27 @@ npm run dev                  # http://localhost:5173
 You'll be prompted to grant camera + microphone access on first record.
 **Hyperpad targets desktop Chrome / Edge ≥120.** Safari is unsupported in v1.
 
-## Anthropic API key
+## API keys
 
-The "Suggest a beat" button calls Claude Haiku 4.5 directly from the browser
-in dev. Get a key at [console.anthropic.com](https://console.anthropic.com)
-and drop it in `.env.local`:
+Hyperpad uses two AI providers, each for a different job. Both are
+optional — the app runs fine without them, only the corresponding
+features go quiet.
+
+| Variable | Used for | Get a key |
+|---|---|---|
+| `VITE_ANTHROPIC_API_KEY` | "Suggest a beat" + variations (Claude Haiku 4.5) | [console.anthropic.com](https://console.anthropic.com) |
+| `VITE_GEMINI_API_KEY` | Auto-tagging recorded clips (Gemini 3 Flash Preview) | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) — free tier, **not** a Google Cloud key |
+
+Drop both into `.env.local`:
 
 ```
 VITE_ANTHROPIC_API_KEY=sk-ant-...
+VITE_GEMINI_API_KEY=AIza...
 ```
 
-Without the key the rest of the app works fine; the Suggest button just
-errors when clicked.
-
-> **Important:** the dev key is bundled into the client. Before deploying
+> **Important:** dev keys are bundled into the client. Before deploying
 > Hyperpad anywhere public, follow [`docs/AI-MIGRATION.md`](docs/AI-MIGRATION.md)
-> to move the call behind a server proxy.
+> to move both calls behind a server proxy.
 
 ## Scripts
 
@@ -47,6 +52,56 @@ errors when clicked.
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run test:ui` | Vitest UI |
+
+## Recording for best results
+
+Hyperpad cuts between your clips on every musical hit. If all 8 of
+your clips are shot from exactly the same distance with the same
+framing and the same background, those cuts read as a strobe instead of
+a performance. The fix is in your hands, not the app's.
+
+### Vary at least one of these per clip
+
+- **Distance from the camera.** Some clips zoomed in close (mouth fills
+  the frame), some clips further back (head and shoulders).
+- **Framing position.** Some clips dead-center, some clips left, some
+  clips right. Move your chair.
+- **Background.** Different walls, a window, a bookshelf, a plant. Move
+  the laptop, or move yourself.
+
+You don't need all three for every clip. Even one varied dimension per
+clip removes most of the strobe effect.
+
+### A practical recipe (copy this for your first session)
+
+| Track | Sound idea | Framing |
+|---|---|---|
+| 1 (kick) | mouth thump "buh" | extreme close-up on mouth |
+| 2 (snare) | tongue click "tk" | medium, centered |
+| 3 (hat) | "ts ts ts" | profile, looking right |
+| 4 (vocal) | "yeah" | wide, against window |
+| 5 (vocal) | "uh" | wide, against bookshelf |
+| 6 (fx) | finger snap | hands only, low frame |
+| 7 (fx) | table thump | hands only, low frame |
+| 8 (kick alt) | chest hit "hmf" | medium, slight angle |
+
+### One more tip
+
+Keep the lighting the same across clips. Different framings work; wildly
+different exposures look like errors.
+
+### Visual cut controls (v1.1)
+
+Three knobs in the top bar tame the visual feel without re-recording:
+
+- **Cut rate** — quantize cuts to 1/16, 1/8 (default), 1/4, 1/2 or 1 bar.
+  Audio scheduling stays at 16ths regardless.
+- **Hold** — minimum time the renderer holds a cut before another
+  same-tier (e.g. vocal → vocal) clip can replace it. Higher-tier
+  clips always cut through.
+- **Eye toggle on each track row** — flip a track to audio-only so it
+  fires sound but never causes a viewport cut. The auto-tag flow sets
+  hi-hats to audio-only by default; you can override.
 
 ## How it works (one paragraph each)
 
