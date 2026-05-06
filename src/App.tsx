@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
+import { BpmInput } from "./components/BpmInput";
 import { initTransport } from "./lib/audio";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 
@@ -17,6 +18,7 @@ export function App() {
       <header className="flex items-center gap-4 p-4 border-b border-zinc-800">
         <h1 className="text-2xl font-bold">Hyperpad</h1>
         <PlayButton />
+        <BpmInput />
       </header>
       <StepGrid />
     </div>
