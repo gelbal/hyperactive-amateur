@@ -1,5 +1,5 @@
-// ABOUTME: videoEngine — hidden <video> elements per track + scheduled-event canvas renderer.
-// ABOUTME: Render decisions read the audio clock (Tone.now seconds) so A/V stays locked.
+// ABOUTME: videoEngine — hidden <video> elements per track + quantized canvas renderer.
+// ABOUTME: Cut decisions land on cutSubdivision boundaries; audio playback path is unchanged.
 import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -23,17 +23,19 @@ export interface TrackContext {
 
 export interface TriggerEvent {
   trackId: number;
-  startTime: number; // audio context seconds (Tone.now base)
-  endTime: number;
+  // Audio context seconds (Tone.now base) when the trigger fired.
+  startTime: number;
 }
-
-const GC_GRACE_SECONDS = 0.5;
 
 let host: HTMLDivElement | null = null;
 const videos = new Map<number, HTMLVideoElement>();
 const trims = new Map<number, { startMs: number; endMs: number }>();
-let triggers: TriggerEvent[] = [];
+let pendingTriggers: TriggerEvent[] = [];
+let currentlyDisplayed: TriggerEvent | null = null;
 let storeUnsubscribe: (() => void) | null = null;
+let cutSubdivisionUnsubscribe: (() => void) | null = null;
+let boundaryEventId: number | null = null;
+let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
 let activeCanvas: HTMLCanvasElement | null = null;
 
@@ -77,19 +79,14 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   trims.set(trackId, { startMs: clip.trimStartMs, endMs: clip.trimEndMs });
 }
 
-// Schedule a trigger event for the renderer to consume. `when` is in audio
-// context seconds (Tone.now base). Also queues the actual <video> playback to
-// start at the same wall-clock moment.
+// Push a new trigger onto the pending queue and schedule the underlying video
+// element to seek+play at the requested audio time. The visible cut is decided
+// later, at the next boundary callback.
 export function trigger(trackId: number, when: number): void {
   const trim = trims.get(trackId);
   if (!trim) return;
-  const durationSeconds = Math.max(0.05, (trim.endMs - trim.startMs) / 1000);
 
-  triggers.push({
-    trackId,
-    startTime: when,
-    endTime: when + durationSeconds,
-  });
+  pendingTriggers.push({ trackId, startTime: when });
 
   const delaySeconds = Math.max(0, when - Tone.now());
   const start = () => {
@@ -98,7 +95,7 @@ export function trigger(trackId: number, when: number): void {
     try {
       video.currentTime = trim.startMs / 1000;
     } catch {
-      // currentTime can throw before metadata loads; the next trigger will retry.
+      // currentTime can throw before metadata loads; later triggers retry.
     }
     void video.play().catch(() => undefined);
   };
@@ -106,44 +103,25 @@ export function trigger(trackId: number, when: number): void {
   else setTimeout(start, delaySeconds * 1000);
 }
 
-// Pure: drop trigger events whose endTime is well in the past.
-export function gcEvents(events: TriggerEvent[], audioTime: number): TriggerEvent[] {
-  const cutoff = audioTime - GC_GRACE_SECONDS;
-  return events.filter((e) => e.endTime >= cutoff);
-}
-
-// Pure: which events should be visible at a given audio time. Muted tracks
-// are filtered out as defense in depth.
-export function findActiveEvents(
-  events: TriggerEvent[],
-  audioTime: number,
-  contexts?: Map<number, TrackContext>,
-): TriggerEvent[] {
-  return events.filter((e) => {
-    if (e.startTime > audioTime || audioTime > e.endTime) return false;
-    const ctx = contexts?.get(e.trackId);
-    if (ctx?.muted) return false;
-    return true;
-  });
-}
-
 // Pure: pick the visually-winning event by tag priority, ties broken by
-// most-recent startTime.
+// most-recent startTime. Muted tracks are stripped before comparison.
 export function pickActiveEvent(
   events: TriggerEvent[],
   contexts?: Map<number, TrackContext>,
 ): TriggerEvent | null {
   if (events.length === 0) return null;
+  const eligible = events.filter((e) => !contexts?.get(e.trackId)?.muted);
+  if (eligible.length === 0) return null;
 
   const score = (e: TriggerEvent): number => {
     const tag = contexts?.get(e.trackId)?.tag ?? null;
     return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
   };
 
-  let winner = events[0];
+  let winner = eligible[0];
   let winnerScore = score(winner);
-  for (let i = 1; i < events.length; i++) {
-    const candidate = events[i];
+  for (let i = 1; i < eligible.length; i++) {
+    const candidate = eligible[i];
     const candidateScore = score(candidate);
     if (
       candidateScore > winnerScore ||
@@ -156,6 +134,27 @@ export function pickActiveEvent(
   return winner;
 }
 
+// Pure: among triggers landing in (windowStart, windowEnd], pick the priority
+// winner. If the winner has the same priority tier as `current` AND the
+// window's earliest such trigger is the only candidate, callers may decide to
+// hold via ducking (v1.1-7). For now this returns the priority winner; the
+// ducking layer wraps it.
+export function quantizeToBoundary(
+  triggers: TriggerEvent[],
+  windowStart: number,
+  windowEnd: number,
+  contexts: Map<number, TrackContext>,
+): { winner: TriggerEvent | null; consumed: TriggerEvent[]; remaining: TriggerEvent[] } {
+  const consumed: TriggerEvent[] = [];
+  const remaining: TriggerEvent[] = [];
+  for (const t of triggers) {
+    if (t.startTime > windowStart && t.startTime <= windowEnd) consumed.push(t);
+    else if (t.startTime > windowEnd) remaining.push(t);
+    // else: events older than windowStart fell off; intentional.
+  }
+  return { winner: pickActiveEvent(consumed, contexts), consumed, remaining };
+}
+
 function readTrackContexts(): Map<number, TrackContext> {
   const map = new Map<number, TrackContext>();
   for (const track of useAppStore.getState().project.tracks) {
@@ -164,22 +163,76 @@ function readTrackContexts(): Map<number, TrackContext> {
   return map;
 }
 
-export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
+// Boundary callback: decide what to display until the next boundary.
+function onCutBoundary(boundaryTime: number): void {
+  const interval = subdivisionToSeconds(cutSubdivision);
+  const windowStart = boundaryTime - interval;
+  const windowEnd = boundaryTime;
+  const contexts = readTrackContexts();
+  const result = quantizeToBoundary(pendingTriggers, windowStart, windowEnd, contexts);
+  pendingTriggers = result.remaining;
+  if (result.winner) currentlyDisplayed = result.winner;
+}
+
+function subdivisionToSeconds(value: CutSubdivision): number {
+  const bpm = useAppStore.getState().project.bpm;
+  const beatSeconds = 60 / bpm;
+  switch (value) {
+    case "16n":
+      return beatSeconds / 4;
+    case "8n":
+      return beatSeconds / 2;
+    case "4n":
+      return beatSeconds;
+    case "2n":
+      return beatSeconds * 2;
+    case "1m":
+      return beatSeconds * 4;
+  }
+}
+
+export function drawCurrentFrame(ctx: CanvasRenderingContext2D, _audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-
-  triggers = gcEvents(triggers, audioTime);
 
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, w, h);
 
-  const contexts = readTrackContexts();
-  const active = findActiveEvents(triggers, audioTime, contexts);
-  const winner = pickActiveEvent(active, contexts);
-  if (!winner) return;
-  const video = videos.get(winner.trackId);
+  if (!currentlyDisplayed) return;
+  const video = videos.get(currentlyDisplayed.trackId);
   if (!video) return;
   ctx.drawImage(video, 0, 0, w, h);
+}
+
+function disposeBoundaryEvent(): void {
+  if (boundaryEventId !== null) {
+    try {
+      Tone.getTransport().clear(boundaryEventId);
+    } catch {
+      // Transport may have been torn down; safe to ignore.
+    }
+    boundaryEventId = null;
+  }
+}
+
+function scheduleBoundaryEvent(): void {
+  disposeBoundaryEvent();
+  boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
+    onCutBoundary(time);
+  }, cutSubdivision);
+}
+
+export function setVideoCutSubdivision(value: CutSubdivision): void {
+  if (value === cutSubdivision && boundaryEventId !== null) return;
+  cutSubdivision = value;
+  scheduleBoundaryEvent();
+}
+
+// Reset transient render state — used on stop/pause so we don't carry stale
+// triggers into the next playback session.
+export function resetPlaybackState(): void {
+  pendingTriggers = [];
+  currentlyDisplayed = null;
 }
 
 // Wires the engine to the store so hidden videos stay in sync with track clips.
@@ -204,18 +257,26 @@ export function initVideoEngine(): void {
     }
     lastClips = next;
   });
+
+  // Sync the cut subdivision from the store now and on every change.
+  cutSubdivision = useAppStore.getState().project.cutSubdivision;
+  scheduleBoundaryEvent();
+  cutSubdivisionUnsubscribe = useAppStore.subscribe((state, prev) => {
+    if (state.project.cutSubdivision !== prev.project.cutSubdivision) {
+      setVideoCutSubdivision(state.project.cutSubdivision);
+    }
+  });
 }
 
-// Stub for v1.1-4 — wired up in v1.1-5 with the boundary scheduleRepeat.
-export function setVideoCutSubdivision(_value: CutSubdivision): void {
-  // intentionally no-op until the boundary scheduler lands.
-}
-
-export function getDebugInfo(): { activeEvents: TriggerEvent[]; audioTime: number } {
-  const audioTime = Tone.now();
+export function getDebugInfo(): {
+  pending: TriggerEvent[];
+  current: TriggerEvent | null;
+  audioTime: number;
+} {
   return {
-    activeEvents: findActiveEvents(triggers, audioTime, readTrackContexts()),
-    audioTime,
+    pending: [...pendingTriggers],
+    current: currentlyDisplayed,
+    audioTime: Tone.now(),
   };
 }
 
@@ -224,13 +285,20 @@ export function __resetVideoEngineForTesting(): void {
     storeUnsubscribe();
     storeUnsubscribe = null;
   }
+  if (cutSubdivisionUnsubscribe) {
+    cutSubdivisionUnsubscribe();
+    cutSubdivisionUnsubscribe = null;
+  }
+  disposeBoundaryEvent();
   for (const video of videos.values()) video.remove();
   videos.clear();
   trims.clear();
-  triggers = [];
+  pendingTriggers = [];
+  currentlyDisplayed = null;
   if (host) {
     host.remove();
     host = null;
   }
   initialized = false;
+  cutSubdivision = "8n";
 }

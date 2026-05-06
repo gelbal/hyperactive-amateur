@@ -1,8 +1,17 @@
-// ABOUTME: videoEngine tests — pure helpers (gc, find, pick) plus integration smoke tests.
+// ABOUTME: videoEngine tests — pure helpers (quantize, pick) plus integration smoke tests.
 // ABOUTME: Tone is mocked so tests can manipulate "now" deterministically.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("tone", () => ({ now: vi.fn(() => 0) }));
+type RepeatCb = (time: number) => void;
+const transportClear = vi.fn();
+const transportScheduleRepeat = vi.fn<(cb: RepeatCb, interval: string) => number>(() => 1);
+vi.mock("tone", () => ({
+  now: vi.fn(() => 0),
+  getTransport: vi.fn(() => ({
+    clear: transportClear,
+    scheduleRepeat: transportScheduleRepeat,
+  })),
+}));
 
 import * as Tone from "tone";
 import {
@@ -10,9 +19,10 @@ import {
   trigger,
   drawCurrentFrame,
   initVideoEngine,
-  gcEvents,
-  findActiveEvents,
   pickActiveEvent,
+  quantizeToBoundary,
+  setVideoCutSubdivision,
+  resetPlaybackState,
   __resetVideoEngineForTesting,
   type TrackContext,
   type TriggerEvent,
@@ -40,55 +50,24 @@ function getCtx() {
   return ctx;
 }
 
-describe("videoEngine pure helpers", () => {
-  it("gcEvents drops events whose endTime is more than 0.5s in the past", () => {
-    const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 },
-      { trackId: 1, startTime: 1, endTime: 2 },
-    ];
-    expect(gcEvents(events, 1.5)).toHaveLength(2);
-    expect(gcEvents(events, 1.6)).toHaveLength(1);
-    expect(gcEvents(events, 5)).toHaveLength(0);
-  });
-
-  it("findActiveEvents returns events whose window covers the audio time", () => {
-    const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 },
-      { trackId: 1, startTime: 0.5, endTime: 1.5 },
-      { trackId: 2, startTime: 2, endTime: 3 },
-    ];
-    expect(findActiveEvents(events, 0.7).map((e) => e.trackId)).toEqual([0, 1]);
-    expect(findActiveEvents(events, 1.2).map((e) => e.trackId)).toEqual([1]);
-    expect(findActiveEvents(events, 1.6).map((e) => e.trackId)).toEqual([]);
-  });
-
-  it("findActiveEvents skips muted tracks", () => {
-    const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 },
-      { trackId: 1, startTime: 0, endTime: 1 },
-    ];
-    const contexts = new Map<number, TrackContext>([
-      [0, { tag: "kick", muted: true }],
-      [1, { tag: "snare", muted: false }],
-    ]);
-    const active = findActiveEvents(events, 0.5, contexts);
-    expect(active.map((e) => e.trackId)).toEqual([1]);
-  });
-
-  it("pickActiveEvent without contexts falls back to most-recent startTime", () => {
-    const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 },
-      { trackId: 5, startTime: 0.4, endTime: 1.4 },
-    ];
-    expect(pickActiveEvent(events)?.trackId).toBe(5);
+describe("pickActiveEvent", () => {
+  it("returns null on empty input", () => {
     expect(pickActiveEvent([])).toBeNull();
   });
 
-  it("pickActiveEvent prefers vocal over kick over hat", () => {
+  it("falls back to most-recent startTime without contexts", () => {
     const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 }, // vocal
-      { trackId: 1, startTime: 0, endTime: 1 }, // kick
-      { trackId: 2, startTime: 0, endTime: 1 }, // hat
+      { trackId: 0, startTime: 0 },
+      { trackId: 5, startTime: 0.4 },
+    ];
+    expect(pickActiveEvent(events)?.trackId).toBe(5);
+  });
+
+  it("prefers vocal over kick over hat", () => {
+    const events: TriggerEvent[] = [
+      { trackId: 0, startTime: 0 },
+      { trackId: 1, startTime: 0 },
+      { trackId: 2, startTime: 0 },
     ];
     const contexts = new Map<number, TrackContext>([
       [0, { tag: "vocal", muted: false }],
@@ -98,16 +77,51 @@ describe("videoEngine pure helpers", () => {
     expect(pickActiveEvent(events, contexts)?.trackId).toBe(0);
   });
 
-  it("pickActiveEvent ties on tag are broken by most-recent startTime", () => {
+  it("filters out muted tracks before comparing", () => {
     const events: TriggerEvent[] = [
-      { trackId: 0, startTime: 0, endTime: 1 },
-      { trackId: 1, startTime: 0.3, endTime: 1.3 },
+      { trackId: 0, startTime: 0 },
+      { trackId: 1, startTime: 0 },
     ];
     const contexts = new Map<number, TrackContext>([
-      [0, { tag: null, muted: false }],
-      [1, { tag: null, muted: false }],
+      [0, { tag: "vocal", muted: true }],
+      [1, { tag: "kick", muted: false }],
     ]);
     expect(pickActiveEvent(events, contexts)?.trackId).toBe(1);
+  });
+});
+
+describe("quantizeToBoundary", () => {
+  const empty = new Map<number, TrackContext>();
+
+  it("returns the priority winner of triggers in (windowStart, windowEnd]", () => {
+    const triggers: TriggerEvent[] = [
+      { trackId: 0, startTime: 0.1 },
+      { trackId: 1, startTime: 0.4 },
+      { trackId: 2, startTime: 0.9 },
+    ];
+    const result = quantizeToBoundary(triggers, 0, 0.5, empty);
+    expect(result.consumed.map((e) => e.trackId)).toEqual([0, 1]);
+    expect(result.winner?.trackId).toBe(1);
+    expect(result.remaining.map((e) => e.trackId)).toEqual([2]);
+  });
+
+  it("returns null winner on empty windows", () => {
+    const result = quantizeToBoundary([], 0, 0.5, empty);
+    expect(result.winner).toBeNull();
+  });
+
+  it("ignores triggers older than the window start", () => {
+    const triggers: TriggerEvent[] = [{ trackId: 0, startTime: -0.1 }];
+    const result = quantizeToBoundary(triggers, 0, 0.5, empty);
+    expect(result.winner).toBeNull();
+    expect(result.consumed).toHaveLength(0);
+    expect(result.remaining).toHaveLength(0);
+  });
+
+  it("keeps future triggers in the remaining list", () => {
+    const triggers: TriggerEvent[] = [{ trackId: 3, startTime: 0.6 }];
+    const result = quantizeToBoundary(triggers, 0, 0.5, empty);
+    expect(result.remaining.map((e) => e.trackId)).toEqual([3]);
   });
 });
 
@@ -115,6 +129,8 @@ describe("videoEngine integration", () => {
   beforeEach(() => {
     __resetVideoEngineForTesting();
     useAppStore.getState().actions.reset();
+    transportClear.mockClear();
+    transportScheduleRepeat.mockClear();
     (Tone.now as ReturnType<typeof vi.fn>).mockReturnValue(0);
   });
 
@@ -134,23 +150,53 @@ describe("videoEngine integration", () => {
     expect(videos).toHaveLength(1);
   });
 
-  it("trigger pushes onto the queue and drawCurrentFrame is a no-op outside the window", () => {
-    setClipForTrack(0, makeClip(1));
-    trigger(0, 0);
-    const ctx = getCtx();
-    // 10s later — well past the trigger window — should clear and not draw.
-    expect(() => drawCurrentFrame(ctx, 10)).not.toThrow();
+  it("initVideoEngine schedules a boundary callback at the project subdivision", () => {
+    useAppStore.getState().actions.setCutSubdivision("4n");
+    initVideoEngine();
+    expect(transportScheduleRepeat).toHaveBeenCalledTimes(1);
+    expect(transportScheduleRepeat.mock.calls[0]?.[1]).toBe("4n");
   });
 
-  it("multiple triggers leave the most-recent active during overlap", () => {
+  it("setVideoCutSubdivision tears down and re-registers the boundary callback", () => {
+    initVideoEngine();
+    transportScheduleRepeat.mockClear();
+    transportClear.mockClear();
+    setVideoCutSubdivision("1m");
+    expect(transportClear).toHaveBeenCalled();
+    expect(transportScheduleRepeat).toHaveBeenCalledTimes(1);
+    expect(transportScheduleRepeat.mock.calls[0]?.[1]).toBe("1m");
+  });
+
+  it("drawCurrentFrame is a no-op when nothing is currently displayed", () => {
+    const ctx = getCtx();
+    expect(() => drawCurrentFrame(ctx, 0)).not.toThrow();
+  });
+
+  it("trigger pushes onto pending; boundary picks the winner", () => {
+    initVideoEngine();
     setClipForTrack(0, makeClip(1));
     setClipForTrack(1, makeClip(2));
-    trigger(0, 0);
-    trigger(1, 0.1);
+    useAppStore.getState().actions.setTrackTag(0, "kick");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    trigger(0, 0.1);
+    trigger(1, 0.2);
+
+    // Invoke the registered scheduleRepeat callback at boundary t=0.5.
+    const cb = transportScheduleRepeat.mock.calls[0]?.[0];
+    expect(cb).toBeDefined();
+    cb?.(0.5);
+
     const ctx = getCtx();
-    drawCurrentFrame(ctx, 0.2);
-    // Both windows overlap at 0.2s; pickActiveEvent should pick track 1.
+    expect(() => drawCurrentFrame(ctx, 0.5)).not.toThrow();
+    // Vocal beats kick on priority — track 1 should be displayed.
     // We can't assert the actual draw in jsdom, but the call must not throw.
-    expect(() => drawCurrentFrame(ctx, 0.2)).not.toThrow();
+  });
+
+  it("resetPlaybackState clears pending and current display", () => {
+    setClipForTrack(0, makeClip(1));
+    trigger(0, 0.1);
+    resetPlaybackState();
+    const ctx = getCtx();
+    expect(() => drawCurrentFrame(ctx, 1)).not.toThrow();
   });
 });

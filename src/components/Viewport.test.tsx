@@ -2,7 +2,13 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("tone", () => ({ now: vi.fn(() => 0) }));
+vi.mock("tone", () => ({
+  now: vi.fn(() => 0),
+  getTransport: vi.fn(() => ({
+    clear: vi.fn(),
+    scheduleRepeat: vi.fn(() => 1),
+  })),
+}));
 
 import { Viewport } from "./Viewport";
 

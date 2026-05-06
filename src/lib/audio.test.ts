@@ -14,8 +14,12 @@ const transportMock = {
 };
 
 const videoEngineTrigger = vi.fn();
+const videoEngineResetPlaybackState = vi.fn();
+const videoEngineSetCutSubdivision = vi.fn();
 vi.mock("./videoEngine", () => ({
   trigger: (...args: unknown[]) => videoEngineTrigger(...args),
+  resetPlaybackState: () => videoEngineResetPlaybackState(),
+  setVideoCutSubdivision: (...args: unknown[]) => videoEngineSetCutSubdivision(...args),
 }));
 
 const drawMock = { schedule: vi.fn((fn: () => void) => fn()) };

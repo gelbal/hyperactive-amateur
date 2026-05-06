@@ -153,6 +153,7 @@ export async function startPlayback(): Promise<void> {
 export function stopPlayback(): void {
   Tone.getTransport().stop();
   stepCounter = 0;
+  videoEngine.resetPlaybackState();
   useAppStore.getState().actions.setCurrentStep(0);
 }
 
