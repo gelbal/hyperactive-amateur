@@ -5,8 +5,12 @@ import { useAppStore } from "../store/useAppStore";
 
 const STEP_COUNT = 16;
 
+// Per-track pitches let you hear which tracks are firing while we're still on
+// the placeholder metronome. They get replaced with real Tone.Players in step 12.
+const TRACK_PITCHES = ["C2", "D2", "E2", "F2", "G2", "A2", "B2", "C3"];
+
 let initialized = false;
-let metronomeSynth: Tone.MembraneSynth | null = null;
+let metronomeSynths: Tone.MembraneSynth[] = [];
 let scheduledEventId: number | null = null;
 let bpmUnsubscribe: (() => void) | null = null;
 let stepCounter = 0;
@@ -24,9 +28,9 @@ export function initTransport(): void {
   const transport = Tone.getTransport();
   transport.bpm.value = useAppStore.getState().project.bpm;
 
-  metronomeSynth = new Tone.MembraneSynth({
-    volume: -10,
-  }).toDestination();
+  metronomeSynths = TRACK_PITCHES.map(
+    () => new Tone.MembraneSynth({ volume: -10 }).toDestination(),
+  );
 
   scheduledEventId = transport.scheduleRepeat((time) => {
     const stepIndex = stepCounter % STEP_COUNT;
@@ -47,11 +51,17 @@ export function initTransport(): void {
   });
 }
 
-// Per-step trigger logic. In Step 5 this just clicks the metronome on every
-// step regardless of toggles; subsequent steps refine this.
-function onStep(_stepIndex: number, time: number): void {
-  if (metronomeSynth) {
-    metronomeSynth.triggerAttackRelease("C2", "16n", time);
+// Per-step trigger logic. Each track that has its current step toggled on
+// (and isn't muted) fires a synth click on its pitch. Real Tone.Players
+// will replace this in step 12.
+function onStep(stepIndex: number, time: number): void {
+  const tracks = useAppStore.getState().project.tracks;
+  for (const track of tracks) {
+    if (!track.steps[stepIndex] || track.muted) continue;
+    const synth = metronomeSynths[track.id];
+    if (synth) {
+      synth.triggerAttackRelease(TRACK_PITCHES[track.id], "16n", time);
+    }
   }
 }
 
@@ -88,7 +98,7 @@ export function __resetAudioForTesting(): void {
     bpmUnsubscribe();
     bpmUnsubscribe = null;
   }
-  metronomeSynth = null;
+  metronomeSynths = [];
   initialized = false;
   stepCounter = 0;
 }
