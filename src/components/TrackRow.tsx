@@ -7,6 +7,7 @@ import { recordClip } from "../lib/recorder";
 import { getAudioContext } from "../lib/audio";
 import { autoTrim } from "../lib/autoTrim";
 import { autoTag } from "../lib/aiAutoTag";
+import { requestMedia } from "../lib/media";
 import type { Clip, Tag } from "../types";
 
 const AUTO_TAG_CONFIDENCE_THRESHOLD = 0.6;
@@ -71,7 +72,9 @@ export function TrackRow({ trackId }: TrackRowProps) {
 
   const startRecording = async () => {
     if (!stream) {
-      setError("Enable camera first");
+      // Trigger the permission flow instead of nagging the user; the viewport
+      // gate will surface the prompt prominently.
+      void requestMedia();
       return;
     }
     setError(null);
