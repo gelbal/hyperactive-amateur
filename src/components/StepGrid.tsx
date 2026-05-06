@@ -1,69 +1,8 @@
-// ABOUTME: 8x16 step sequencer grid — clickable cells toggle steps in the store.
-// ABOUTME: Renders a column-highlight playhead while playback is active.
-import { useAppStore } from "../store/useAppStore";
+// ABOUTME: 8-row sequencer grid — composes TrackRow components.
+// ABOUTME: Each TrackRow renders its own clip preview/record affordance + 16 step cells.
+import { TrackRow } from "./TrackRow";
 
-const STEP_COUNT = 16;
 const TRACK_COUNT = 8;
-
-interface StepCellProps {
-  trackId: number;
-  stepIndex: number;
-}
-
-function StepCell({ trackId, stepIndex }: StepCellProps) {
-  const active = useAppStore((s) => s.project.tracks[trackId].steps[stepIndex]);
-  const isCurrent = useAppStore(
-    (s) => s.playback.isPlaying && s.playback.currentStep === stepIndex,
-  );
-  const isDownbeat = stepIndex % 4 === 0;
-
-  const onClick = () => {
-    useAppStore.getState().actions.toggleStep(trackId, stepIndex);
-  };
-
-  let className = "w-10 h-10 rounded transition-colors ";
-  if (active) {
-    className += "bg-orange-500 hover:bg-orange-400";
-  } else if (isDownbeat) {
-    className += "bg-zinc-700 hover:bg-zinc-600";
-  } else {
-    className += "bg-zinc-800 hover:bg-zinc-600";
-  }
-  if (isCurrent) {
-    className += " ring-2 ring-orange-300";
-  }
-
-  return (
-    <button
-      type="button"
-      aria-label={`track ${trackId + 1} step ${stepIndex + 1}`}
-      aria-pressed={active}
-      data-active={active}
-      data-current={isCurrent}
-      data-track={trackId}
-      data-step={stepIndex}
-      onClick={onClick}
-      className={className}
-    />
-  );
-}
-
-interface TrackRowProps {
-  trackId: number;
-}
-
-function TrackRow({ trackId }: TrackRowProps) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-10 text-sm text-zinc-400 font-mono">T{trackId + 1}</span>
-      <div className="grid grid-cols-16 gap-1">
-        {Array.from({ length: STEP_COUNT }, (_, i) => (
-          <StepCell key={i} trackId={trackId} stepIndex={i} />
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export function StepGrid() {
   return (

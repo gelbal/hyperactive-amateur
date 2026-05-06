@@ -36,5 +36,10 @@ export function createInitialState(): AppState {
       selectedTrackId: null,
       showExportDialog: false,
     },
+    media: {
+      stream: null,
+      status: "idle",
+      error: null,
+    },
   };
 }

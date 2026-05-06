@@ -1,11 +1,20 @@
 // ABOUTME: CameraPreview — small live webcam tile in the top bar.
-// ABOUTME: Three states: prompt-to-enable, live preview, denied error message.
+// ABOUTME: Owns the single MediaStream request and mirrors it to the store for other components.
 import { useEffect, useRef } from "react";
 import { useMediaStream } from "../lib/useMediaStream";
+import { useAppStore } from "../store/useAppStore";
 
 export function CameraPreview() {
   const { stream, status, error, request } = useMediaStream();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    useAppStore.getState().actions.setMedia({
+      stream,
+      status,
+      error: error?.message ?? null,
+    });
+  }, [stream, status, error]);
 
   useEffect(() => {
     if (videoRef.current && stream) {

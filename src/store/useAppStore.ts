@@ -1,7 +1,7 @@
 // ABOUTME: Zustand store for Hyperpad — holds AppState and the actions that mutate it.
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
-import type { AppState } from "../types";
+import type { AppState, Clip, MediaStatus, RecordingState } from "../types";
 import { createInitialState } from "./initialState";
 
 function clamp(value: number, min: number, max: number): number {
@@ -17,6 +17,10 @@ export interface AppActions {
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentStep: (step: number) => void;
+  setTrackClip: (trackId: number, clip: Clip) => void;
+  clearTrackClip: (trackId: number) => void;
+  setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
+  setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   reset: () => void;
 }
 
@@ -75,6 +79,47 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setCurrentStep: (step) =>
       set((state) => ({ playback: { ...state.playback, currentStep: step } })),
+
+    setTrackClip: (trackId, clip) =>
+      set((state) => {
+        const previous = state.project.tracks[trackId]?.clip;
+        if (previous && previous.url && previous.url !== clip.url) {
+          // Avoid leaking object URLs when a clip is replaced.
+          URL.revokeObjectURL(previous.url);
+        }
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId ? { ...track, clip } : track,
+            ),
+          },
+        };
+      }),
+
+    clearTrackClip: (trackId) =>
+      set((state) => {
+        const previous = state.project.tracks[trackId]?.clip;
+        if (previous && previous.url) URL.revokeObjectURL(previous.url);
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId ? { ...track, clip: null } : track,
+            ),
+          },
+        };
+      }),
+
+    setMedia: (next) => set({ media: next }),
+
+    setRecordingState: (recordingState, activeTrackId) =>
+      set((state) => ({
+        recording: {
+          state: recordingState,
+          activeTrackId: activeTrackId === undefined ? state.recording.activeTrackId : activeTrackId,
+        },
+      })),
 
     reset: () => set({ ...createInitialState() }),
   },

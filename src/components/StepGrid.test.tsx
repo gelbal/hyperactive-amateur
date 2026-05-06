@@ -1,7 +1,27 @@
-// ABOUTME: StepGrid render tests — count, click-to-toggle, active class transitions.
+// ABOUTME: StepGrid integration tests — renders 8 TrackRows with their step cells.
 // ABOUTME: Resets the store between tests so toggles don't leak across cases.
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("tone", () => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  getTransport: vi.fn(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    clear: vi.fn(),
+    scheduleRepeat: vi.fn(() => 1),
+    bpm: { value: 90 },
+  })),
+  getDraw: vi.fn(() => ({ schedule: vi.fn() })),
+  getContext: vi.fn(() => ({ rawContext: {} })),
+  MembraneSynth: vi.fn(() => ({
+    triggerAttackRelease: vi.fn(),
+    toDestination: vi.fn(function (this: object) {
+      return this;
+    }),
+  })),
+}));
+
 import { StepGrid } from "./StepGrid";
 import { useAppStore } from "../store/useAppStore";
 
@@ -12,7 +32,7 @@ describe("StepGrid", () => {
 
   it("renders 128 step buttons (8 x 16)", () => {
     render(<StepGrid />);
-    const buttons = screen.getAllByRole("button");
+    const buttons = screen.getAllByLabelText(/^track \d+ step \d+$/);
     expect(buttons).toHaveLength(128);
   });
 

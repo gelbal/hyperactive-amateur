@@ -37,10 +37,11 @@ describe("createInitialState", () => {
     expect(b.project.tracks[0].steps[0]).toBe(false);
   });
 
-  it("initializes default playback / recording / ui state", () => {
+  it("initializes default playback / recording / ui / media state", () => {
     const state = createInitialState();
     expect(state.playback).toEqual({ isPlaying: false, currentStep: 0, activeTriggers: [] });
     expect(state.recording).toEqual({ activeTrackId: null, state: "idle" });
     expect(state.ui).toEqual({ selectedTrackId: null, showExportDialog: false });
+    expect(state.media).toEqual({ stream: null, status: "idle", error: null });
   });
 });

@@ -60,9 +60,18 @@ export interface UiState {
   showExportDialog: boolean;
 }
 
+export type MediaStatus = "idle" | "requesting" | "granted" | "denied";
+
+export interface MediaSlice {
+  stream: MediaStream | null;
+  status: MediaStatus;
+  error: string | null;
+}
+
 export interface AppState {
   project: ProjectState;
   playback: PlaybackState;
   recording: RecordingSlice;
   ui: UiState;
+  media: MediaSlice;
 }
