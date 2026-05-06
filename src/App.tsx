@@ -6,6 +6,7 @@ import { PlayButton } from "./components/PlayButton";
 import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
 import { Viewport } from "./components/Viewport";
+import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
@@ -27,6 +28,7 @@ export function App() {
       </header>
       <main className="flex flex-col items-center gap-6 py-6">
         <Viewport />
+        <PadGrid />
       </main>
       <StepGrid />
     </div>

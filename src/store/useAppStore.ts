@@ -17,6 +17,7 @@ export interface AppActions {
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentStep: (step: number) => void;
+  markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (trackId: number, tag: Tag | null) => void;
@@ -80,6 +81,14 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setCurrentStep: (step) =>
       set((state) => ({ playback: { ...state.playback, currentStep: step } })),
+
+    markTriggered: (trackId) =>
+      set((state) => ({
+        playback: {
+          ...state.playback,
+          triggerSeq: state.playback.triggerSeq.map((v, i) => (i === trackId ? v + 1 : v)),
+        },
+      })),
 
     setTrackClip: (trackId, clip) =>
       set((state) => {

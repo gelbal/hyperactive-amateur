@@ -27,6 +27,7 @@ export function createInitialState(): AppState {
       isPlaying: false,
       currentStep: 0,
       activeTriggers: [],
+      triggerSeq: new Array(TRACK_COUNT).fill(0),
     },
     recording: {
       activeTrackId: null,

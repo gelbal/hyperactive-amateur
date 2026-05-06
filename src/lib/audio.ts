@@ -90,11 +90,13 @@ export function triggerTrack(trackId: number, when: number): void {
       // Player can reject restart-too-soon at the same time slot; safe to swallow.
     }
     videoEngine.trigger(trackId, when);
+    useAppStore.getState().actions.markTriggered(trackId);
     return;
   }
 
   const synth = metronomeSynths[trackId];
   if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when);
+  useAppStore.getState().actions.markTriggered(trackId);
 }
 
 export function nowSeconds(): number {

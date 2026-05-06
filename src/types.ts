@@ -48,6 +48,9 @@ export interface PlaybackState {
   currentStep: number;
   // Recent trigger events the renderer consumes.
   activeTriggers: ActiveTrigger[];
+  // Monotonically increments per track on every trigger; pads subscribe to
+  // the relevant slot to drive a brief flash animation.
+  triggerSeq: number[];
 }
 
 export interface RecordingSlice {
