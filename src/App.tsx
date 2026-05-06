@@ -10,6 +10,7 @@ import { SuggestButton } from "./components/SuggestButton";
 import { RecordCountdown } from "./components/RecordCountdown";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { SwingSlider } from "./components/SwingSlider";
+import { CutSubdivisionSelect } from "./components/CutSubdivisionSelect";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -49,6 +50,7 @@ export function App() {
         <span className="text-[10px] text-zinc-500 -ml-2">space</span>
         <BpmInput />
         <SwingSlider />
+        <CutSubdivisionSelect />
         <SuggestButton />
         <ExportButton />
         <CameraPreview />
