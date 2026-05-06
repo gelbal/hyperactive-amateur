@@ -47,4 +47,39 @@ describe("FeelDisclosure", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+
+  describe("Scratch", () => {
+    it("the first click reveals confirm + cancel without scratching", () => {
+      useAppStore.getState().actions.setBpm(140);
+      render(<FeelDisclosure />);
+      fireEvent.click(screen.getByLabelText("Feel — cut rate, swing, hold"));
+      fireEvent.click(screen.getByLabelText("Scratch — start fresh"));
+      expect(screen.getByLabelText("Confirm scratch")).toBeInTheDocument();
+      expect(screen.getByLabelText("Cancel scratch")).toBeInTheDocument();
+      // BPM untouched.
+      expect(useAppStore.getState().project.bpm).toBe(140);
+    });
+
+    it("Cancel returns to the initial Scratch button without changing state", () => {
+      useAppStore.getState().actions.setBpm(140);
+      render(<FeelDisclosure />);
+      fireEvent.click(screen.getByLabelText("Feel — cut rate, swing, hold"));
+      fireEvent.click(screen.getByLabelText("Scratch — start fresh"));
+      fireEvent.click(screen.getByLabelText("Cancel scratch"));
+      expect(screen.getByLabelText("Scratch — start fresh")).toBeInTheDocument();
+      expect(useAppStore.getState().project.bpm).toBe(140);
+    });
+
+    it("Confirm wipes state and closes the popover", () => {
+      useAppStore.getState().actions.setBpm(140);
+      useAppStore.getState().actions.setSubgenre("phonk");
+      render(<FeelDisclosure />);
+      fireEvent.click(screen.getByLabelText("Feel — cut rate, swing, hold"));
+      fireEvent.click(screen.getByLabelText("Scratch — start fresh"));
+      fireEvent.click(screen.getByLabelText("Confirm scratch"));
+      expect(useAppStore.getState().project.bpm).toBe(90);
+      expect(useAppStore.getState().project.subgenre).toBe("boom-bap");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
 });

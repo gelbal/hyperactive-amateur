@@ -3,9 +3,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Tag } from "../types";
 
+export type Subgenre = "boom-bap" | "trap" | "lo-fi" | "phonk";
+
+export const SUBGENRES: readonly Subgenre[] = ["boom-bap", "trap", "lo-fi", "phonk"] as const;
+
 export interface SuggestPatternInput {
   bpm: number;
-  subgenre: "boom-bap" | "trap";
+  subgenre: Subgenre;
   tracks: Array<{ id: number; tag: Tag | null }>;
 }
 

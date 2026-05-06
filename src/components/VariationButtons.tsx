@@ -23,6 +23,7 @@ const BUTTONS: ButtonSpec[] = [
 export function VariationButtons() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
+  const subgenre = useAppStore((s) => s.project.subgenre);
   const [pending, setPending] = useState<Variation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -47,7 +48,7 @@ export function VariationButtons() {
     try {
       const grid = await varyPattern({
         bpm,
-        subgenre: "boom-bap",
+        subgenre,
         tracks: tracks.map((t) => ({ id: t.id, tag: t.tag })),
         currentPattern: before,
         variation,

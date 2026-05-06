@@ -1,6 +1,7 @@
 // ABOUTME: Action-level tests for the Zustand store — toggleStep, BPM/swing clamps, mute, volume.
 // ABOUTME: Each test calls reset() to start from a known state.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import "fake-indexeddb/auto";
 import { useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
@@ -76,6 +77,45 @@ describe("useAppStore", () => {
       expect(get().project.sameTierHoldMs).toBe(2000);
       get().actions.setSameTierHoldMs(750);
       expect(get().project.sameTierHoldMs).toBe(750);
+    });
+  });
+
+  describe("setSubgenre", () => {
+    it("stores the new value", () => {
+      get().actions.setSubgenre("phonk");
+      expect(get().project.subgenre).toBe("phonk");
+      get().actions.setSubgenre("lo-fi");
+      expect(get().project.subgenre).toBe("lo-fi");
+    });
+  });
+
+  describe("scratch", () => {
+    it("revokes object URLs on every existing clip", async () => {
+      const revoke = vi.spyOn(URL, "revokeObjectURL");
+      const clip = {
+        blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+        url: "blob:test/x",
+        audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+        trimStartMs: 0,
+        trimEndMs: 800,
+        durationMs: 1000,
+      };
+      get().actions.setTrackClip(0, clip);
+      get().actions.setTrackClip(2, { ...clip, url: "blob:test/y" });
+      get().actions.scratch();
+      expect(revoke).toHaveBeenCalledWith("blob:test/x");
+      expect(revoke).toHaveBeenCalledWith("blob:test/y");
+      revoke.mockRestore();
+    });
+
+    it("returns the store to a fresh initial state", () => {
+      get().actions.setBpm(140);
+      get().actions.setSubgenre("phonk");
+      get().actions.toggleStep(0, 0);
+      get().actions.scratch();
+      expect(get().project.bpm).toBe(90);
+      expect(get().project.subgenre).toBe("boom-bap");
+      expect(get().project.tracks[0].steps[0]).toBe(false);
     });
   });
 

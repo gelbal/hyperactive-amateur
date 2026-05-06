@@ -74,6 +74,18 @@ describe("VariationButtons", () => {
     expect(arg.variation).toBe("halftime");
   });
 
+  it("variations honor the store subgenre instead of hardcoding boom-bap", async () => {
+    varyPattern.mockResolvedValue(pattern8x16(true));
+    fillClips(4);
+    setupPattern();
+    useAppStore.getState().actions.setSubgenre("lo-fi");
+    render(<VariationButtons />);
+    fireEvent.click(screen.getByLabelText("Busier"));
+    await waitFor(() => expect(varyPattern).toHaveBeenCalled());
+    const arg = varyPattern.mock.calls[0]?.[0] as { subgenre: string };
+    expect(arg.subgenre).toBe("lo-fi");
+  });
+
   it("after applying, undo restores the prior pattern", async () => {
     varyPattern.mockResolvedValue(pattern8x16(true));
     fillClips(4);

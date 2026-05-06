@@ -24,6 +24,7 @@ export function createInitialState(): AppState {
       swing: 0,
       cutSubdivision: "8n",
       sameTierHoldMs: 400,
+      subgenre: "boom-bap",
       tracks: Array.from({ length: TRACK_COUNT }, (_, i) => createEmptyTrack(i)),
     },
     playback: {

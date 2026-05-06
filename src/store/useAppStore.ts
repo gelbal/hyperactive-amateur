@@ -1,7 +1,16 @@
 // ABOUTME: Zustand store for Amateur Hyperactive — holds AppState and the actions that mutate it.
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
-import type { AppState, Clip, CutSubdivision, MediaStatus, RecordingState, Tag } from "../types";
+import type {
+  AppState,
+  Clip,
+  CutSubdivision,
+  MediaStatus,
+  RecordingState,
+  Subgenre,
+  Tag,
+} from "../types";
+import { clearProject } from "../lib/persistence";
 import { createInitialState } from "./initialState";
 
 function clamp(value: number, min: number, max: number): number {
@@ -15,6 +24,7 @@ export interface AppActions {
   setSwing: (swing: number) => void;
   setCutSubdivision: (value: CutSubdivision) => void;
   setSameTierHoldMs: (ms: number) => void;
+  setSubgenre: (value: Subgenre) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -34,6 +44,7 @@ export interface AppActions {
   applyPattern: (grid: boolean[][]) => void;
   dismissRecordingStation: () => void;
   reopenRecordingStation: () => void;
+  scratch: () => void;
   reset: () => void;
 }
 
@@ -74,6 +85,9 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({
         project: { ...state.project, sameTierHoldMs: clamp(ms, 0, 2000) },
       })),
+
+    setSubgenre: (value) =>
+      set((state) => ({ project: { ...state.project, subgenre: value } })),
 
     setTrackVolume: (trackId, volume) =>
       set((state) => ({
@@ -197,6 +211,21 @@ export const useAppStore = create<AppStore>((set) => ({
           },
         };
       }),
+
+    scratch: () => {
+      const state = useAppStore.getState();
+      // Revoke object URLs on every existing clip.
+      for (const track of state.project.tracks) {
+        if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
+      }
+      // Stop any held media stream so getUserMedia is re-armed cleanly.
+      if (state.media.stream) {
+        for (const t of state.media.stream.getTracks()) t.stop();
+      }
+      set({ ...createInitialState() });
+      // Wipe the persisted record; subsequent edits will write a fresh one.
+      void clearProject().catch(() => undefined);
+    },
 
     reset: () => set({ ...createInitialState() }),
   },

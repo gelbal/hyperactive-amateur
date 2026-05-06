@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const suggestPattern = vi.fn();
 vi.mock("../lib/aiSuggest", () => ({
   suggestPattern: (...args: unknown[]) => suggestPattern(...args),
+  SUBGENRES: ["boom-bap", "trap", "lo-fi", "phonk"] as const,
 }));
 
 import { SuggestButton } from "./SuggestButton";

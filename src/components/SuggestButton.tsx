@@ -3,17 +3,16 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
-import { suggestPattern } from "../lib/aiSuggest";
+import { suggestPattern, SUBGENRES } from "../lib/aiSuggest";
+import type { Subgenre } from "../types";
 
 const TOAST_MS = 5000;
 const MIN_CLIPS = 4;
 
-type Subgenre = "boom-bap" | "trap";
-
 export function SuggestButton() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
-  const [subgenre, setSubgenre] = useState<Subgenre>("boom-bap");
+  const subgenre = useAppStore((s) => s.project.subgenre);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<boolean[][] | null>(null);
@@ -58,11 +57,16 @@ export function SuggestButton() {
         <select
           aria-label="subgenre"
           value={subgenre}
-          onChange={(e) => setSubgenre(e.target.value as Subgenre)}
+          onChange={(e) =>
+            useAppStore.getState().actions.setSubgenre(e.target.value as Subgenre)
+          }
           className="bg-zinc-900 text-sm rounded border border-zinc-700 px-2 py-1 focus:outline-none focus:border-orange-500"
         >
-          <option value="boom-bap">boom-bap</option>
-          <option value="trap">trap</option>
+          {SUBGENRES.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
         </select>
       )}
       <button

@@ -41,6 +41,8 @@ export interface ActiveTrigger {
 // Tone.js note-value notation for the visual cut subdivision.
 export type CutSubdivision = "16n" | "8n" | "4n" | "2n" | "1m";
 
+export type Subgenre = "boom-bap" | "trap" | "lo-fi" | "phonk";
+
 export interface ProjectState {
   bpm: number;
   // 0..1 — Tone.Transport swing amount.
@@ -51,6 +53,8 @@ export interface ProjectState {
   // Minimum time the renderer holds the current frame before cutting to a
   // same-priority-tier event. Higher-tier events bypass this. ms, 0..2000.
   sameTierHoldMs: number;
+  // Genre hint sent to the AI suggester and pattern variations.
+  subgenre: Subgenre;
   tracks: Track[];
 }
 
