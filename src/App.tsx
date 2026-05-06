@@ -8,6 +8,8 @@ import { CameraPreview } from "./components/CameraPreview";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { RecordCountdown } from "./components/RecordCountdown";
+import { CompatibilityBanner } from "./components/CompatibilityBanner";
+import { SwingSlider } from "./components/SwingSlider";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -40,10 +42,13 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
+      <CompatibilityBanner />
       <header className="flex items-center gap-4 p-4 border-b border-zinc-800">
         <h1 className="text-2xl font-bold">Hyperpad</h1>
         <PlayButton />
+        <span className="text-[10px] text-zinc-500 -ml-2">space</span>
         <BpmInput />
+        <SwingSlider />
         <SuggestButton />
         <ExportButton />
         <CameraPreview />

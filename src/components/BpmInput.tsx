@@ -14,6 +14,13 @@ export function BpmInput() {
     setDraft(String(bpm));
   }, [bpm]);
 
+  const handleWheel = (event: React.WheelEvent<HTMLInputElement>) => {
+    if (document.activeElement !== event.currentTarget) return;
+    event.preventDefault();
+    const delta = event.deltaY > 0 ? -1 : 1;
+    useAppStore.getState().actions.setBpm(bpm + delta);
+  };
+
   return (
     <label className="flex items-center gap-2 text-sm text-zinc-300">
       <span>BPM</span>
@@ -27,8 +34,6 @@ export function BpmInput() {
         onChange={(e) => {
           const raw = e.target.value;
           setDraft(raw);
-          // Empty / non-numeric drafts don't touch the store; the user might
-          // still be typing. They get reverted on blur if never made valid.
           if (raw.trim() === "") return;
           const parsed = Number(raw);
           if (!Number.isFinite(parsed)) return;
@@ -40,6 +45,8 @@ export function BpmInput() {
             setDraft(String(bpm));
           }
         }}
+        onWheel={handleWheel}
+        title="Scroll to adjust"
         className="w-16 text-center bg-zinc-900 rounded px-2 py-1 border border-zinc-700 focus:border-orange-500 focus:outline-none"
       />
     </label>

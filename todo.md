@@ -61,7 +61,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 - [x] **Step 28** — `suggestPattern()` Anthropic SDK wrapper with tool-use schema validation
 - [x] **Step 29** — "Suggest a beat" button, undo toast, boom-bap/trap dropdown — *requires `VITE_ANTHROPIC_API_KEY`*
 - [x] **Step 30** — 3-2-1 countdown overlay before recording begins
-- [ ] **Step 31** — Swing slider, compatibility banner, empty states, keyboard hints, README, smoke-test checklist
+- [x] **Step 31** — Swing slider, compatibility banner, empty states, keyboard hints, README, smoke-test checklist
 
 ---
 

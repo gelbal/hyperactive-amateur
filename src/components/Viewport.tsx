@@ -3,11 +3,13 @@
 import { useEffect, useRef } from "react";
 import * as Tone from "tone";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
+import { useAppStore } from "../store/useAppStore";
 
 const SIZE = 480;
 
 export function Viewport() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
 
   useEffect(() => {
     initVideoEngine();
@@ -38,13 +40,23 @@ export function Viewport() {
   }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={SIZE}
-      height={SIZE}
-      aria-label="hard-cut video viewport"
-      className="block bg-zinc-950 rounded shadow-lg"
-      style={{ width: SIZE, height: SIZE }}
-    />
+    <div className="relative" style={{ width: SIZE, height: SIZE }}>
+      <canvas
+        ref={canvasRef}
+        width={SIZE}
+        height={SIZE}
+        aria-label="hard-cut video viewport"
+        className="block bg-zinc-950 rounded shadow-lg"
+        style={{ width: SIZE, height: SIZE }}
+      />
+      {!hasClips && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-center text-zinc-500 px-8">
+          <p className="text-sm">
+            Record some sounds in the tracks below to get started. Use the
+            mic button on each row, then toggle steps to make a beat.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }

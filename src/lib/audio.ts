@@ -17,6 +17,7 @@ let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
 let bpmUnsubscribe: (() => void) | null = null;
+let swingUnsubscribe: (() => void) | null = null;
 let tracksUnsubscribe: (() => void) | null = null;
 let stepCounter = 0;
 
@@ -54,6 +55,15 @@ export function initTransport(): void {
   bpmUnsubscribe = useAppStore.subscribe((state, prev) => {
     if (state.project.bpm !== prev.project.bpm) {
       Tone.getTransport().bpm.value = state.project.bpm;
+    }
+  });
+
+  // Swing applies on 16th notes (smallest grid of the sequencer).
+  Tone.getTransport().swingSubdivision = "16n";
+  Tone.getTransport().swing = useAppStore.getState().project.swing;
+  swingUnsubscribe = useAppStore.subscribe((state, prev) => {
+    if (state.project.swing !== prev.project.swing) {
+      Tone.getTransport().swing = state.project.swing;
     }
   });
 
@@ -157,6 +167,10 @@ export function __resetAudioForTesting(): void {
   if (bpmUnsubscribe) {
     bpmUnsubscribe();
     bpmUnsubscribe = null;
+  }
+  if (swingUnsubscribe) {
+    swingUnsubscribe();
+    swingUnsubscribe = null;
   }
   if (tracksUnsubscribe) {
     tracksUnsubscribe();
