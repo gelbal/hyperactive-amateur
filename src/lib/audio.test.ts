@@ -27,12 +27,31 @@ function makeSynth(): SynthMock {
   return s;
 }
 
+interface PlayerMock {
+  start: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  toDestination: () => PlayerMock;
+  loaded: boolean;
+}
+const playerInstances: PlayerMock[] = [];
+function makePlayer(): PlayerMock {
+  const p: PlayerMock = {
+    start: vi.fn(),
+    dispose: vi.fn(),
+    toDestination: () => p,
+    loaded: true,
+  };
+  playerInstances.push(p);
+  return p;
+}
+
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => transportMock),
   getDraw: vi.fn(() => drawMock),
   getContext: vi.fn(() => ({ rawContext: {} })),
   MembraneSynth: vi.fn(() => makeSynth()),
+  Player: vi.fn(() => makePlayer()),
 }));
 
 import * as Tone from "tone";
@@ -55,6 +74,7 @@ describe("audio module", () => {
     transportMock.bpm.value = 90;
     drawMock.schedule.mockClear();
     synthInstances.length = 0;
+    playerInstances.length = 0;
     (Tone.start as ReturnType<typeof vi.fn>).mockClear();
   });
 
@@ -127,5 +147,52 @@ describe("audio module", () => {
     initTransport();
     useAppStore.getState().actions.setBpm(140);
     expect(transportMock.bpm.value).toBe(140);
+  });
+
+  describe("clip players", () => {
+    function makeClip() {
+      return {
+        blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+        url: "blob:test/1",
+        audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+        trimStartMs: 0,
+        trimEndMs: 1000,
+        durationMs: 1000,
+      };
+    }
+
+    it("setTrackClip creates a Tone.Player for that track", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      expect(playerInstances).toHaveLength(1);
+    });
+
+    it("triggered step on a clipped track calls Player.start instead of synth", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      useAppStore.getState().actions.toggleStep(0, 0);
+      const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+      callback?.(0.25);
+      expect(playerInstances[0].start).toHaveBeenCalledTimes(1);
+      expect(playerInstances[0].start).toHaveBeenCalledWith(0.25, 0, 1);
+      expect(synthInstances[0].triggerAttackRelease).not.toHaveBeenCalled();
+    });
+
+    it("clearTrackClip disposes the player", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      const player = playerInstances[0];
+      useAppStore.getState().actions.clearTrackClip(0);
+      expect(player.dispose).toHaveBeenCalled();
+    });
+
+    it("falls back to synth on tracks without a clip", () => {
+      initTransport();
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      useAppStore.getState().actions.toggleStep(2, 0);
+      const callback = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+      callback?.(0);
+      expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0);
+    });
   });
 });

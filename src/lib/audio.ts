@@ -1,18 +1,22 @@
 // ABOUTME: Tone.js bootstrap, Transport scheduling, and play/stop control for Hyperpad.
-// ABOUTME: Single source of audio truth; UI components call into the exported functions.
+// ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
+import type { Clip, Track } from "../types";
 
 const STEP_COUNT = 16;
 
-// Per-track pitches let you hear which tracks are firing while we're still on
-// the placeholder metronome. They get replaced with real Tone.Players in step 12.
+// Per-track pitches let you hear which tracks are firing while a track has no
+// recorded clip. They keep the sequencer audible during build-up phases.
 const TRACK_PITCHES = ["C2", "D2", "E2", "F2", "G2", "A2", "B2", "C3"];
 
 let initialized = false;
 let metronomeSynths: Tone.MembraneSynth[] = [];
+let players: Map<number, Tone.Player> = new Map();
+let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
 let bpmUnsubscribe: (() => void) | null = null;
+let tracksUnsubscribe: (() => void) | null = null;
 let stepCounter = 0;
 
 export function getAudioContext(): AudioContext {
@@ -32,13 +36,15 @@ export function initTransport(): void {
     () => new Tone.MembraneSynth({ volume: -10 }).toDestination(),
   );
 
+  // Build any Tone.Players for clips that already exist (rehydrate path).
+  syncPlayers(useAppStore.getState().project.tracks);
+
   scheduledEventId = transport.scheduleRepeat((time) => {
     const stepIndex = stepCounter % STEP_COUNT;
     stepCounter += 1;
 
     onStep(stepIndex, time);
 
-    // Schedule the UI update on the draw clock so it lands on the right paint.
     Tone.getDraw().schedule(() => {
       useAppStore.getState().actions.setCurrentStep(stepIndex);
     }, time);
@@ -49,19 +55,59 @@ export function initTransport(): void {
       Tone.getTransport().bpm.value = state.project.bpm;
     }
   });
+
+  tracksUnsubscribe = useAppStore.subscribe((state, prev) => {
+    if (state.project.tracks !== prev.project.tracks) {
+      syncPlayers(state.project.tracks);
+    }
+  });
 }
 
-// Per-step trigger logic. Each track that has its current step toggled on
-// (and isn't muted) fires a synth click on its pitch. Real Tone.Players
-// will replace this in step 12.
+// Per-step trigger logic. If the track has a Tone.Player, fire that with the
+// trim offsets; otherwise fall back to the placeholder synth.
 function onStep(stepIndex: number, time: number): void {
   const tracks = useAppStore.getState().project.tracks;
   for (const track of tracks) {
     if (!track.steps[stepIndex] || track.muted) continue;
-    const synth = metronomeSynths[track.id];
-    if (synth) {
-      synth.triggerAttackRelease(TRACK_PITCHES[track.id], "16n", time);
+
+    const player = players.get(track.id);
+    if (player && player.loaded && track.clip) {
+      const offset = track.clip.trimStartMs / 1000;
+      const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
+      try {
+        player.start(time, offset, duration);
+      } catch {
+        // Player can throw if start is called while a previous start hasn't
+        // happened yet at the same time slot. Safe to swallow — the next
+        // trigger schedules anew.
+      }
+      continue;
     }
+
+    const synth = metronomeSynths[track.id];
+    if (synth) synth.triggerAttackRelease(TRACK_PITCHES[track.id], "16n", time);
+  }
+}
+
+// Diff the current track list against the last clip we wired and create / dispose
+// Tone.Players accordingly. Cheap to call repeatedly.
+function syncPlayers(tracks: Track[]): void {
+  for (const track of tracks) {
+    const previousClip = lastClips.get(track.id) ?? null;
+    if (track.clip === previousClip) continue;
+
+    const existing = players.get(track.id);
+    if (existing) {
+      existing.dispose();
+      players.delete(track.id);
+    }
+
+    if (track.clip) {
+      const player = new Tone.Player(track.clip.audioBuffer).toDestination();
+      players.set(track.id, player);
+    }
+
+    lastClips.set(track.id, track.clip);
   }
 }
 
@@ -98,6 +144,13 @@ export function __resetAudioForTesting(): void {
     bpmUnsubscribe();
     bpmUnsubscribe = null;
   }
+  if (tracksUnsubscribe) {
+    tracksUnsubscribe();
+    tracksUnsubscribe = null;
+  }
+  for (const player of players.values()) player.dispose();
+  players = new Map();
+  lastClips = new Map();
   metronomeSynths = [];
   initialized = false;
   stepCounter = 0;
