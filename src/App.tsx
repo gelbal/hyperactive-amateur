@@ -7,6 +7,7 @@ import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
+import { VariationButtons } from "./components/VariationButtons";
 import { RecordCountdown } from "./components/RecordCountdown";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { SwingSlider } from "./components/SwingSlider";
@@ -54,6 +55,7 @@ export function App() {
         <CutSubdivisionSelect />
         <HoldTimeControl />
         <SuggestButton />
+        <VariationButtons />
         <ExportButton />
         <CameraPreview />
       </header>
