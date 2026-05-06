@@ -18,7 +18,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 ## Phase 3 · Recording
 
-- [ ] **Step 9** — `useMediaStream` hook + `<CameraPreview />` component
+- [x] **Step 9** — `useMediaStream` hook + `<CameraPreview />` component
 - [ ] **Step 10** — `recordClip()` wrapper around MediaRecorder returning `{ blob, audioBuffer, durationMs }`
 - [ ] **Step 11** — Track 0 record button → stores `Clip`, thumbnail, re-record affordance
 - [ ] **Step 12** — Track 0 clip replaces metronome via per-track `Tone.Player` map
