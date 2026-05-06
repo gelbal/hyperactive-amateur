@@ -12,6 +12,7 @@ const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
 const STEP_COUNT = 16;
 const RECORD_DURATION_MS = 2000;
+const COUNTDOWN_MS = 3000;
 
 interface StepCellProps {
   trackId: number;
@@ -65,6 +66,8 @@ export function TrackRow({ trackId }: TrackRowProps) {
     }
     setError(null);
     const actions = useAppStore.getState().actions;
+    actions.setRecordingState("countdown", trackId);
+    await new Promise((r) => setTimeout(r, COUNTDOWN_MS));
     actions.setRecordingState("recording", trackId);
     try {
       const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext());

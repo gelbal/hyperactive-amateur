@@ -7,6 +7,7 @@ import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
+import { RecordCountdown } from "./components/RecordCountdown";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -58,6 +59,7 @@ export function App() {
         )}
       </main>
       <StepGrid />
+      <RecordCountdown />
     </div>
   );
 }
