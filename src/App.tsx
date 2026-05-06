@@ -5,6 +5,7 @@ import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
+import { Viewport } from "./components/Viewport";
 import { initTransport } from "./lib/audio";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 
@@ -22,6 +23,9 @@ export function App() {
         <BpmInput />
         <CameraPreview />
       </header>
+      <main className="flex flex-col items-center gap-6 py-6">
+        <Viewport />
+      </main>
       <StepGrid />
     </div>
   );

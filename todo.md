@@ -35,7 +35,7 @@ Tracks progress against `build-plan.md` (31 steps across 10 phases). Check items
 
 ## Phase 6 · Hard-cut video
 
-- [ ] **Step 17** — `<Viewport />` 480×480 canvas with rAF render loop scaffold
+- [x] **Step 17** — `<Viewport />` 480×480 canvas with rAF render loop scaffold
 - [ ] **Step 18** — `videoEngine` module: 1 hidden video for track 0 → drawn to canvas on trigger
 - [ ] **Step 19** — All 8 hidden videos, naive most-recent-wins swap
 - [ ] **Step 20** — *Critical:* render loop reads `Tone.now()`, scheduled-event queue with GC
