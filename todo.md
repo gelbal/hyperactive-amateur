@@ -100,7 +100,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 ## Same-tier ducking (§ 3.3)
 
 - [x] **v1.1-7** — `sameTierHoldMs` state + extend `pickPriority` with hold-time logic
-- [ ] **v1.1-8** — Hold-time slider in top bar (or popover)
+- [x] **v1.1-8** — Hold-time slider in top bar (or popover)
 
 ## Auto-tag clips on record (§ 3.4)
 

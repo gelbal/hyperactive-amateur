@@ -11,6 +11,7 @@ import { RecordCountdown } from "./components/RecordCountdown";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { SwingSlider } from "./components/SwingSlider";
 import { CutSubdivisionSelect } from "./components/CutSubdivisionSelect";
+import { HoldTimeControl } from "./components/HoldTimeControl";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -51,6 +52,7 @@ export function App() {
         <BpmInput />
         <SwingSlider />
         <CutSubdivisionSelect />
+        <HoldTimeControl />
         <SuggestButton />
         <ExportButton />
         <CameraPreview />
