@@ -23,6 +23,7 @@ export interface AppActions {
   setTrackTag: (trackId: number, tag: Tag | null) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
+  hydrateProject: (project: AppState["project"]) => void;
   reset: () => void;
 }
 
@@ -140,6 +141,8 @@ export const useAppStore = create<AppStore>((set) => ({
           activeTrackId: activeTrackId === undefined ? state.recording.activeTrackId : activeTrackId,
         },
       })),
+
+    hydrateProject: (project) => set({ project }),
 
     reset: () => set({ ...createInitialState() }),
   },

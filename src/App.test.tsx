@@ -1,9 +1,10 @@
 // ABOUTME: Smoke tests for the App component — title renders, play button mounts.
 // ABOUTME: Tone.js is mocked here because App calls initTransport() in a useEffect.
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("tone", () => ({
+  now: vi.fn(() => 0),
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => ({
     start: vi.fn(),
@@ -20,18 +21,38 @@ vi.mock("tone", () => ({
       return this;
     }),
   })),
+  Player: vi.fn(() => ({
+    start: vi.fn(),
+    dispose: vi.fn(),
+    loaded: true,
+    toDestination: vi.fn(function (this: object) {
+      return this;
+    }),
+  })),
+}));
+
+vi.mock("./lib/rehydrate", () => ({
+  rehydrateFromStorage: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("./lib/autoSave", () => ({
+  startAutoSave: vi.fn(),
+  stopAutoSave: vi.fn(),
 }));
 
 import { App } from "./App";
 
 describe("App", () => {
-  it("renders the title", () => {
+  it("renders the title", async () => {
     render(<App />);
     expect(screen.getByText("Hyperpad")).toBeInTheDocument();
+    // Wait for the rehydration effect to settle so React doesn't warn.
+    await waitFor(() => expect(screen.queryByText(/Loading project/i)).not.toBeInTheDocument());
   });
 
-  it("renders the play button", () => {
+  it("renders the play button", async () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: /start playback/i })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /start playback/i })).toBeInTheDocument(),
+    );
   });
 });
