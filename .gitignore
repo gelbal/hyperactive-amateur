@@ -25,3 +25,6 @@ coverage/
 
 # misc
 .cache/
+
+# typescript build info
+*.tsbuildinfo
