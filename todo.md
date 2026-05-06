@@ -110,7 +110,7 @@ Six features across 15 build-plan steps. Anthropic + Gemini keys both in `.env.l
 
 ## Pattern variations (§ 3.5)
 
-- [ ] **v1.1-12** — `varyPattern()` (busier / fill / halftime / strip)
+- [x] **v1.1-12** — `varyPattern()` (busier / fill / halftime / strip)
 - [ ] **v1.1-13** — Variation buttons next to Suggest with same Undo flow
 
 ## Docs (§ 3.6)

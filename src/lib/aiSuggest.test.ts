@@ -1,6 +1,13 @@
-// ABOUTME: aiSuggest tests — happy path, validation failures, missing-key, all via the client seam.
+// ABOUTME: aiSuggest tests — happy path, validation failures, missing-key, variations.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { suggestPattern, validatePattern, ValidationError, MissingApiKeyError } from "./aiSuggest";
+import {
+  suggestPattern,
+  varyPattern,
+  validatePattern,
+  ValidationError,
+  MissingApiKeyError,
+  type Variation,
+} from "./aiSuggest";
 
 function makeFakeClient(content: unknown) {
   return {
@@ -61,6 +68,54 @@ describe("suggestPattern", () => {
     await expect(
       suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
     ).rejects.toThrow(ValidationError);
+  });
+
+  describe("varyPattern", () => {
+    const variations: Variation[] = ["busier", "fill", "halftime", "strip"];
+    const baseInput = {
+      bpm: 90,
+      subgenre: "boom-bap" as const,
+      tracks: [],
+      currentPattern: pattern8x16(),
+    };
+
+    it.each(variations)("returns the validated grid for variation %s", async (variation) => {
+      const client = makeFakeClient([
+        { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16() } },
+      ]);
+      const grid = await varyPattern({ ...baseInput, variation }, client);
+      expect(grid).toEqual(pattern8x16());
+    });
+
+    it("uses a different system prompt per variation", async () => {
+      const seenPrompts = new Set<string>();
+      for (const variation of variations) {
+        const client = {
+          messages: {
+            create: vi.fn(async (params: object) => {
+              const p = params as { system: string };
+              seenPrompts.add(p.system);
+              return {
+                content: [
+                  { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16() } },
+                ],
+              };
+            }),
+          },
+        };
+        await varyPattern({ ...baseInput, variation }, client);
+      }
+      expect(seenPrompts.size).toBe(variations.length);
+    });
+
+    it("throws ValidationError on shape mismatch", async () => {
+      const client = makeFakeClient([
+        { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16().slice(0, 5) } },
+      ]);
+      await expect(
+        varyPattern({ ...baseInput, variation: "busier" }, client),
+      ).rejects.toThrow(ValidationError);
+    });
   });
 
   describe("missing key", () => {

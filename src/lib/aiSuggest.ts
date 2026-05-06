@@ -114,6 +114,65 @@ export async function suggestPattern(
     tool_choice: { type: "tool", name: TOOL_NAME },
   });
 
+  return extractToolPattern(response);
+}
+
+export type Variation = "busier" | "fill" | "halftime" | "strip";
+
+const VARIATION_PROMPTS: Record<Variation, string> = {
+  busier:
+    "You are a hip-hop beat producer. Take the given 8x16 step pattern and make it BUSIER by adding hits — particularly on hat and ghost-snare positions. Preserve the kick and main snare positions. Return the modified 8x16 pattern.",
+  fill:
+    "You are a hip-hop beat producer. Take the given 8x16 step pattern and ADD A FILL in the last beat (steps 13-16) — typical fills layer extra snare, hat, and fx hits while keeping the main groove intact through step 12. Return the modified 8x16 pattern.",
+  halftime:
+    "You are a hip-hop beat producer. Take the given 8x16 step pattern and HALF-TIME it — keep the kick on 1, but move the main snare to step 9 (instead of 5 and 13) so the groove feels half-tempo. Thin out the hats accordingly. Return the modified 8x16 pattern.",
+  strip:
+    "You are a hip-hop beat producer. Take the given 8x16 step pattern and STRIP IT BACK — remove most ghost notes and accents, focus on the downbeats (1, 5, 9, 13) and the main kick/snare skeleton. Return the modified 8x16 pattern.",
+};
+
+export interface VaryPatternInput extends SuggestPatternInput {
+  currentPattern: boolean[][];
+  variation: Variation;
+}
+
+function buildVaryUserMessage(input: VaryPatternInput): string {
+  const labels = input.tracks.map((t) => `${t.id}=${t.tag ?? "untagged"}`).join(", ");
+  return (
+    `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. Tracks: ${labels}.\n` +
+    `Current pattern (8x16):\n${JSON.stringify(input.currentPattern)}\n` +
+    `Apply the ${input.variation} variation.`
+  );
+}
+
+export async function varyPattern(
+  input: VaryPatternInput,
+  client?: { messages: { create: (params: object) => Promise<unknown> } },
+): Promise<boolean[][]> {
+  const apiKey = client ? "test-key" : readApiKey();
+  if (!client && !apiKey) throw new MissingApiKeyError();
+
+  const anthropic =
+    client ?? new Anthropic({ apiKey: apiKey!, dangerouslyAllowBrowser: true });
+
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 512,
+    system: VARIATION_PROMPTS[input.variation],
+    messages: [{ role: "user", content: buildVaryUserMessage(input) }],
+    tools: [
+      {
+        name: TOOL_NAME,
+        description: "Set the 8x16 step pattern for the sequencer.",
+        input_schema: TOOL_SCHEMA,
+      },
+    ],
+    tool_choice: { type: "tool", name: TOOL_NAME },
+  });
+
+  return extractToolPattern(response);
+}
+
+function extractToolPattern(response: unknown): boolean[][] {
   const content = (response as { content?: unknown }).content;
   if (!Array.isArray(content)) {
     throw new ValidationError("Response has no content array");
