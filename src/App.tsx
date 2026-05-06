@@ -6,6 +6,7 @@ import { PlayButton } from "./components/PlayButton";
 import { BpmInput } from "./components/BpmInput";
 import { CameraPreview } from "./components/CameraPreview";
 import { ExportButton } from "./components/ExportButton";
+import { SuggestButton } from "./components/SuggestButton";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { initTransport } from "./lib/audio";
@@ -42,6 +43,7 @@ export function App() {
         <h1 className="text-2xl font-bold">Hyperpad</h1>
         <PlayButton />
         <BpmInput />
+        <SuggestButton />
         <ExportButton />
         <CameraPreview />
       </header>

@@ -24,6 +24,7 @@ export interface AppActions {
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
+  applyPattern: (grid: boolean[][]) => void;
   reset: () => void;
 }
 
@@ -143,6 +144,21 @@ export const useAppStore = create<AppStore>((set) => ({
       })),
 
     hydrateProject: (project) => set({ project }),
+
+    applyPattern: (grid) =>
+      set((state) => {
+        if (!Array.isArray(grid) || grid.length !== 8) return state;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track, i) => {
+              const row = grid[i];
+              if (!Array.isArray(row) || row.length !== 16) return track;
+              return { ...track, steps: row.map(Boolean) };
+            }),
+          },
+        };
+      }),
 
     reset: () => set({ ...createInitialState() }),
   },
