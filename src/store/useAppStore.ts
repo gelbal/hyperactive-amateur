@@ -1,4 +1,4 @@
-// ABOUTME: Zustand store for Amateur Hyperactive — holds AppState and the actions that mutate it.
+// ABOUTME: Zustand store for Hyperactive Amateur — holds AppState and the actions that mutate it.
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
 import type {

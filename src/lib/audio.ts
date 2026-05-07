@@ -1,4 +1,4 @@
-// ABOUTME: Tone.js bootstrap, Transport scheduling, and play/stop control for Amateur Hyperactive.
+// ABOUTME: Tone.js bootstrap, Transport scheduling, and play/stop control for Hyperactive Amateur.
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";

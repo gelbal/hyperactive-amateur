@@ -1,4 +1,4 @@
-# Amateur Hyperactive
+# Hyperactive Amateur
 
 A web app for making Lasse Gjertsen-style "Hyperactive" / "Amateur"
 videos: record 8 short clips of yourself making sounds, arrange them on
@@ -20,7 +20,7 @@ npm run dev                  # http://localhost:5173
 ```
 
 You'll be prompted to grant camera + microphone access on first record.
-**Amateur Hyperactive targets desktop Chrome / Edge ≥120.** Safari is
+**Hyperactive Amateur targets desktop Chrome / Edge ≥120.** Safari is
 unsupported.
 
 ## API keys
@@ -41,7 +41,7 @@ VITE_GEMINI_API_KEY=AIza...
 ```
 
 > **Important:** dev keys are bundled into the client. Before deploying
-> Amateur Hyperactive anywhere public, follow
+> Hyperactive Amateur anywhere public, follow
 > [`docs/AI-MIGRATION.md`](docs/AI-MIGRATION.md) to move both calls
 > behind a server proxy.
 
@@ -58,7 +58,7 @@ VITE_GEMINI_API_KEY=AIza...
 
 ## Recording for best results
 
-Amateur Hyperactive cuts between your clips on every musical hit. If
+Hyperactive Amateur cuts between your clips on every musical hit. If
 all 8 of your clips are shot from exactly the same distance with the
 same framing and the same background, those cuts read as a strobe
 instead of a performance. The fix is in your hands, not the app's.

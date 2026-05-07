@@ -1,4 +1,4 @@
-// ABOUTME: Root React component for Amateur Hyperactive — top bar (play button) plus the step grid.
+// ABOUTME: Root React component for Hyperactive Amateur — top bar (play button) plus the step grid.
 // ABOUTME: Subsequent build steps will mount the viewport, pads, BPM input, and tags here.
 import { useEffect, useState } from "react";
 import { StepGrid } from "./components/StepGrid";
@@ -50,7 +50,7 @@ export function App() {
       <header className="border-b border-zinc-800">
         <div className="flex items-center gap-5 px-4 pt-3 pb-2">
           <h1 className="text-lg font-semibold tracking-tight text-zinc-300">
-            Amateur Hyperactive
+            Hyperactive Amateur
           </h1>
           <div className="flex items-center gap-3">
             <PlayButton />

@@ -123,7 +123,7 @@ describe("exportSong", () => {
 });
 
 describe("defaultExportFilename", () => {
-  it("matches the amateur-hyperactive-YYYYMMDD-HHmm.webm shape", () => {
-    expect(defaultExportFilename()).toMatch(/^amateur-hyperactive-\d{8}-\d{4}\.webm$/);
+  it("matches the hyperactive-amateur-YYYYMMDD-HHmm.webm shape", () => {
+    expect(defaultExportFilename()).toMatch(/^hyperactive-amateur-\d{8}-\d{4}\.webm$/);
   });
 });

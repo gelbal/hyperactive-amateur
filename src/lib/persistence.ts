@@ -3,7 +3,7 @@
 import { get, set, del } from "idb-keyval";
 import type { AppState, CutSubdivision, Subgenre, Tag } from "../types";
 
-export const PROJECT_KEY = "amateur-hyperactive-project";
+export const PROJECT_KEY = "hyperactive-amateur-project";
 
 export interface PersistedTrack {
   id: number;

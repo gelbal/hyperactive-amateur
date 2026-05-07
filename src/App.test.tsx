@@ -48,7 +48,7 @@ import { App } from "./App";
 describe("App", () => {
   it("renders the title", async () => {
     render(<App />);
-    expect(screen.getByText("Amateur Hyperactive")).toBeInTheDocument();
+    expect(screen.getByText("Hyperactive Amateur")).toBeInTheDocument();
     // Wait for the rehydration effect to settle so React doesn't warn.
     await waitFor(() => expect(screen.queryByText(/Loading project/i)).not.toBeInTheDocument());
   });

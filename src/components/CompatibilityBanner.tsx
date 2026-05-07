@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
-const DISMISS_KEY = "amateur-hyperactive-compat-dismissed";
+const DISMISS_KEY = "hyperactive-amateur-compat-dismissed";
 
 interface SupportReport {
   ok: boolean;
@@ -63,7 +63,7 @@ export function CompatibilityBanner() {
       className="bg-orange-900/80 border-b border-orange-700 text-orange-100 px-4 py-2 flex items-center gap-3"
     >
       <span className="text-sm flex-1">
-        Amateur Hyperactive needs Chrome or Edge. Your browser is missing: {report.missing.join(", ")}.
+        Hyperactive Amateur needs Chrome or Edge. Your browser is missing: {report.missing.join(", ")}.
       </span>
       <button
         type="button"

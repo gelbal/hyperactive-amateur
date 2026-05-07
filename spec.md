@@ -1,4 +1,4 @@
-# spec.md — Amateur Hyperactive
+# spec.md — Hyperactive Amateur
 
 > A web app for making Lasse Gjertsen–style "Hyperactive" videos: record 8 short
 > clips of yourself making sounds, arrange them in a step sequencer, get a
@@ -340,7 +340,7 @@ async function exportSong(durationMs: number): Promise<Blob> {
 **Default export length.** 4 bars at current BPM (~10s at 90 BPM). Slider
 1–8 bars in the export dialog.
 
-**Filename.** `amateur-hyperactive-{projectName}-{YYYYMMDD-HHmm}.webm`.
+**Filename.** `hyperactive-amateur-{projectName}-{YYYYMMDD-HHmm}.webm`.
 
 **v2 path: WebCodecs.** Same canvas renderer, but instead of MediaRecorder,
 encode frames offline via `VideoEncoder` and mux to MP4 using `mp4-muxer`.
@@ -549,7 +549,7 @@ These are the gotchas that will eat days if missed.
 
 ## 11. Open questions
 
-- **App name.** **Amateur Hyperactive** (after Lasse Gjertsen's two source
+- **App name.** **Hyperactive Amateur** (after Lasse Gjertsen's two source
   videos). Earlier working name "Hyperpad" was dropped before v1.2.
 - **Visual aesthetic accent color.** Suggested options:
   hip-hop-orange (`#FF5C00`), glitch-magenta (`#FF1F8F`),

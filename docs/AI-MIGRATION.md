@@ -1,6 +1,6 @@
 # AI key migration
 
-The current Amateur Hyperactive build includes two API keys in the
+The current Hyperactive Amateur build includes two API keys in the
 client bundle:
 
 - `VITE_ANTHROPIC_API_KEY` for "Suggest a beat" + variations.

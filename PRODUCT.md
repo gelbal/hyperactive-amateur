@@ -1,4 +1,4 @@
-# PRODUCT.md — Amateur Hyperactive
+# PRODUCT.md — Hyperactive Amateur
 
 > Quick draft from `spec.md`, `spec-v1.1.md`, and `README.md`. Edit freely.
 
@@ -16,7 +16,7 @@ The app collapses what was historically a 100-clip video-editing workflow into a
 
 ## Brand personality
 
-Playful. Lo-fi. Hip-hop-tinted. Closer to a hobbyist instrument like an MPC than a SaaS dashboard. The name "Amateur Hyperactive" itself is anti-corporate, it celebrates the amateurish, the hyperactive, the chopped-up aesthetic.
+Playful. Lo-fi. Hip-hop-tinted. Closer to a hobbyist instrument like an MPC than a SaaS dashboard. The name "Hyperactive Amateur" itself is anti-corporate, it celebrates the amateurish, the hyperactive, the chopped-up aesthetic.
 
 Three adjectives the UI should evoke: **scrappy, immediate, musical**.
 
@@ -30,7 +30,7 @@ What this app should NOT look like:
 
 - **SaaS dashboards** (Linear, Vercel, Stripe-dashboard). Too clean, too gray, too corporate. Wrong audience.
 - **Adobe / DAW pro tools** (Audition, Ableton, Pro Tools). Too dense, too intimidating, too many knobs. The user is here to play, not to mix.
-- **Incredibox.** Close cousin in functionality, but its aesthetic is round, cute, family-friendly. Amateur Hyperactive is sharper, lo-fi, more "kid in a basement with a webcam" than "browser-game for kids."
+- **Incredibox.** Close cousin in functionality, but its aesthetic is round, cute, family-friendly. Hyperactive Amateur is sharper, lo-fi, more "kid in a basement with a webcam" than "browser-game for kids."
 - **Generic AI SaaS** (the gradient-on-dark-glassmorphism aesthetic, the hero metric, the AI-purple). The fact that we use AI under the hood should never leak into the visual treatment.
 
 ## Strategic design principles

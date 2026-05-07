@@ -1,4 +1,4 @@
-// ABOUTME: Shared type definitions for Amateur Hyperactive's domain (clips, tracks, app state).
+// ABOUTME: Shared type definitions for Hyperactive Amateur's domain (clips, tracks, app state).
 // ABOUTME: Pure types — no runtime values. Mutations live in the store actions module.
 
 export type Tag = "kick" | "snare" | "hat" | "vocal" | "fx";
