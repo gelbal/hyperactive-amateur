@@ -5,13 +5,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { App } from "./App";
 
-if (import.meta.env.PROD && import.meta.env.VITE_ANTHROPIC_API_KEY) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    "[Hyperactive Amateur] Anthropic API key detected in production bundle. Migrate to a server proxy before public deploy. See docs/AI-MIGRATION.md.",
-  );
-}
-if (import.meta.env.PROD && import.meta.env.VITE_GEMINI_API_KEY) {
+if (import.meta.env.PROD && import.meta.env.GEMINI_API_KEY) {
   // eslint-disable-next-line no-console
   console.warn(
     "[Hyperactive Amateur] Gemini API key detected in production bundle. Migrate to a server proxy before public deploy. See docs/AI-MIGRATION.md.",

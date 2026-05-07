@@ -30,7 +30,7 @@ export interface GeminiClient {
 }
 
 export function readGeminiApiKey(): string | undefined {
-  return (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) || undefined;
+  return (import.meta.env.GEMINI_API_KEY as string | undefined) || undefined;
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {

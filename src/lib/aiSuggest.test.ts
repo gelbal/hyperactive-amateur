@@ -1,4 +1,4 @@
-// ABOUTME: aiSuggest tests — happy path, validation failures, missing-key, variations.
+// ABOUTME: aiSuggest tests — Gemini structured-output happy path, validation, missing key, variations.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   suggestPattern,
@@ -6,19 +6,26 @@ import {
   validatePattern,
   ValidationError,
   MissingApiKeyError,
+  type GeminiPatternClient,
   type Variation,
 } from "./aiSuggest";
 
-function makeFakeClient(content: unknown) {
+function makeFakeClient(text: string): GeminiPatternClient {
   return {
-    messages: {
-      create: vi.fn(async () => ({ content })),
+    models: {
+      generateContent: vi.fn(async () => ({ text })),
     },
   };
 }
 
-function pattern8x16(): boolean[][] {
-  return Array.from({ length: 8 }, (_, i) => Array.from({ length: 16 }, (_, j) => i === 0 && j === 0));
+function pattern8x16(value = false): boolean[][] {
+  return Array.from({ length: 8 }, (_, i) =>
+    Array.from({ length: 16 }, (_, j) => value || (i === 0 && j === 0)),
+  );
+}
+
+function patternJSON(): string {
+  return JSON.stringify({ tracks: pattern8x16() });
 }
 
 describe("validatePattern", () => {
@@ -42,94 +49,152 @@ describe("validatePattern", () => {
 });
 
 describe("suggestPattern", () => {
-  it("returns the validated grid on a valid tool_use response", async () => {
-    const client = makeFakeClient([
-      { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16() } },
-    ]);
+  beforeEach(() => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns the validated grid on a valid response", async () => {
+    const client = makeFakeClient(patternJSON());
     const grid = await suggestPattern(
       { bpm: 90, subgenre: "boom-bap", tracks: [] },
       client,
     );
     expect(grid).toEqual(pattern8x16());
-    expect(client.messages.create).toHaveBeenCalled();
   });
 
-  it("throws ValidationError when the tool_use is missing", async () => {
-    const client = makeFakeClient([{ type: "text", text: "hello" }]);
-    await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
-    ).rejects.toThrow(ValidationError);
+  it("sends the user message + system instruction in the right shape", async () => {
+    let captured: object | null = null;
+    const client: GeminiPatternClient = {
+      models: {
+        generateContent: vi.fn(async (params: object) => {
+          captured = params;
+          return { text: patternJSON() };
+        }),
+      },
+    };
+    await suggestPattern(
+      {
+        bpm: 90,
+        subgenre: "boom-bap",
+        tracks: [
+          { id: 0, tag: "kick" },
+          { id: 1, tag: null },
+        ],
+      },
+      client,
+    );
+    const params = captured as unknown as {
+      model: string;
+      contents: Array<{ parts: Array<{ text: string }> }>;
+      config: { systemInstruction: string; responseMimeType: string };
+    };
+    expect(params.model).toBe("gemini-3-flash-preview");
+    expect(params.config.systemInstruction).toMatch(/hip-hop beat producer/);
+    expect(params.config.responseMimeType).toBe("application/json");
+    const userText = params.contents[0]?.parts[0]?.text ?? "";
+    expect(userText).toContain("90 BPM");
+    expect(userText).toContain("boom-bap");
+    expect(userText).toContain("0=kick");
+    expect(userText).toContain("1=untagged");
   });
 
   it("throws ValidationError on shape mismatch", async () => {
-    const client = makeFakeClient([
-      { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16().slice(0, 6) } },
-    ]);
+    const bad = JSON.stringify({ tracks: pattern8x16().slice(0, 5) });
+    const client = makeFakeClient(bad);
     await expect(
       suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
     ).rejects.toThrow(ValidationError);
   });
 
-  describe("varyPattern", () => {
-    const variations: Variation[] = ["busier", "fill", "halftime", "strip"];
-    const baseInput = {
-      bpm: 90,
-      subgenre: "boom-bap" as const,
-      tracks: [],
-      currentPattern: pattern8x16(),
-    };
-
-    it.each(variations)("returns the validated grid for variation %s", async (variation) => {
-      const client = makeFakeClient([
-        { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16() } },
-      ]);
-      const grid = await varyPattern({ ...baseInput, variation }, client);
-      expect(grid).toEqual(pattern8x16());
-    });
-
-    it("uses a different system prompt per variation", async () => {
-      const seenPrompts = new Set<string>();
-      for (const variation of variations) {
-        const client = {
-          messages: {
-            create: vi.fn(async (params: object) => {
-              const p = params as { system: string };
-              seenPrompts.add(p.system);
-              return {
-                content: [
-                  { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16() } },
-                ],
-              };
-            }),
-          },
-        };
-        await varyPattern({ ...baseInput, variation }, client);
-      }
-      expect(seenPrompts.size).toBe(variations.length);
-    });
-
-    it("throws ValidationError on shape mismatch", async () => {
-      const client = makeFakeClient([
-        { type: "tool_use", name: "set_pattern", input: { tracks: pattern8x16().slice(0, 5) } },
-      ]);
-      await expect(
-        varyPattern({ ...baseInput, variation: "busier" }, client),
-      ).rejects.toThrow(ValidationError);
-    });
+  it("throws ValidationError on malformed JSON", async () => {
+    const client = makeFakeClient("not json {{");
+    await expect(
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
+    ).rejects.toThrow(ValidationError);
   });
 
-  describe("missing key", () => {
-    beforeEach(() => {
-      vi.stubEnv("VITE_ANTHROPIC_API_KEY", "");
-    });
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
+  it("throws ValidationError on empty text", async () => {
+    const client = makeFakeClient("");
+    await expect(
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
+    ).rejects.toThrow(ValidationError);
+  });
+});
 
-    it("throws MissingApiKeyError when no key is set and no client is passed", async () => {
-      await expect(
-        suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }),
-      ).rejects.toThrow(MissingApiKeyError);
-    });
+describe("varyPattern", () => {
+  const variations: Variation[] = ["busier", "fill", "halftime", "strip"];
+  const baseInput = {
+    bpm: 90,
+    subgenre: "boom-bap" as const,
+    tracks: [],
+    currentPattern: pattern8x16(),
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(variations)("returns the validated grid for variation %s", async (variation) => {
+    const client = makeFakeClient(patternJSON());
+    const grid = await varyPattern({ ...baseInput, variation }, client);
+    expect(grid).toEqual(pattern8x16());
+  });
+
+  it("uses a different system instruction per variation", async () => {
+    const seen = new Set<string>();
+    for (const variation of variations) {
+      const client: GeminiPatternClient = {
+        models: {
+          generateContent: vi.fn(async (params: object) => {
+            const p = params as { config: { systemInstruction: string } };
+            seen.add(p.config.systemInstruction);
+            return { text: patternJSON() };
+          }),
+        },
+      };
+      await varyPattern({ ...baseInput, variation }, client);
+    }
+    expect(seen.size).toBe(variations.length);
+  });
+
+  it("throws ValidationError on shape mismatch", async () => {
+    const bad = JSON.stringify({ tracks: pattern8x16().slice(0, 5) });
+    const client = makeFakeClient(bad);
+    await expect(
+      varyPattern({ ...baseInput, variation: "busier" }, client),
+    ).rejects.toThrow(ValidationError);
+  });
+});
+
+describe("missing key", () => {
+  beforeEach(() => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("suggestPattern throws MissingApiKeyError when no key is set and no client is passed", async () => {
+    await expect(
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }),
+    ).rejects.toThrow(MissingApiKeyError);
+  });
+
+  it("varyPattern throws MissingApiKeyError when no key is set and no client is passed", async () => {
+    await expect(
+      varyPattern({
+        bpm: 90,
+        subgenre: "boom-bap",
+        tracks: [],
+        currentPattern: pattern8x16(),
+        variation: "busier",
+      }),
+    ).rejects.toThrow(MissingApiKeyError);
   });
 });

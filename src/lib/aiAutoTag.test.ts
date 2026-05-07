@@ -49,7 +49,7 @@ describe("validateAutoTag", () => {
 
 describe("autoTag", () => {
   beforeEach(() => {
-    vi.stubEnv("VITE_GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -97,7 +97,7 @@ describe("autoTag", () => {
   });
 
   it("returns null without making a call when the API key is missing", async () => {
-    vi.stubEnv("VITE_GEMINI_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY", "");
     // No client passed → function reads import.meta.env; the empty key value
     // should short-circuit before the SDK constructor runs.
     const result = await autoTag(fakeBuffer());
