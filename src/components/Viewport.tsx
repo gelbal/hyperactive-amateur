@@ -1,17 +1,19 @@
 // ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
-// ABOUTME: Owns the empty state: camera-permission gate, recording station, then "record more" affordance.
+// ABOUTME: Owns the empty state plus the fullscreen toggle for presentation mode.
 import { useEffect, useRef } from "react";
 import * as Tone from "tone";
-import { Camera, Mic, Video } from "lucide-react";
+import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import { requestMedia } from "../lib/media";
+import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 
 const SIZE = 480;
 const TRACK_COUNT = 8;
 
 export function Viewport() {
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
   const emptyTrackCount = useAppStore(
@@ -20,13 +22,18 @@ export function Viewport() {
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
+  const { isFullscreen, enter, exit } = useFullscreen();
+
+  const showOverlays = !isFullscreen;
   const showStation =
-    mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+    showOverlays && mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
   const showRecordMore =
+    !isFullscreen &&
     mediaStatus === "granted" &&
     emptyTrackCount > 0 &&
     emptyTrackCount < TRACK_COUNT &&
     stationDismissed;
+  const showFullscreenToggle = mediaStatus === "granted";
 
   useEffect(() => {
     initVideoEngine();
@@ -56,20 +63,46 @@ export function Viewport() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
+  const onToggleFullscreen = () => {
+    if (isFullscreen) {
+      void exit();
+    } else if (frameRef.current) {
+      void enter(frameRef.current);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="relative" style={{ width: SIZE, height: SIZE }}>
+      <div
+        ref={frameRef}
+        className="ha-viewport-frame relative"
+        style={{ width: SIZE, height: SIZE }}
+      >
         <canvas
           ref={canvasRef}
           width={SIZE}
           height={SIZE}
           aria-label="hard-cut video viewport"
-          className="block bg-zinc-950 rounded shadow-lg"
+          className="ha-canvas block bg-zinc-950 rounded shadow-lg"
           style={{ width: SIZE, height: SIZE }}
         />
-        {mediaStatus !== "granted" && <PermissionGate status={mediaStatus} error={mediaError} />}
+        {showOverlays && mediaStatus !== "granted" && (
+          <PermissionGate status={mediaStatus} error={mediaError} />
+        )}
         {showStation && <RecordingStation size={SIZE} />}
-        {mediaStatus === "granted" && !hasClips && stationDismissed && <RecordPrompt />}
+        {showOverlays && mediaStatus === "granted" && !hasClips && stationDismissed && (
+          <RecordPrompt />
+        )}
+        {showFullscreenToggle && (
+          <button
+            type="button"
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            onClick={onToggleFullscreen}
+            className="absolute top-2 right-2 z-10 flex items-center justify-center w-8 h-8 rounded bg-zinc-950/60 text-zinc-200 hover:bg-zinc-950/90 hover:text-white transition-colors"
+          >
+            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+        )}
       </div>
       {showRecordMore && <RecordMoreButton />}
     </div>

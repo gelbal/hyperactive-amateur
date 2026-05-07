@@ -1,3 +1,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Fullscreen presentation mode for the viewport: the wrapper fills the
+ * screen with the brand neutral, and the canvas grows to fill the shorter
+ * dimension while staying square. The canvas DOM node is unchanged so the
+ * rAF render loop keeps drawing without interruption. */
+.ha-viewport-frame:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #09090b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ha-viewport-frame:fullscreen .ha-canvas {
+  width: 100vmin !important;
+  height: 100vmin !important;
+  border-radius: 0;
+  box-shadow: none;
+}

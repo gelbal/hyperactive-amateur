@@ -88,4 +88,50 @@ describe("Viewport", () => {
     expect(screen.queryByLabelText("recording station")).not.toBeInTheDocument();
     expect(screen.getByText(/record a sound on any track/i)).toBeInTheDocument();
   });
+
+  describe("fullscreen toggle", () => {
+    it("hides the toggle while permission is not granted", () => {
+      render(<Viewport />);
+      expect(
+        screen.queryByRole("button", { name: /enter fullscreen/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders the Enter Fullscreen button once granted", () => {
+      act(() => {
+        useAppStore.getState().actions.setMedia({
+          stream: {} as MediaStream,
+          status: "granted",
+          error: null,
+        });
+      });
+      render(<Viewport />);
+      expect(
+        screen.getByRole("button", { name: /enter fullscreen/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking the toggle calls element.requestFullscreen", async () => {
+      const requestSpy = vi.fn(async () => undefined);
+      const original = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen =
+        requestSpy as unknown as Element["requestFullscreen"];
+      try {
+        act(() => {
+          useAppStore.getState().actions.setMedia({
+            stream: {} as MediaStream,
+            status: "granted",
+            error: null,
+          });
+        });
+        render(<Viewport />);
+        await act(async () => {
+          screen.getByRole("button", { name: /enter fullscreen/i }).click();
+        });
+        expect(requestSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        Element.prototype.requestFullscreen = original;
+      }
+    });
+  });
 });
