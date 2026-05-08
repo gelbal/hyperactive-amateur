@@ -47,13 +47,13 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="border-b border-zinc-800">
-        <div className="flex items-stretch gap-8 px-6 py-3">
-          <h1 className="text-4xl font-black tracking-tight leading-[0.95] text-zinc-200">
+        <div className="flex items-stretch justify-between gap-10 px-6 py-4">
+          <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
             Hyperactive
             <br />
             Amateur
           </h1>
-          <div className="flex flex-col justify-between gap-2 flex-1">
+          <div className="flex flex-col justify-between items-end gap-3 flex-1 min-w-0">
             <div className="flex items-center gap-4">
               <PlayButton />
               <span className="text-[10px] text-zinc-500 -ml-2">space</span>
@@ -61,9 +61,10 @@ export function App() {
               <span className="h-6 w-px bg-zinc-800" aria-hidden />
               <FeelDisclosure />
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <SuggestButton />
               <VariationButtons />
+              <span className="h-6 w-px bg-zinc-800" aria-hidden />
               <ExportButton />
             </div>
           </div>

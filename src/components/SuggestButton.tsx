@@ -62,7 +62,7 @@ export function SuggestButton() {
           onChange={(e) =>
             useAppStore.getState().actions.setSubgenre(e.target.value as Subgenre)
           }
-          className="bg-zinc-900 text-sm rounded border border-zinc-700 px-2 py-1 focus:outline-none focus:border-orange-500"
+          className="bg-zinc-900 text-sm rounded border border-zinc-700 text-zinc-200 px-3 py-2 hover:border-zinc-500 focus:outline-none focus:border-orange-500 transition-colors"
         >
           {SUBGENRES.map((g) => (
             <option key={g} value={g}>
@@ -78,12 +78,12 @@ export function SuggestButton() {
         title={
           clipCount < MIN_CLIPS
             ? `Record at least ${MIN_CLIPS} clips to enable this`
-            : "Ask Claude to fill the grid"
+            : "Ask Gemini to fill the grid"
         }
         onClick={() => void handleClick()}
-        className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        <Sparkles size={14} className={pending ? "animate-pulse text-orange-400" : ""} />
+        <Sparkles size={14} className={pending ? "animate-pulse text-orange-400" : "text-orange-400"} />
         {pending ? "Thinking…" : "Suggest a beat"}
       </button>
       {error && (

@@ -1,7 +1,7 @@
 // ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip mutations of the current pattern.
 // ABOUTME: Each click snapshots the current grid and offers an Undo toast on success.
 import { useEffect, useState } from "react";
-import { Plus, Zap, MoveHorizontal, Minus, Undo2 } from "lucide-react";
+import { Undo2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { varyPattern, type Variation } from "../lib/aiSuggest";
 
@@ -11,13 +11,12 @@ const MIN_CLIPS = 4;
 interface ButtonSpec {
   variation: Variation;
   label: string;
-  Icon: typeof Plus;
 }
 const BUTTONS: ButtonSpec[] = [
-  { variation: "busier", label: "Busier", Icon: Plus },
-  { variation: "fill", label: "Fill", Icon: Zap },
-  { variation: "halftime", label: "Half-time", Icon: MoveHorizontal },
-  { variation: "strip", label: "Strip", Icon: Minus },
+  { variation: "busier", label: "Busier" },
+  { variation: "fill", label: "Fill" },
+  { variation: "halftime", label: "Half-time" },
+  { variation: "strip", label: "Strip" },
 ];
 
 export function VariationButtons() {
@@ -72,7 +71,7 @@ export function VariationButtons() {
 
   return (
     <div className="flex items-center gap-1">
-      {BUTTONS.map(({ variation, label, Icon }) => {
+      {BUTTONS.map(({ variation, label }) => {
         const isPending = pending === variation;
         return (
           <button
@@ -88,9 +87,13 @@ export function VariationButtons() {
                   : `${label} variation`
             }
             onClick={() => void handleClick(variation)}
-            className="flex items-center gap-1 px-2 py-1.5 text-xs rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={
+              "px-3 py-2 text-sm rounded border transition-colors " +
+              "bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 " +
+              "disabled:opacity-50 disabled:cursor-not-allowed " +
+              (isPending ? "animate-pulse text-orange-400" : "")
+            }
           >
-            <Icon size={12} className={isPending ? "animate-pulse text-orange-400" : ""} />
             {label}
           </button>
         );

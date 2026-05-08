@@ -11,7 +11,7 @@ export function ExportButton() {
         type="button"
         aria-label="Export"
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
+        className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 transition-colors"
       >
         <Download size={14} />
         Export
