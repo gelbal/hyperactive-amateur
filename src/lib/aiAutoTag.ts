@@ -4,7 +4,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import type { Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 
-export const AUTO_TAG_MODEL = "gemini-3-flash-preview";
+export const AUTO_TAG_MODEL = "gemini-3.1-flash-lite-preview";
 
 const TAG_VALUES: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 

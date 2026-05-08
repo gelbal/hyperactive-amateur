@@ -36,7 +36,7 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-const MODEL = "gemini-3-flash-preview";
+const MODEL = "gemini-3.1-flash-lite-preview";
 
 const SUGGEST_SYSTEM_PROMPT =
   "You are a hip-hop beat producer. Given track labels, tempo, and a target subgenre, return a 16-step pattern across 8 tracks as strict JSON. Patterns should feel musical, with kick on 1 and 9 by default for boom-bap, snare on 5 and 13, and varying hat density. Use vocal/fx tracks sparingly for accents.";

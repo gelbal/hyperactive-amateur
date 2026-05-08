@@ -100,7 +100,7 @@ describe("suggestPattern", () => {
       contents: Array<{ parts: Array<{ text: string }> }>;
       config: { systemInstruction: string; responseMimeType: string };
     };
-    expect(params.model).toBe("gemini-3-flash-preview");
+    expect(params.model).toBe("gemini-3.1-flash-lite-preview");
     expect(params.config.systemInstruction).toMatch(/hip-hop beat producer/);
     expect(params.config.responseMimeType).toBe("application/json");
     const userText = params.contents[0]?.parts[0]?.text ?? "";
