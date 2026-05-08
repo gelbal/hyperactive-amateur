@@ -5,7 +5,7 @@ import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
 import { autoTrim } from "./autoTrim";
 import { autoTag } from "./aiAutoTag";
-import { requestMedia } from "./media";
+import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -26,19 +26,27 @@ export interface RecordIntoTrackOptions {
   onError?: (message: string) => void;
 }
 
-// Run the full record sequence for one track. Resolves with true on a saved
-// clip, false if the flow couldn't start (no stream — kicked permission flow)
-// or threw during capture.
+// Run the full record sequence for one track. Acquires a fresh MediaStream
+// for the cycle (camera light goes on), runs countdown → record → trim →
+// store → auto-tag, then releases the stream (camera light goes off).
+// Resolves with true on a saved clip, false if permission isn't granted yet
+// (we surface the gate) or capture threw.
 export async function recordIntoTrack(
   trackId: number,
   options: RecordIntoTrackOptions = {},
 ): Promise<boolean> {
-  const stream = useAppStore.getState().media.stream;
-  if (!stream) {
+  const actions = useAppStore.getState().actions;
+
+  let stream: MediaStream;
+  try {
+    stream = await acquireRecordingStream();
+  } catch (e) {
+    // Permission isn't granted yet — surface the viewport gate to ask.
     void requestMedia();
+    options.onError?.(e instanceof Error ? e.message : String(e));
     return false;
   }
-  const actions = useAppStore.getState().actions;
+
   actions.setRecordingState("countdown", trackId);
   await new Promise((r) => setTimeout(r, COUNTDOWN_MS));
   actions.setRecordingState("recording", trackId);
@@ -55,13 +63,14 @@ export async function recordIntoTrack(
       durationMs: result.durationMs,
     };
     actions.setTrackClip(trackId, newClip);
-    actions.setRecordingState("idle", null);
     void runAutoTag(trackId, result.audioBuffer, options.onAutoTag);
     return true;
   } catch (e) {
-    actions.setRecordingState("idle", null);
     options.onError?.(e instanceof Error ? e.message : String(e));
     return false;
+  } finally {
+    releaseRecordingStream(stream);
+    actions.setRecordingState("idle", null);
   }
 }
 

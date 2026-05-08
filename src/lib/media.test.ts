@@ -1,6 +1,13 @@
-// ABOUTME: media tests — status transitions on grant + denial + idempotent in-flight requests.
+// ABOUTME: media tests — permission-only requestMedia + on-demand stream acquisition for recording.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { requestMedia, stopMedia, tryAutoGrantMedia, __resetMediaForTesting } from "./media";
+import {
+  requestMedia,
+  stopMedia,
+  tryAutoGrantMedia,
+  acquireRecordingStream,
+  releaseRecordingStream,
+  __resetMediaForTesting,
+} from "./media";
 import { useAppStore } from "../store/useAppStore";
 
 function makeFakeStream() {
@@ -35,47 +42,88 @@ describe("media", () => {
     });
   }
 
-  it("transitions status idle → requesting → granted on success", async () => {
-    const fake = makeFakeStream();
-    stubGetUserMedia(async () => fake);
-    expect(useAppStore.getState().media.status).toBe("idle");
-    const promise = requestMedia();
-    expect(useAppStore.getState().media.status).toBe("requesting");
-    await promise;
-    expect(useAppStore.getState().media.status).toBe("granted");
-    expect(useAppStore.getState().media.stream).toBe(fake);
+  describe("requestMedia (permission only — releases the stream after grant)", () => {
+    it("transitions idle → requesting → granted on success and releases tracks", async () => {
+      const fake = makeFakeStream();
+      stubGetUserMedia(async () => fake);
+      expect(useAppStore.getState().media.status).toBe("idle");
+      const promise = requestMedia();
+      expect(useAppStore.getState().media.status).toBe("requesting");
+      await promise;
+      expect(useAppStore.getState().media.status).toBe("granted");
+      // Stream is NOT held — it was released right after grant confirmation.
+      expect(useAppStore.getState().media.stream).toBeNull();
+      for (const track of fake._tracks) {
+        expect(track.stop).toHaveBeenCalled();
+      }
+    });
+
+    it("transitions to denied with the error message on rejection", async () => {
+      stubGetUserMedia(async () => {
+        throw new DOMException("user blocked it", "NotAllowedError");
+      });
+      await requestMedia();
+      expect(useAppStore.getState().media.status).toBe("denied");
+      expect(useAppStore.getState().media.error).toMatch(/blocked/);
+    });
+
+    it("is idempotent — concurrent calls share one getUserMedia call", async () => {
+      let calls = 0;
+      stubGetUserMedia(async () => {
+        calls += 1;
+        return makeFakeStream();
+      });
+      await Promise.all([requestMedia(), requestMedia(), requestMedia()]);
+      expect(calls).toBe(1);
+    });
+
+    it("returns immediately if permission is already granted", async () => {
+      stubGetUserMedia(async () => makeFakeStream());
+      await requestMedia();
+      let calls = 0;
+      stubGetUserMedia(async () => {
+        calls += 1;
+        return makeFakeStream();
+      });
+      await requestMedia();
+      expect(calls).toBe(0);
+    });
   });
 
-  it("transitions to denied with the error message on rejection", async () => {
-    stubGetUserMedia(async () => {
-      throw new DOMException("user blocked it", "NotAllowedError");
+  describe("acquireRecordingStream / releaseRecordingStream", () => {
+    it("acquires a stream and stores it on the media slice", async () => {
+      const fake = makeFakeStream();
+      stubGetUserMedia(async () => fake);
+      const stream = await acquireRecordingStream();
+      expect(stream).toBe(fake);
+      expect(useAppStore.getState().media.stream).toBe(fake);
+      expect(useAppStore.getState().media.status).toBe("granted");
     });
-    await requestMedia();
-    expect(useAppStore.getState().media.status).toBe("denied");
-    expect(useAppStore.getState().media.error).toMatch(/blocked/);
-  });
 
-  it("is idempotent — concurrent requests share one getUserMedia call", async () => {
-    let calls = 0;
-    stubGetUserMedia(async () => {
-      calls += 1;
-      return makeFakeStream();
+    it("releaseRecordingStream stops the tracks and clears the slice", async () => {
+      const fake = makeFakeStream();
+      stubGetUserMedia(async () => fake);
+      const stream = await acquireRecordingStream();
+      releaseRecordingStream(stream);
+      for (const track of fake._tracks) {
+        expect(track.stop).toHaveBeenCalled();
+      }
+      expect(useAppStore.getState().media.stream).toBeNull();
+      // Status stays granted — the user has already approved permission.
+      expect(useAppStore.getState().media.status).toBe("granted");
     });
-    await Promise.all([requestMedia(), requestMedia(), requestMedia()]);
-    expect(calls).toBe(1);
-  });
 
-  it("returns immediately if a stream is already granted", async () => {
-    const fake = makeFakeStream();
-    stubGetUserMedia(async () => fake);
-    await requestMedia();
-    let calls = 0;
-    stubGetUserMedia(async () => {
-      calls += 1;
-      return makeFakeStream();
+    it("releaseRecordingStream leaves the slice alone if a different stream is now held", async () => {
+      const oldStream = makeFakeStream();
+      stubGetUserMedia(async () => oldStream);
+      await acquireRecordingStream();
+      const newStream = makeFakeStream();
+      stubGetUserMedia(async () => newStream);
+      const acquired = await acquireRecordingStream();
+      releaseRecordingStream(oldStream);
+      // The newer stream is still in the slice.
+      expect(useAppStore.getState().media.stream).toBe(acquired);
     });
-    await requestMedia();
-    expect(calls).toBe(0);
   });
 
   describe("tryAutoGrantMedia", () => {
@@ -101,36 +149,30 @@ describe("media", () => {
       });
     }
 
-    it("calls requestMedia when both camera and mic are already granted", async () => {
-      const fake = makeFakeStream();
-      stubGetUserMedia(async () => fake);
+    it("flips status to granted WITHOUT acquiring a stream when both perms are granted", async () => {
+      const getUserMedia = vi.fn();
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia },
+      });
       stubPermissions({ camera: "granted", microphone: "granted" });
       await tryAutoGrantMedia();
       expect(useAppStore.getState().media.status).toBe("granted");
-      expect(useAppStore.getState().media.stream).toBe(fake);
+      expect(useAppStore.getState().media.stream).toBeNull();
+      // No camera light flicker on page load — getUserMedia is NOT called.
+      expect(getUserMedia).not.toHaveBeenCalled();
     });
 
-    it("does NOT call requestMedia when one is in 'prompt'", async () => {
-      const getUserMedia = vi.fn();
-      Object.defineProperty(navigator, "mediaDevices", {
-        configurable: true,
-        value: { getUserMedia },
-      });
+    it("does nothing when one permission is in 'prompt'", async () => {
       stubPermissions({ camera: "granted", microphone: "prompt" });
       await tryAutoGrantMedia();
-      expect(getUserMedia).not.toHaveBeenCalled();
       expect(useAppStore.getState().media.status).toBe("idle");
     });
 
-    it("does NOT call requestMedia when one is denied", async () => {
-      const getUserMedia = vi.fn();
-      Object.defineProperty(navigator, "mediaDevices", {
-        configurable: true,
-        value: { getUserMedia },
-      });
+    it("does nothing when one permission is denied", async () => {
       stubPermissions({ camera: "denied", microphone: "granted" });
       await tryAutoGrantMedia();
-      expect(getUserMedia).not.toHaveBeenCalled();
+      expect(useAppStore.getState().media.status).toBe("idle");
     });
 
     it("silently no-ops when permissions API is missing", async () => {
@@ -156,10 +198,10 @@ describe("media", () => {
     });
   });
 
-  it("stopMedia stops all tracks and resets state", async () => {
+  it("stopMedia stops any held stream and resets state", async () => {
     const fake = makeFakeStream();
     stubGetUserMedia(async () => fake);
-    await requestMedia();
+    await acquireRecordingStream();
     stopMedia();
     for (const track of fake._tracks) {
       expect(track.stop).toHaveBeenCalled();

@@ -47,10 +47,6 @@ performance. The fix is in your hands, not the app's.
 - **Background.** Different walls, a window, a bookshelf. Move the
   laptop, or move yourself.
 
-Even one varied dimension per clip removes most of the strobe effect.
-Keep the lighting roughly the same — different framings work, wildly
-different exposures look like errors.
-
 A practical first session:
 
 | Track | Sound | Framing |
@@ -77,10 +73,6 @@ re-recording:
 - The **eye toggle** on each track row flips a track to audio-only
   so it fires sound but never causes a viewport cut. Auto-tag flips
   hi-hats to audio-only by default; override any time.
-
-The **fullscreen** icon on the viewport corner goes full-screen via
-the browser Fullscreen API for presentation or screen sharing. ESC
-exits.
 
 ## Inspiration
 
