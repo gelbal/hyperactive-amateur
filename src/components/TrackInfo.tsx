@@ -73,7 +73,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
         )}
       </div>
       <ShowVideoToggle trackId={trackId} />
-      {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-56 shrink-0" />}
+      {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-24 shrink-0" />}
       <AutoTagStatus state={autoTagState} />
       {error && <span className="text-xs text-red-400">{error}</span>}
     </div>
@@ -137,7 +137,7 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
   };
   return (
     <div
-      className="flex gap-1 w-56 shrink-0"
+      className="grid grid-cols-2 gap-0.5 w-24 shrink-0"
       role="group"
       aria-label={`tags for track ${trackId + 1}`}
     >
@@ -152,7 +152,7 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
             data-selected={isSelected}
             onClick={() => onClick(tag)}
             className={
-              "px-1.5 py-1 rounded-full text-[10px] uppercase tracking-wide leading-none " +
+              "px-1.5 py-0.5 rounded-full text-[10px] uppercase tracking-wide leading-none " +
               (isSelected
                 ? "bg-orange-500 text-zinc-950"
                 : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600")
