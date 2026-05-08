@@ -32,10 +32,6 @@ GEMINI_API_KEY=AIza...
 Without a key the rest of the app works fine; AI features just go
 quiet.
 
-> **Important**: the dev key is bundled into the client. Before
-> deploying anywhere public, follow [`docs/AI-MIGRATION.md`](docs/AI-MIGRATION.md)
-> to move the call behind a server proxy.
-
 ## Recording for best results
 
 The hard-cut output cuts between your clips on every musical hit. If
