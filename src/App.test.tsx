@@ -46,9 +46,11 @@ vi.mock("./lib/media", () => ({
 import { App } from "./App";
 
 describe("App", () => {
-  it("renders the title", async () => {
+  it("renders the title (stacked across two lines)", async () => {
     render(<App />);
-    expect(screen.getByText("Hyperactive Amateur")).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.textContent).toMatch(/Hyperactive/);
+    expect(heading.textContent).toMatch(/Amateur/);
     // Wait for the rehydration effect to settle so React doesn't warn.
     await waitFor(() => expect(screen.queryByText(/Loading project/i)).not.toBeInTheDocument());
   });

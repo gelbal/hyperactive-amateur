@@ -1,10 +1,9 @@
-// ABOUTME: Root React component for Hyperactive Amateur — top bar (play button) plus the step grid.
-// ABOUTME: Subsequent build steps will mount the viewport, pads, BPM input, and tags here.
+// ABOUTME: Root React component for Hyperactive Amateur — header (title + controls), viewport, pads, grid.
+// ABOUTME: Owns global app effects: Tone.Transport bootstrap, rehydration, auto-save, keyboard hooks.
 import { useEffect, useState } from "react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { BpmInput } from "./components/BpmInput";
-import { CameraPreview } from "./components/CameraPreview";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { VariationButtons } from "./components/VariationButtons";
@@ -48,23 +47,26 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="border-b border-zinc-800">
-        <div className="flex items-center gap-5 px-4 pt-3 pb-2">
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-300">
-            Hyperactive Amateur
+        <div className="flex items-stretch gap-8 px-6 py-3">
+          <h1 className="text-4xl font-black tracking-tight leading-[0.95] text-zinc-200">
+            Hyperactive
+            <br />
+            Amateur
           </h1>
-          <div className="flex items-center gap-3">
-            <PlayButton />
-            <span className="text-[10px] text-zinc-500 -ml-1">space</span>
-            <BpmInput />
+          <div className="flex flex-col justify-between gap-2 flex-1">
+            <div className="flex items-center gap-4">
+              <PlayButton />
+              <span className="text-[10px] text-zinc-500 -ml-2">space</span>
+              <BpmInput />
+              <span className="h-6 w-px bg-zinc-800" aria-hidden />
+              <FeelDisclosure />
+            </div>
+            <div className="flex items-center gap-3">
+              <SuggestButton />
+              <VariationButtons />
+              <ExportButton />
+            </div>
           </div>
-          <span className="h-6 w-px bg-zinc-800" aria-hidden />
-          <FeelDisclosure />
-        </div>
-        <div className="flex items-center gap-3 px-4 pt-2 pb-3 border-t border-zinc-900">
-          <SuggestButton />
-          <VariationButtons />
-          <ExportButton />
-          <CameraPreview />
         </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6">
