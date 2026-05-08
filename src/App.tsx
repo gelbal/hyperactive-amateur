@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
-import { BpmInput } from "./components/BpmInput";
+import { BpmDial } from "./components/BpmDial";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { VariationButtons } from "./components/VariationButtons";
@@ -57,7 +57,7 @@ export function App() {
             <div className="flex items-center gap-4">
               <PlayButton />
               <span className="text-[10px] text-zinc-500 -ml-2">space</span>
-              <BpmInput />
+              <BpmDial />
               <span className="h-6 w-px bg-zinc-800" aria-hidden />
               <FeelDisclosure />
             </div>
