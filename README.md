@@ -15,7 +15,9 @@ npm run dev                       # http://localhost:5173
 ```
 
 You'll be prompted for camera and microphone access on first record.
-**Targets desktop Chrome / Edge ≥120.** Safari unsupported.
+**Built for desktop Chrome and Edge ≥120.** Recent Firefox should work
+(the in-app compatibility banner feature-detects what it needs).
+Safari is unsupported until it ships VP9 `MediaRecorder`.
 
 ## API key
 
