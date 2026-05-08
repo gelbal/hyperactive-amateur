@@ -83,17 +83,16 @@ describe("StepGrid", () => {
   describe("variable loop length", () => {
     it("clicking the +4 extend button adds four step columns", () => {
       render(<StepGrid />);
-      const left = screen.getAllByLabelText("Add 4 more steps")[0];
-      fireEvent.click(left);
+      fireEvent.click(screen.getByLabelText("Add 4 more steps"));
       const buttons = screen.getAllByLabelText(/^track \d+ step \d+$/);
       expect(buttons).toHaveLength(8 * 20);
       expect(useAppStore.getState().project.stepCount).toBe(20);
     });
 
-    it("renders two extend buttons (one left of T1, one after the last column)", () => {
+    it("renders exactly one extend button trailing the last column", () => {
       render(<StepGrid />);
       const extends_ = screen.getAllByLabelText("Add 4 more steps");
-      expect(extends_).toHaveLength(2);
+      expect(extends_).toHaveLength(1);
     });
 
     it("hovering a column reveals its remove button which removes that column", () => {

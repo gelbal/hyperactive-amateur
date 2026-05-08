@@ -78,12 +78,7 @@ function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderPr
   );
 }
 
-interface ExtendButtonProps {
-  position: "left" | "right";
-  disabled: boolean;
-}
-
-function ExtendButton({ position, disabled }: ExtendButtonProps) {
+function ExtendButton({ disabled }: { disabled: boolean }) {
   return (
     <button
       type="button"
@@ -91,7 +86,6 @@ function ExtendButton({ position, disabled }: ExtendButtonProps) {
       title="Add 4 more steps"
       disabled={disabled}
       onClick={() => useAppStore.getState().actions.extendSteps()}
-      data-position={position}
       className={
         "shrink-0 flex items-center justify-center rounded-full border transition-colors " +
         "w-7 h-7 border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 " +
@@ -110,11 +104,9 @@ export function StepGrid() {
 
   return (
     <div className="px-6 py-4 flex gap-3">
-      {/* Left fixed panel: top extend button + 8 TrackInfo rows */}
+      {/* Left fixed panel: 8 TrackInfo rows */}
       <div className="shrink-0 flex flex-col gap-1">
-        <div className="h-6 flex items-center justify-end">
-          <ExtendButton position="left" disabled={false} />
-        </div>
+        <div className="h-6" aria-hidden />
         {Array.from({ length: TRACK_COUNT }, (_, i) => (
           <TrackInfo key={i} trackId={i} />
         ))}
@@ -133,7 +125,7 @@ export function StepGrid() {
               />
             ))}
             <div className="ml-2">
-              <ExtendButton position="right" disabled={false} />
+              <ExtendButton disabled={false} />
             </div>
           </div>
           {Array.from({ length: TRACK_COUNT }, (_, trackId) => (
