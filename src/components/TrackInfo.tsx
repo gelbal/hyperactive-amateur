@@ -1,6 +1,6 @@
 // ABOUTME: TrackInfo — left-side per-track panel: label, mic/clip thumbnail, eye toggle, tag picker, auto-tag status.
 // ABOUTME: Sticky in the StepGrid left column so the cells can scroll horizontally while track info stays visible.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
@@ -26,8 +26,24 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const [error, setError] = useState<string | null>(null);
   const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
+  const toastTimerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
 
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
+
+  const scheduleToastReset = () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setAutoTagState({ kind: "idle" });
+    }, AUTO_TAG_TOAST_MS);
+  };
 
   const startRecording = async () => {
     setError(null);
@@ -35,10 +51,10 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       onAutoTag: (event: AutoTagEvent) => {
         if (event.kind === "applied") {
           setAutoTagState({ kind: "applied", tag: event.tag, hatAudioOnly: event.hatAudioOnly });
-          window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+          scheduleToastReset();
         } else if (event.kind === "miss") {
           setAutoTagState({ kind: "miss" });
-          window.setTimeout(() => setAutoTagState({ kind: "idle" }), AUTO_TAG_TOAST_MS);
+          scheduleToastReset();
         } else {
           setAutoTagState(event);
         }
@@ -47,9 +63,18 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     });
   };
 
+  const label = tag ? tag.toUpperCase() : `T${trackId + 1}`;
+
   return (
     <div className="h-12 flex items-center gap-2 pr-2">
-      <span className="w-8 text-sm text-zinc-400 font-mono">T{trackId + 1}</span>
+      <span
+        className={
+          "w-14 text-sm font-mono " + (tag ? "text-orange-400" : "text-zinc-500")
+        }
+        title={tag ? `Track ${trackId + 1}` : undefined}
+      >
+        {label}
+      </span>
       <div className="w-12 h-12 flex items-center justify-center">
         {clip ? (
           <ClipThumbnail
@@ -91,7 +116,7 @@ function AutoTagStatus({ state }: { state: AutoTagState }) {
     text = state.hatAudioOnly ? `tagged ${state.tag} → audio-only` : `tagged ${state.tag}`;
     cls = "text-orange-400";
   } else {
-    text = "couldn't auto-tag — pick one";
+    text = "couldn't auto-tag, pick one";
     cls = "text-zinc-500";
   }
   return (
@@ -107,7 +132,7 @@ interface ShowVideoToggleProps {
 
 function ShowVideoToggle({ trackId }: ShowVideoToggleProps) {
   const showVideo = useAppStore((s) => s.project.tracks[trackId].showVideo);
-  const label = showVideo ? "Show video on cut" : "Audio only — no video cut";
+  const label = showVideo ? "Show video on cut" : "Audio only, no video cut";
   return (
     <button
       type="button"

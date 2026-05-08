@@ -12,6 +12,8 @@ import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
+import { selectClipCount, useAppStore } from "./store/useAppStore";
+import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
@@ -21,6 +23,9 @@ import { tryAutoGrantMedia } from "./lib/media";
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
+  const clipCount = useAppStore(selectClipCount);
+  const hasAnyClips = clipCount > 0;
+  const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
 
   useEffect(() => {
     initTransport();
@@ -47,26 +52,36 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
-        <div className="flex items-stretch justify-between gap-10 px-6 py-4">
+        <div className="flex items-end justify-between gap-10 px-6 py-4">
           <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
             Hyperactive
             <br />
             Amateur
           </h1>
-          <div className="flex flex-col justify-between items-end gap-3 flex-1 min-w-0">
+          <div className="flex flex-col items-end gap-3">
             <div className="flex items-center gap-4">
               <PlayButton />
               <span className="text-[10px] text-zinc-500 -ml-2">space</span>
               <BpmDial />
-              <span className="h-6 w-px bg-zinc-800" aria-hidden />
-              <FeelDisclosure />
+              {hasAnyClips && (
+                <>
+                  <span className="h-6 w-px bg-zinc-800" aria-hidden />
+                  <ExportButton />
+                </>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <SuggestButton />
-              <VariationButtons />
-              <span className="h-6 w-px bg-zinc-800" aria-hidden />
-              <ExportButton />
-            </div>
+            {hasAnyClips && (
+              <div className="flex items-center gap-2">
+                <FeelDisclosure />
+                {hasAiUnlock && (
+                  <>
+                    <span className="h-6 w-px bg-zinc-800" aria-hidden />
+                    <SuggestButton />
+                    <VariationButtons />
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -76,11 +91,18 @@ export function App() {
         ) : (
           <>
             <Viewport />
-            <PadGrid />
+            {hasAnyClips ? (
+              <PadGrid />
+            ) : (
+              <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
+                Record your first sound to unlock the pads, the step grid, and
+                the AI tools.
+              </p>
+            )}
           </>
         )}
       </main>
-      <StepGrid />
+      {hasAnyClips && <StepGrid />}
       <RecordCountdown />
     </div>
   );

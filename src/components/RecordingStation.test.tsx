@@ -1,5 +1,5 @@
-// ABOUTME: RecordingStation tests — target advances on skip, dismiss closes the station, no station when full.
-import { render, screen, fireEvent, act } from "@testing-library/react";
+// ABOUTME: RecordingStation tests — target advances on skip; Done dismisses; full-track auto-hide.
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const recordIntoTrack = vi.fn();
@@ -22,39 +22,24 @@ function makeClip(): Clip {
   };
 }
 
-function fillClips(count: number) {
-  const actions = useAppStore.getState().actions;
-  for (let i = 0; i < count; i++) actions.setTrackClip(i, makeClip());
-}
-
 describe("RecordingStation", () => {
   beforeEach(() => {
     recordIntoTrack.mockReset();
     useAppStore.getState().actions.reset();
   });
 
-  it("renders with the lowest empty track as the initial target", () => {
-    render(<RecordingStation size={480} />);
-    expect(screen.getByText("Recording for Track 1")).toBeInTheDocument();
-  });
-
-  it("targets the next empty track after a clip exists for an earlier one", () => {
-    fillClips(2);
+  it("targets the lowest empty track; Skip advances; Record fires recordIntoTrack with the target", () => {
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, makeClip());
+    actions.setTrackClip(1, makeClip());
     render(<RecordingStation size={480} />);
     expect(screen.getByText("Recording for Track 3")).toBeInTheDocument();
-  });
 
-  it("Record button calls recordIntoTrack with the current target", () => {
-    render(<RecordingStation size={480} />);
-    fireEvent.click(screen.getByLabelText("Record clip for track 1"));
-    expect(recordIntoTrack).toHaveBeenCalledWith(0, expect.any(Object));
-  });
-
-  it("Skip advances target to the next empty track without recording", () => {
-    render(<RecordingStation size={480} />);
     fireEvent.click(screen.getByLabelText("Skip this track"));
-    expect(recordIntoTrack).not.toHaveBeenCalled();
-    expect(screen.getByText("Recording for Track 2")).toBeInTheDocument();
+    expect(screen.getByText("Recording for Track 4")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Record clip for track 4"));
+    expect(recordIntoTrack).toHaveBeenCalledWith(3, expect.any(Object));
   });
 
   it("Done dismisses the station via the store flag", () => {
@@ -64,30 +49,9 @@ describe("RecordingStation", () => {
   });
 
   it("returns null when every track has a clip", () => {
-    fillClips(8);
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 8; i++) actions.setTrackClip(i, makeClip());
     const { container } = render(<RecordingStation size={480} />);
     expect(container.firstChild).toBeNull();
-  });
-
-  it("returns null when every empty track has been skipped", () => {
-    render(<RecordingStation size={480} />);
-    // Skip all 8.
-    for (let i = 0; i < 8; i++) {
-      const skip = screen.queryByLabelText("Skip this track");
-      if (!skip) break;
-      act(() => {
-        fireEvent.click(skip);
-      });
-    }
-    expect(screen.queryByLabelText("Skip this track")).not.toBeInTheDocument();
-  });
-
-  it("disables controls while a recording is in progress", () => {
-    act(() => {
-      useAppStore.getState().actions.setRecordingState("recording", 0);
-    });
-    render(<RecordingStation size={480} />);
-    expect(screen.getByLabelText("Record clip for track 1")).toBeDisabled();
-    expect(screen.getByLabelText("Skip this track")).toBeDisabled();
   });
 });

@@ -1,8 +1,9 @@
 // ABOUTME: FeelDisclosure — single button that opens a popover holding the advanced timing controls.
 // ABOUTME: The button label is the live state (cut rate · swing · hold) so the value stays visible while the panel is closed.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
+import { usePopoverDismiss } from "../lib/usePopoverDismiss";
 import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
@@ -22,24 +23,8 @@ export function FeelDisclosure() {
   const hold = useAppStore((s) => s.project.sameTierHoldMs);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (event: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (rootRef.current.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  usePopoverDismiss(rootRef, open, close);
 
   const summary = `${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
 
@@ -49,7 +34,7 @@ export function FeelDisclosure() {
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Feel — cut rate, swing, hold"
+        aria-label="Feel: cut rate, swing, hold"
         onClick={() => setOpen((v) => !v)}
         className={
           "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
@@ -101,12 +86,11 @@ function ScratchControl({ onScratched }: ScratchControlProps) {
       <button
         type="button"
         onClick={() => setArmed(true)}
-        aria-label="Scratch — start fresh"
+        aria-label="Scratch: start fresh"
         className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded text-zinc-300 hover:bg-zinc-800 border border-zinc-800"
       >
         <Trash2 size={14} />
         Scratch
-        <span className="text-xs text-zinc-500">— start fresh</span>
       </button>
     );
   }

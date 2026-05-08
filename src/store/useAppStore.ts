@@ -57,6 +57,9 @@ export interface AppActions {
 
 export type AppStore = AppState & { actions: AppActions };
 
+export const selectClipCount = (s: AppStore): number =>
+  s.project.tracks.reduce((n, t) => (t.clip ? n + 1 : n), 0);
+
 export const useAppStore = create<AppStore>((set) => ({
   ...createInitialState(),
   actions: {

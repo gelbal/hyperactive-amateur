@@ -2,24 +2,23 @@
 // ABOUTME: Disabled until ≥4 tracks have clips; shows an undo toast for 5 seconds after applying.
 import { useEffect, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
-import { suggestPattern, SUBGENRES } from "../lib/aiSuggest";
+import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { AI_UNLOCK_CLIPS, suggestPattern, SUBGENRES } from "../lib/aiSuggest";
 import type { Subgenre } from "../types";
 
 const TOAST_MS = 5000;
-const MIN_CLIPS = 4;
 
 export function SuggestButton() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
   const stepCount = useAppStore((s) => s.project.stepCount);
+  const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<boolean[][] | null>(null);
 
-  const clipCount = tracks.filter((t) => t.clip).length;
-  const disabled = pending || clipCount < MIN_CLIPS;
+  const disabled = pending || clipCount < AI_UNLOCK_CLIPS;
 
   useEffect(() => {
     if (!undoSnapshot) return;
@@ -76,8 +75,8 @@ export function SuggestButton() {
         aria-label="Suggest a beat"
         disabled={disabled}
         title={
-          clipCount < MIN_CLIPS
-            ? `Record at least ${MIN_CLIPS} clips to enable this`
+          clipCount < AI_UNLOCK_CLIPS
+            ? `Record at least ${AI_UNLOCK_CLIPS} clips to enable this`
             : "Ask Gemini to fill the grid"
         }
         onClick={() => void handleClick()}

@@ -1,13 +1,9 @@
-// ABOUTME: export tests — buildExportStream + exportSong with a fake MediaRecorder.
+// ABOUTME: export tests — buildExportStream wires the audio tap; exportSong runs Transport + MediaRecorder.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const destinationConnect = vi.fn();
 const destinationDisconnect = vi.fn();
-const transport = {
-  start: vi.fn(),
-  stop: vi.fn(),
-  position: 0,
-};
+const transport = { start: vi.fn(), stop: vi.fn(), position: 0 };
 vi.mock("tone", () => ({
   getDestination: vi.fn(() => ({
     connect: destinationConnect,
@@ -20,22 +16,18 @@ import { buildExportStream, exportSong, defaultExportFilename } from "./export";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
-  const canvas = {
+  return {
     captureStream: vi.fn(() => ({
       getVideoTracks: () => [videoTrack],
       getTracks: () => [videoTrack],
     })),
   } as unknown as HTMLCanvasElement;
-  return canvas;
 }
-
 function makeAudioContext() {
   const audioTrack = { kind: "audio", stop: vi.fn() } as unknown as MediaStreamTrack;
   return {
     createMediaStreamDestination: vi.fn(() => ({
-      stream: {
-        getAudioTracks: () => [audioTrack],
-      },
+      stream: { getAudioTracks: () => [audioTrack] },
     })),
   } as unknown as AudioContext;
 }
@@ -46,20 +38,11 @@ describe("buildExportStream", () => {
     destinationDisconnect.mockClear();
   });
 
-  it("returns a MediaStream with a video and audio track", () => {
-    const canvas = makeCanvas();
-    const ctx = makeAudioContext();
-    const { stream, cleanup } = buildExportStream(canvas, ctx);
+  it("returns a stream with a video + audio track and cleanup disconnects the tap", () => {
+    const { stream, cleanup } = buildExportStream(makeCanvas(), makeAudioContext());
     expect(stream.getVideoTracks()).toHaveLength(1);
     expect(stream.getAudioTracks()).toHaveLength(1);
     expect(destinationConnect).toHaveBeenCalledTimes(1);
-    cleanup();
-  });
-
-  it("cleanup disconnects the destination tap", () => {
-    const canvas = makeCanvas();
-    const ctx = makeAudioContext();
-    const { cleanup } = buildExportStream(canvas, ctx);
     cleanup();
     expect(destinationDisconnect).toHaveBeenCalledTimes(1);
   });
@@ -94,31 +77,24 @@ describe("exportSong", () => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
     transport.start.mockClear();
     transport.stop.mockClear();
-    transport.position = 0;
   });
 
   afterEach(() => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
   });
 
-  it("resolves with a Blob and reports progress", async () => {
-    const canvas = makeCanvas();
-    const ctx = makeAudioContext();
+  it("starts/stops the Transport, reports progress, and resolves with a Blob", async () => {
     const onProgress = vi.fn();
-    const blob = await exportSong(canvas, ctx, { bars: 1, bpm: 240, onProgress });
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 240,
+      onProgress,
+    });
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.size).toBeGreaterThan(0);
-    expect(onProgress).toHaveBeenCalled();
-    // Always called with 1 at the end.
-    expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
-  });
-
-  it("starts and stops the Transport", async () => {
-    const canvas = makeCanvas();
-    const ctx = makeAudioContext();
-    await exportSong(canvas, ctx, { bars: 1, bpm: 240 });
     expect(transport.start).toHaveBeenCalled();
     expect(transport.stop).toHaveBeenCalled();
+    expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
   });
 });
 

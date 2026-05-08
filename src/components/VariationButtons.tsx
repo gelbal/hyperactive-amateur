@@ -2,11 +2,10 @@
 // ABOUTME: Each click snapshots the current grid and offers an Undo toast on success.
 import { useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
-import { varyPattern, type Variation } from "../lib/aiSuggest";
+import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { AI_UNLOCK_CLIPS, varyPattern, type Variation } from "../lib/aiSuggest";
 
 const TOAST_MS = 5000;
-const MIN_CLIPS = 4;
 
 interface ButtonSpec {
   variation: Variation;
@@ -24,6 +23,7 @@ export function VariationButtons() {
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
   const stepCount = useAppStore((s) => s.project.stepCount);
+  const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState<Variation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -31,9 +31,8 @@ export function VariationButtons() {
     grid: boolean[][];
   } | null>(null);
 
-  const clipCount = tracks.filter((t) => t.clip).length;
   const hasPattern = tracks.some((t) => t.steps.some((s) => s));
-  const baseDisabled = pending !== null || clipCount < MIN_CLIPS || !hasPattern;
+  const baseDisabled = pending !== null || clipCount < AI_UNLOCK_CLIPS || !hasPattern;
 
   useEffect(() => {
     if (!undoSnapshot) return;
@@ -80,8 +79,8 @@ export function VariationButtons() {
             aria-label={label}
             disabled={baseDisabled}
             title={
-              clipCount < MIN_CLIPS
-                ? "Record at least 4 clips first"
+              clipCount < AI_UNLOCK_CLIPS
+                ? `Record at least ${AI_UNLOCK_CLIPS} clips first`
                 : !hasPattern
                   ? "Set a pattern first (Suggest a beat or toggle some steps)"
                   : `${label} variation`

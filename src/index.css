@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Tailwind preflight removes default focus outlines; restore as a brand-colored ring. */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[role="slider"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #fb923c;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Fullscreen presentation mode for the viewport: the wrapper fills the
  * screen with the brand neutral, and the canvas grows to fill the shorter
  * dimension while staying square. The canvas DOM node is unchanged so the

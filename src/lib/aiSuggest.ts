@@ -8,6 +8,10 @@ export type Variation = "busier" | "fill" | "halftime" | "strip";
 export type { Subgenre } from "../types";
 export const SUBGENRES: readonly Subgenre[] = ["boom-bap", "trap", "lo-fi", "phonk"] as const;
 
+// Minimum recorded clips before AI tools (Suggest, variations) become enabled.
+// The model needs enough tagged audio to ground its output.
+export const AI_UNLOCK_CLIPS = 4;
+
 export interface SuggestPatternInput {
   bpm: number;
   subgenre: Subgenre;

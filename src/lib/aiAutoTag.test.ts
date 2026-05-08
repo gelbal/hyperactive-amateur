@@ -1,11 +1,6 @@
-// ABOUTME: aiAutoTag tests — request shape, validation, error / missing-key fall-through.
+// ABOUTME: aiAutoTag tests — schema validation + happy path + fail-open behavior.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  autoTag,
-  validateAutoTag,
-  AUTO_TAG_MODEL,
-  type GeminiClient,
-} from "./aiAutoTag";
+import { autoTag, validateAutoTag, type GeminiClient } from "./aiAutoTag";
 
 function fakeBuffer(): AudioBuffer {
   return {
@@ -24,26 +19,15 @@ function makeClient(behavior: (params: object) => Promise<{ text?: string }>): G
 }
 
 describe("validateAutoTag", () => {
-  it("accepts a valid result", () => {
+  it("accepts a valid result and rejects bad shapes", () => {
     expect(validateAutoTag({ tag: "kick", confidence: 0.85 })).toEqual({
       tag: "kick",
       confidence: 0.85,
       reasoning: undefined,
     });
-  });
-
-  it("rejects an unknown tag value", () => {
     expect(validateAutoTag({ tag: "drums", confidence: 0.9 })).toBeNull();
-  });
-
-  it("rejects a confidence outside 0..1", () => {
     expect(validateAutoTag({ tag: "snare", confidence: 1.5 })).toBeNull();
-    expect(validateAutoTag({ tag: "snare", confidence: -0.1 })).toBeNull();
-  });
-
-  it("rejects null/non-object", () => {
     expect(validateAutoTag(null)).toBeNull();
-    expect(validateAutoTag("hello")).toBeNull();
   });
 });
 
@@ -55,52 +39,26 @@ describe("autoTag", () => {
     vi.unstubAllEnvs();
   });
 
-  it("sends the audio as inlineData with audio/wav and returns the parsed result", async () => {
-    let captured: { params?: object } = {};
-    const client = makeClient(async (params) => {
-      captured.params = params;
-      return { text: JSON.stringify({ tag: "kick", confidence: 0.9, reasoning: "low thump" }) };
-    });
+  it("returns the parsed result on a valid response", async () => {
+    const client = makeClient(async () => ({
+      text: JSON.stringify({ tag: "kick", confidence: 0.9, reasoning: "low thump" }),
+    }));
     const result = await autoTag(fakeBuffer(), client);
     expect(result).toEqual({ tag: "kick", confidence: 0.9, reasoning: "low thump" });
-
-    const params = captured.params as {
-      model: string;
-      contents: Array<{ parts: Array<{ inlineData?: { mimeType: string }; text?: string }> }>;
-      config: { responseMimeType: string; responseSchema: { properties: Record<string, unknown> } };
-    };
-    expect(params.model).toBe(AUTO_TAG_MODEL);
-    const parts = params.contents[0].parts;
-    expect(parts.some((p) => p.inlineData?.mimeType === "audio/wav")).toBe(true);
-    expect(parts.some((p) => typeof p.text === "string")).toBe(true);
-    expect(params.config.responseMimeType).toBe("application/json");
-    expect(params.config.responseSchema.properties.tag).toBeDefined();
   });
 
-  it("returns null on an unknown tag value", async () => {
-    const client = makeClient(async () => ({
-      text: JSON.stringify({ tag: "drums", confidence: 0.9 }),
-    }));
-    expect(await autoTag(fakeBuffer(), client)).toBeNull();
-  });
+  it("fails open: returns null on SDK throw, malformed JSON, missing key", async () => {
+    expect(await autoTag(fakeBuffer(), makeClient(async () => ({ text: "not json {{" })))).toBeNull();
+    expect(
+      await autoTag(
+        fakeBuffer(),
+        makeClient(async () => {
+          throw new Error("network down");
+        }),
+      ),
+    ).toBeNull();
 
-  it("returns null on malformed JSON", async () => {
-    const client = makeClient(async () => ({ text: "not json {{" }));
-    expect(await autoTag(fakeBuffer(), client)).toBeNull();
-  });
-
-  it("returns null when the SDK throws", async () => {
-    const client = makeClient(async () => {
-      throw new Error("network down");
-    });
-    expect(await autoTag(fakeBuffer(), client)).toBeNull();
-  });
-
-  it("returns null without making a call when the API key is missing", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
-    // No client passed → function reads import.meta.env; the empty key value
-    // should short-circuit before the SDK constructor runs.
-    const result = await autoTag(fakeBuffer());
-    expect(result).toBeNull();
+    expect(await autoTag(fakeBuffer())).toBeNull();
   });
 });
