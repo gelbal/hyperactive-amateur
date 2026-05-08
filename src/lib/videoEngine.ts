@@ -101,6 +101,14 @@ export function trigger(trackId: number, when: number): void {
   };
   if (delaySeconds <= 0) start();
   else setTimeout(start, delaySeconds * 1000);
+
+  // Live triggers (pad clicks, keyboard hits) when the Transport isn't
+  // running won't get picked up by the boundary scheduleRepeat callback.
+  // Show them immediately so the canvas reflects the user's input.
+  const playing = useAppStore.getState().playback.isPlaying;
+  if (!playing) {
+    currentlyDisplayed = { trackId, startTime: when };
+  }
 }
 
 function tagScore(trackId: number, contexts?: Map<number, TrackContext>): number {

@@ -24,6 +24,7 @@ import {
   quantizeToBoundary,
   setVideoCutSubdivision,
   resetPlaybackState,
+  getDebugInfo,
   __resetVideoEngineForTesting,
   type TrackContext,
   type TriggerEvent,
@@ -253,5 +254,21 @@ describe("videoEngine integration", () => {
     resetPlaybackState();
     const ctx = getCtx();
     expect(() => drawCurrentFrame(ctx, 1)).not.toThrow();
+  });
+
+  it("live trigger while not playing immediately becomes the displayed event", () => {
+    setClipForTrack(0, makeClip(1));
+    setClipForTrack(3, makeClip(2));
+    // Confirm the store reports not playing (default after reset).
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+
+    trigger(3, 0.5);
+
+    // Without the immediate-display fix, drawCurrentFrame would render black
+    // because currentlyDisplayed is set only by the boundary callback (which
+    // doesn't fire while the Transport is stopped). With the fix, the live
+    // event is displayed right away.
+    const debug = getDebugInfo();
+    expect(debug.current?.trackId).toBe(3);
   });
 });
