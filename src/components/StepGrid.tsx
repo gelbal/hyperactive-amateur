@@ -131,7 +131,7 @@ export function StepGrid() {
           {Array.from({ length: TRACK_COUNT }, (_, trackId) => (
             <div
               key={trackId}
-              className="flex items-center"
+              className="flex items-center h-12"
               style={{ gap: STEP_GAP }}
               onMouseLeave={() => setHoveredCol(null)}
             >
