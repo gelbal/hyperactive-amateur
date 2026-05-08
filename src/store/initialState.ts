@@ -3,13 +3,16 @@
 import type { AppState, Track } from "../types";
 
 const TRACK_COUNT = 8;
-const STEP_COUNT = 16;
+export const DEFAULT_STEP_COUNT = 16;
+export const STEP_COUNT_INCREMENT = 4;
+export const MIN_STEP_COUNT = 4;
+export const MAX_STEP_COUNT = 64;
 
-function createEmptyTrack(id: number): Track {
+function createEmptyTrack(id: number, stepCount: number): Track {
   return {
     id,
     clip: null,
-    steps: new Array(STEP_COUNT).fill(false),
+    steps: new Array(stepCount).fill(false),
     volume: 1,
     muted: false,
     tag: null,
@@ -25,7 +28,10 @@ export function createInitialState(): AppState {
       cutSubdivision: "8n",
       sameTierHoldMs: 400,
       subgenre: "boom-bap",
-      tracks: Array.from({ length: TRACK_COUNT }, (_, i) => createEmptyTrack(i)),
+      stepCount: DEFAULT_STEP_COUNT,
+      tracks: Array.from({ length: TRACK_COUNT }, (_, i) =>
+        createEmptyTrack(i, DEFAULT_STEP_COUNT),
+      ),
     },
     playback: {
       isPlaying: false,

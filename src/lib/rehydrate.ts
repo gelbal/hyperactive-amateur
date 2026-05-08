@@ -4,7 +4,7 @@ import { loadProject } from "./persistence";
 import { getAudioContext } from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import type { AppState, Clip, Track } from "../types";
-import { createInitialState } from "../store/initialState";
+import { createInitialState, DEFAULT_STEP_COUNT } from "../store/initialState";
 
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
@@ -23,6 +23,8 @@ export async function rehydrateFromStorage(): Promise<boolean> {
   if (!persisted) return false;
 
   const empty = createInitialState();
+  const stepCount = persisted.stepCount ?? DEFAULT_STEP_COUNT;
+
   const tracks: Track[] = await Promise.all(
     persisted.tracks.map(async (pt): Promise<Track> => {
       let clip: Clip | null = null;
@@ -43,10 +45,17 @@ export async function rehydrateFromStorage(): Promise<boolean> {
           clip = null;
         }
       }
+      // Pad / truncate persisted steps to match the project's stepCount.
+      const steps = [...pt.steps];
+      if (steps.length < stepCount) {
+        steps.push(...new Array(stepCount - steps.length).fill(false));
+      } else if (steps.length > stepCount) {
+        steps.length = stepCount;
+      }
       return {
         id: pt.id,
         clip,
-        steps: [...pt.steps],
+        steps,
         volume: pt.volume,
         muted: pt.muted,
         tag: pt.tag,
@@ -61,6 +70,7 @@ export async function rehydrateFromStorage(): Promise<boolean> {
     cutSubdivision: persisted.cutSubdivision,
     sameTierHoldMs: persisted.sameTierHoldMs,
     subgenre: persisted.subgenre ?? "boom-bap",
+    stepCount,
     tracks: tracks.length === 8 ? tracks : empty.project.tracks,
   };
   useAppStore.getState().actions.hydrateProject(project);

@@ -1,15 +1,155 @@
-// ABOUTME: 8-row sequencer grid — composes TrackRow components.
-// ABOUTME: Each TrackRow renders its own clip preview/record affordance + 16 step cells.
-import { TrackRow } from "./TrackRow";
+// ABOUTME: StepGrid — left-side track info (sticky) + scrollable column header / cell rows on the right.
+// ABOUTME: Hosts the +4 extend buttons (left and right) and per-column hover-only minus to remove a column.
+import { useState } from "react";
+import { Plus, Minus } from "lucide-react";
+import { useAppStore } from "../store/useAppStore";
+import { TrackInfo } from "./TrackInfo";
 
 const TRACK_COUNT = 8;
+const STEP_WIDTH = 40;
+const STEP_GAP = 4;
+
+interface StepCellProps {
+  trackId: number;
+  stepIndex: number;
+  onHover: (col: number | null) => void;
+}
+
+function StepCell({ trackId, stepIndex, onHover }: StepCellProps) {
+  const active = useAppStore((s) => s.project.tracks[trackId].steps[stepIndex]);
+  const isCurrent = useAppStore(
+    (s) => s.playback.isPlaying && s.playback.currentStep === stepIndex,
+  );
+  const isDownbeat = stepIndex % 4 === 0;
+
+  let className = "rounded transition-colors shrink-0 ";
+  if (active) className += "bg-orange-500 hover:bg-orange-400";
+  else if (isDownbeat) className += "bg-zinc-700 hover:bg-zinc-600";
+  else className += "bg-zinc-800 hover:bg-zinc-600";
+  if (isCurrent) className += " ring-2 ring-orange-300";
+
+  return (
+    <button
+      type="button"
+      aria-label={`track ${trackId + 1} step ${stepIndex + 1}`}
+      aria-pressed={active}
+      data-active={active}
+      data-current={isCurrent}
+      onClick={() => useAppStore.getState().actions.toggleStep(trackId, stepIndex)}
+      onMouseEnter={() => onHover(stepIndex)}
+      onMouseLeave={() => onHover(null)}
+      style={{ width: STEP_WIDTH, height: 40 }}
+      className={className}
+    />
+  );
+}
+
+interface ColumnHeaderProps {
+  stepIndex: number;
+  hovered: boolean;
+  canRemove: boolean;
+  onHover: (col: number | null) => void;
+}
+
+function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderProps) {
+  const showMinus = hovered && canRemove;
+  return (
+    <div
+      style={{ width: STEP_WIDTH }}
+      className="h-6 flex items-center justify-center shrink-0"
+      onMouseEnter={() => onHover(stepIndex)}
+      onMouseLeave={() => onHover(null)}
+    >
+      <button
+        type="button"
+        aria-label={`Remove step ${stepIndex + 1}`}
+        disabled={!canRemove}
+        onClick={() => useAppStore.getState().actions.removeStepColumn(stepIndex)}
+        className={
+          "w-5 h-5 rounded-full flex items-center justify-center transition-opacity " +
+          (showMinus
+            ? "opacity-100 bg-red-500/80 hover:bg-red-500 text-white"
+            : "opacity-0 pointer-events-none")
+        }
+      >
+        <Minus size={12} />
+      </button>
+    </div>
+  );
+}
+
+interface ExtendButtonProps {
+  position: "left" | "right";
+  disabled: boolean;
+}
+
+function ExtendButton({ position, disabled }: ExtendButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-label="Add 4 more steps"
+      title="Add 4 more steps"
+      disabled={disabled}
+      onClick={() => useAppStore.getState().actions.extendSteps()}
+      data-position={position}
+      className={
+        "shrink-0 flex items-center justify-center rounded-full border transition-colors " +
+        "w-7 h-7 border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 " +
+        "disabled:opacity-30 disabled:cursor-not-allowed"
+      }
+    >
+      <Plus size={14} />
+    </button>
+  );
+}
 
 export function StepGrid() {
+  const stepCount = useAppStore((s) => s.project.stepCount);
+  const canRemove = useAppStore((s) => s.project.stepCount > 4);
+  const [hoveredCol, setHoveredCol] = useState<number | null>(null);
+
   return (
-    <div className="flex flex-col gap-1 p-8">
-      {Array.from({ length: TRACK_COUNT }, (_, i) => (
-        <TrackRow key={i} trackId={i} />
-      ))}
+    <div className="px-6 py-4 flex gap-3">
+      {/* Left fixed panel: top extend button + 8 TrackInfo rows */}
+      <div className="shrink-0 flex flex-col gap-1">
+        <div className="h-6 flex items-center justify-end">
+          <ExtendButton position="left" disabled={false} />
+        </div>
+        {Array.from({ length: TRACK_COUNT }, (_, i) => (
+          <TrackInfo key={i} trackId={i} />
+        ))}
+      </div>
+      {/* Right scrollable: column header (-) buttons + 8 cell rows + trailing + button */}
+      <div className="flex-1 overflow-x-auto">
+        <div className="inline-flex flex-col gap-1">
+          <div className="flex items-center" style={{ gap: STEP_GAP }}>
+            {Array.from({ length: stepCount }, (_, j) => (
+              <ColumnHeader
+                key={j}
+                stepIndex={j}
+                hovered={hoveredCol === j}
+                canRemove={canRemove}
+                onHover={setHoveredCol}
+              />
+            ))}
+            <div className="ml-2">
+              <ExtendButton position="right" disabled={false} />
+            </div>
+          </div>
+          {Array.from({ length: TRACK_COUNT }, (_, trackId) => (
+            <div
+              key={trackId}
+              className="flex items-center"
+              style={{ gap: STEP_GAP }}
+              onMouseLeave={() => setHoveredCol(null)}
+            >
+              {Array.from({ length: stepCount }, (_, j) => (
+                <StepCell key={j} trackId={trackId} stepIndex={j} onHover={setHoveredCol} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

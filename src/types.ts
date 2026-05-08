@@ -55,6 +55,9 @@ export interface ProjectState {
   sameTierHoldMs: number;
   // Genre hint sent to the AI suggester and pattern variations.
   subgenre: Subgenre;
+  // Number of 16th-note steps in the loop. Always a multiple of 4. Each
+  // track's `steps` array has exactly this length.
+  stepCount: number;
   tracks: Track[];
 }
 

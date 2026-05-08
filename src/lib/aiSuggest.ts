@@ -11,6 +11,9 @@ export const SUBGENRES: readonly Subgenre[] = ["boom-bap", "trap", "lo-fi", "pho
 export interface SuggestPatternInput {
   bpm: number;
   subgenre: Subgenre;
+  // Number of 16th-note steps in the loop. The model is asked to return
+  // 8 tracks of exactly this length.
+  stepCount: number;
   tracks: Array<{ id: number; tag: Tag | null }>;
 }
 
@@ -49,39 +52,46 @@ const VARIATION_PROMPTS: Record<Variation, string> = {
     "You are a hip-hop beat producer. Take the given 8x16 step pattern and STRIP IT BACK — remove most ghost notes and accents, focus on the downbeats (1, 5, 9, 13) and the main kick/snare skeleton. Return the modified 8x16 pattern.",
 };
 
-const PATTERN_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    tracks: {
-      type: Type.ARRAY,
-      items: {
+function buildPatternSchema(stepCount: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      tracks: {
         type: Type.ARRAY,
-        items: { type: Type.BOOLEAN },
-        minItems: 16,
-        maxItems: 16,
+        items: {
+          type: Type.ARRAY,
+          items: { type: Type.BOOLEAN },
+          minItems: stepCount,
+          maxItems: stepCount,
+        },
+        minItems: 8,
+        maxItems: 8,
       },
-      minItems: 8,
-      maxItems: 8,
     },
-  },
-  required: ["tracks"],
-} as const;
+    required: ["tracks"],
+  };
+}
 
 function buildSuggestUserMessage(input: SuggestPatternInput): string {
   const labels = input.tracks.map((t) => `${t.id}=${t.tag ?? "untagged"}`).join(", ");
-  return `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. Tracks: ${labels}. Generate a pattern.`;
+  return (
+    `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. ` +
+    `Loop length: ${input.stepCount} sixteenth-note steps. Tracks: ${labels}. ` +
+    `Generate a pattern of exactly 8 tracks by ${input.stepCount} steps.`
+  );
 }
 
 function buildVaryUserMessage(input: VaryPatternInput): string {
   const labels = input.tracks.map((t) => `${t.id}=${t.tag ?? "untagged"}`).join(", ");
   return (
-    `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. Tracks: ${labels}.\n` +
-    `Current pattern (8x16):\n${JSON.stringify(input.currentPattern)}\n` +
-    `Apply the ${input.variation} variation.`
+    `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. ` +
+    `Loop length: ${input.stepCount} sixteenth-note steps. Tracks: ${labels}.\n` +
+    `Current pattern (8x${input.stepCount}):\n${JSON.stringify(input.currentPattern)}\n` +
+    `Apply the ${input.variation} variation. Return 8 tracks of exactly ${input.stepCount} steps.`
   );
 }
 
-export function validatePattern(value: unknown): boolean[][] {
+export function validatePattern(value: unknown, stepCount: number): boolean[][] {
   if (!value || typeof value !== "object") {
     throw new ValidationError("Response is not an object");
   }
@@ -95,11 +105,11 @@ export function validatePattern(value: unknown): boolean[][] {
   const grid: boolean[][] = [];
   for (let i = 0; i < 8; i++) {
     const row = obj.tracks[i];
-    if (!Array.isArray(row) || row.length !== 16) {
-      throw new ValidationError(`Track ${i} is not a 16-element array`);
+    if (!Array.isArray(row) || row.length !== stepCount) {
+      throw new ValidationError(`Track ${i} is not a ${stepCount}-element array`);
     }
     const cleaned: boolean[] = [];
-    for (let j = 0; j < 16; j++) {
+    for (let j = 0; j < stepCount; j++) {
       if (typeof row[j] !== "boolean") {
         throw new ValidationError(`Track ${i} step ${j} is not a boolean`);
       }
@@ -123,6 +133,7 @@ export interface GeminiPatternClient {
 async function generateGrid(
   systemInstruction: string,
   userMessage: string,
+  stepCount: number,
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
   const apiKey = client ? "test-key" : readApiKey();
@@ -137,7 +148,7 @@ async function generateGrid(
     config: {
       systemInstruction,
       responseMimeType: "application/json",
-      responseSchema: PATTERN_SCHEMA,
+      responseSchema: buildPatternSchema(stepCount),
     },
   });
 
@@ -153,19 +164,29 @@ async function generateGrid(
       `Response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  return validatePattern(parsed);
+  return validatePattern(parsed, stepCount);
 }
 
 export async function suggestPattern(
   input: SuggestPatternInput,
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
-  return generateGrid(SUGGEST_SYSTEM_PROMPT, buildSuggestUserMessage(input), client);
+  return generateGrid(
+    SUGGEST_SYSTEM_PROMPT,
+    buildSuggestUserMessage(input),
+    input.stepCount,
+    client,
+  );
 }
 
 export async function varyPattern(
   input: VaryPatternInput,
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
-  return generateGrid(VARIATION_PROMPTS[input.variation], buildVaryUserMessage(input), client);
+  return generateGrid(
+    VARIATION_PROMPTS[input.variation],
+    buildVaryUserMessage(input),
+    input.stepCount,
+    client,
+  );
 }

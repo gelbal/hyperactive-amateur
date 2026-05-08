@@ -5,8 +5,6 @@ import { useAppStore } from "../store/useAppStore";
 import * as videoEngine from "./videoEngine";
 import type { Clip, Track } from "../types";
 
-const STEP_COUNT = 16;
-
 // Per-track pitches let you hear which tracks are firing while a track has no
 // recorded clip. They keep the sequencer audible during build-up phases.
 const TRACK_PITCHES = ["C2", "D2", "E2", "F2", "G2", "A2", "B2", "C3"];
@@ -42,7 +40,8 @@ export function initTransport(): void {
   syncPlayers(useAppStore.getState().project.tracks);
 
   scheduledEventId = transport.scheduleRepeat((time) => {
-    const stepIndex = stepCounter % STEP_COUNT;
+    const stepCount = useAppStore.getState().project.stepCount;
+    const stepIndex = stepCounter % stepCount;
     stepCounter += 1;
 
     onStep(stepIndex, time);

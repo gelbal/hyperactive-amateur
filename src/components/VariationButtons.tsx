@@ -24,6 +24,7 @@ export function VariationButtons() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
+  const stepCount = useAppStore((s) => s.project.stepCount);
   const [pending, setPending] = useState<Variation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -49,6 +50,7 @@ export function VariationButtons() {
       const grid = await varyPattern({
         bpm,
         subgenre,
+        stepCount,
         tracks: tracks.map((t) => ({ id: t.id, tag: t.tag })),
         currentPattern: before,
         variation,

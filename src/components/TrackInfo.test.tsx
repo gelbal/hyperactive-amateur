@@ -1,4 +1,4 @@
-// ABOUTME: TrackRow tests — record button visibility, thumbnail-after-clip, tags, eye toggle, auto-tag.
+// ABOUTME: TrackInfo tests — record button visibility, thumbnail-after-clip, tags, eye toggle.
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -26,7 +26,7 @@ vi.mock("tone", () => ({
   })),
 }));
 
-import { TrackRow } from "./TrackRow";
+import { TrackInfo } from "./TrackInfo";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
@@ -41,20 +41,20 @@ function makeFakeClip(): Clip {
   };
 }
 
-describe("TrackRow", () => {
+describe("TrackInfo", () => {
   beforeEach(() => {
     useAppStore.getState().actions.reset();
     autoTag.mockReset();
   });
 
   it("track 0 shows a record button when no clip is present", () => {
-    render(<TrackRow trackId={0} />);
+    render(<TrackInfo trackId={0} />);
     expect(screen.getByLabelText("record clip for track 1")).toBeInTheDocument();
   });
 
   it("every track exposes a record button when no clip is present", () => {
     for (let id = 0; id < 8; id++) {
-      const { unmount } = render(<TrackRow trackId={id} />);
+      const { unmount } = render(<TrackInfo trackId={id} />);
       expect(screen.getByLabelText(`record clip for track ${id + 1}`)).toBeInTheDocument();
       unmount();
     }
@@ -66,43 +66,38 @@ describe("TrackRow", () => {
     actions.setTrackClip(3, makeFakeClip());
     render(
       <>
-        <TrackRow trackId={0} />
-        <TrackRow trackId={3} />
-        <TrackRow trackId={5} />
+        <TrackInfo trackId={0} />
+        <TrackInfo trackId={3} />
+        <TrackInfo trackId={5} />
       </>,
     );
     expect(screen.getAllByLabelText("re-record")).toHaveLength(2);
     expect(screen.getByLabelText("record clip for track 6")).toBeInTheDocument();
   });
 
-  it("renders 16 step buttons", () => {
-    render(<TrackRow trackId={0} />);
-    expect(screen.getAllByLabelText(/track 1 step/i)).toHaveLength(16);
-  });
-
   it("after setTrackClip, the row shows a thumbnail and the record button is gone", () => {
     useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
-    render(<TrackRow trackId={0} />);
+    render(<TrackInfo trackId={0} />);
     expect(screen.queryByLabelText("record clip for track 1")).not.toBeInTheDocument();
     expect(screen.getByLabelText("re-record")).toBeInTheDocument();
   });
 
   it("clicking re-record clears the clip", () => {
     useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
-    render(<TrackRow trackId={0} />);
+    render(<TrackInfo trackId={0} />);
     fireEvent.click(screen.getByLabelText("re-record"));
     expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
   });
 
   describe("tag picker", () => {
     it("does not render tag chips for an empty track", () => {
-      render(<TrackRow trackId={0} />);
+      render(<TrackInfo trackId={0} />);
       expect(screen.queryByLabelText("tag kick for track 1")).not.toBeInTheDocument();
     });
 
     it("renders unselected chips after a clip is added", () => {
       useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
-      render(<TrackRow trackId={0} />);
+      render(<TrackInfo trackId={0} />);
       for (const tag of ["kick", "snare", "hat", "vocal", "fx"]) {
         const chip = screen.getByLabelText(`tag ${tag} for track 1`);
         expect(chip).toHaveAttribute("data-selected", "false");
@@ -111,7 +106,7 @@ describe("TrackRow", () => {
 
     it("clicking a chip selects it and updates the store", () => {
       useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
-      render(<TrackRow trackId={0} />);
+      render(<TrackInfo trackId={0} />);
       fireEvent.click(screen.getByLabelText("tag kick for track 1"));
       expect(useAppStore.getState().project.tracks[0].tag).toBe("kick");
       expect(screen.getByLabelText("tag kick for track 1")).toHaveAttribute("data-selected", "true");
@@ -120,7 +115,7 @@ describe("TrackRow", () => {
     it("clicking the selected chip clears the tag", () => {
       useAppStore.getState().actions.setTrackClip(0, makeFakeClip());
       useAppStore.getState().actions.setTrackTag(0, "snare");
-      render(<TrackRow trackId={0} />);
+      render(<TrackInfo trackId={0} />);
       fireEvent.click(screen.getByLabelText("tag snare for track 1"));
       expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
     });
@@ -128,20 +123,20 @@ describe("TrackRow", () => {
 
   describe("show-video toggle", () => {
     it("renders the Show-video state by default", () => {
-      render(<TrackRow trackId={0} />);
+      render(<TrackInfo trackId={0} />);
       const toggle = screen.getByLabelText("Show video on cut");
       expect(toggle).toHaveAttribute("data-show-video", "true");
     });
 
     it("clicking the toggle flips showVideo and updates label", () => {
-      render(<TrackRow trackId={2} />);
+      render(<TrackInfo trackId={2} />);
       fireEvent.click(screen.getByLabelText("Show video on cut"));
       expect(useAppStore.getState().project.tracks[2].showVideo).toBe(false);
       expect(screen.getByLabelText(/Audio only/)).toHaveAttribute("data-show-video", "false");
     });
 
     it("user toggle marks the track as manually-toggled in session", () => {
-      render(<TrackRow trackId={4} />);
+      render(<TrackInfo trackId={4} />);
       fireEvent.click(screen.getByLabelText("Show video on cut"));
       const session = useAppStore.getState().session;
       expect(session.manuallyToggledShowVideo).toContain(4);

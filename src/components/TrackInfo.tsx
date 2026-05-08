@@ -1,5 +1,5 @@
-// ABOUTME: TrackRow — one row of the sequencer: clip preview/record + tag picker + step toggles.
-// ABOUTME: Owns the per-track record flow; thumbnails enable re-record on hover.
+// ABOUTME: TrackInfo — left-side per-track panel: label, mic/clip thumbnail, eye toggle, tag picker, auto-tag status.
+// ABOUTME: Sticky in the StepGrid left column so the cells can scroll horizontally while track info stays visible.
 import { useState } from "react";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
@@ -15,44 +15,11 @@ type AutoTagState =
 
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
-const STEP_COUNT = 16;
-
-interface StepCellProps {
-  trackId: number;
-  stepIndex: number;
-}
-
-function StepCell({ trackId, stepIndex }: StepCellProps) {
-  const active = useAppStore((s) => s.project.tracks[trackId].steps[stepIndex]);
-  const isCurrent = useAppStore(
-    (s) => s.playback.isPlaying && s.playback.currentStep === stepIndex,
-  );
-  const isDownbeat = stepIndex % 4 === 0;
-
-  let className = "w-10 h-10 rounded transition-colors ";
-  if (active) className += "bg-orange-500 hover:bg-orange-400";
-  else if (isDownbeat) className += "bg-zinc-700 hover:bg-zinc-600";
-  else className += "bg-zinc-800 hover:bg-zinc-600";
-  if (isCurrent) className += " ring-2 ring-orange-300";
-
-  return (
-    <button
-      type="button"
-      aria-label={`track ${trackId + 1} step ${stepIndex + 1}`}
-      aria-pressed={active}
-      data-active={active}
-      data-current={isCurrent}
-      onClick={() => useAppStore.getState().actions.toggleStep(trackId, stepIndex)}
-      className={className}
-    />
-  );
-}
-
-interface TrackRowProps {
+interface TrackInfoProps {
   trackId: number;
 }
 
-export function TrackRow({ trackId }: TrackRowProps) {
+export function TrackInfo({ trackId }: TrackInfoProps) {
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
   const recordingState = useAppStore((s) => s.recording.state);
@@ -81,11 +48,14 @@ export function TrackRow({ trackId }: TrackRowProps) {
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-10 text-sm text-zinc-400 font-mono">T{trackId + 1}</span>
-      <div className="w-16 h-12 flex items-center justify-center">
+    <div className="h-12 flex items-center gap-2 pr-2">
+      <span className="w-8 text-sm text-zinc-400 font-mono">T{trackId + 1}</span>
+      <div className="w-12 h-12 flex items-center justify-center">
         {clip ? (
-          <ClipThumbnail clip={clip} onClear={() => useAppStore.getState().actions.clearTrackClip(trackId)} />
+          <ClipThumbnail
+            clip={clip}
+            onClear={() => useAppStore.getState().actions.clearTrackClip(trackId)}
+          />
         ) : (
           <button
             type="button"
@@ -105,11 +75,6 @@ export function TrackRow({ trackId }: TrackRowProps) {
       <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-32" />}
       <AutoTagStatus state={autoTagState} />
-      <div className="grid grid-cols-16 gap-1 flex-1">
-        {Array.from({ length: STEP_COUNT }, (_, i) => (
-          <StepCell key={i} trackId={trackId} stepIndex={i} />
-        ))}
-      </div>
       {error && <span className="text-xs text-red-400">{error}</span>}
     </div>
   );
@@ -171,7 +136,11 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
     useAppStore.getState().actions.setTrackTag(trackId, next);
   };
   return (
-    <div className="flex gap-1 flex-wrap w-32" role="group" aria-label={`tags for track ${trackId + 1}`}>
+    <div
+      className="flex gap-1 flex-wrap w-32"
+      role="group"
+      aria-label={`tags for track ${trackId + 1}`}
+    >
       {TAGS.map((tag) => {
         const isSelected = selected === tag;
         return (

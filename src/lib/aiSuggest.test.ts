@@ -30,21 +30,29 @@ function patternJSON(): string {
 
 describe("validatePattern", () => {
   it("accepts a valid 8x16 boolean grid", () => {
-    expect(validatePattern({ tracks: pattern8x16() })).toEqual(pattern8x16());
+    expect(validatePattern({ tracks: pattern8x16() }, 16)).toEqual(pattern8x16());
   });
 
   it("rejects 7x16", () => {
-    expect(() => validatePattern({ tracks: pattern8x16().slice(0, 7) })).toThrow(ValidationError);
+    expect(() => validatePattern({ tracks: pattern8x16().slice(0, 7) }, 16)).toThrow(
+      ValidationError,
+    );
   });
 
   it("rejects strings as steps", () => {
     const grid = pattern8x16() as unknown[][];
     grid[0][0] = "true";
-    expect(() => validatePattern({ tracks: grid })).toThrow(ValidationError);
+    expect(() => validatePattern({ tracks: grid }, 16)).toThrow(ValidationError);
   });
 
   it("rejects missing tracks key", () => {
-    expect(() => validatePattern({})).toThrow(ValidationError);
+    expect(() => validatePattern({}, 16)).toThrow(ValidationError);
+  });
+
+  it("validates against a non-default step count", () => {
+    const grid20 = Array.from({ length: 8 }, () => Array.from({ length: 20 }, () => false));
+    expect(validatePattern({ tracks: grid20 }, 20)).toEqual(grid20);
+    expect(() => validatePattern({ tracks: grid20 }, 16)).toThrow(ValidationError);
   });
 });
 
@@ -59,7 +67,7 @@ describe("suggestPattern", () => {
   it("returns the validated grid on a valid response", async () => {
     const client = makeFakeClient(patternJSON());
     const grid = await suggestPattern(
-      { bpm: 90, subgenre: "boom-bap", tracks: [] },
+      { bpm: 90, subgenre: "boom-bap", stepCount: 16, tracks: [] },
       client,
     );
     expect(grid).toEqual(pattern8x16());
@@ -79,6 +87,7 @@ describe("suggestPattern", () => {
       {
         bpm: 90,
         subgenre: "boom-bap",
+        stepCount: 16,
         tracks: [
           { id: 0, tag: "kick" },
           { id: 1, tag: null },
@@ -105,21 +114,21 @@ describe("suggestPattern", () => {
     const bad = JSON.stringify({ tracks: pattern8x16().slice(0, 5) });
     const client = makeFakeClient(bad);
     await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", stepCount: 16, tracks: [] }, client),
     ).rejects.toThrow(ValidationError);
   });
 
   it("throws ValidationError on malformed JSON", async () => {
     const client = makeFakeClient("not json {{");
     await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", stepCount: 16, tracks: [] }, client),
     ).rejects.toThrow(ValidationError);
   });
 
   it("throws ValidationError on empty text", async () => {
     const client = makeFakeClient("");
     await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }, client),
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", stepCount: 16, tracks: [] }, client),
     ).rejects.toThrow(ValidationError);
   });
 });
@@ -129,6 +138,7 @@ describe("varyPattern", () => {
   const baseInput = {
     bpm: 90,
     subgenre: "boom-bap" as const,
+    stepCount: 16,
     tracks: [],
     currentPattern: pattern8x16(),
   };
@@ -182,7 +192,7 @@ describe("missing key", () => {
 
   it("suggestPattern throws MissingApiKeyError when no key is set and no client is passed", async () => {
     await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", tracks: [] }),
+      suggestPattern({ bpm: 90, subgenre: "boom-bap", stepCount: 16, tracks: [] }),
     ).rejects.toThrow(MissingApiKeyError);
   });
 
@@ -191,6 +201,7 @@ describe("missing key", () => {
       varyPattern({
         bpm: 90,
         subgenre: "boom-bap",
+        stepCount: 16,
         tracks: [],
         currentPattern: pattern8x16(),
         variation: "busier",

@@ -24,6 +24,7 @@ export interface PersistedProject {
   cutSubdivision: CutSubdivision;
   sameTierHoldMs: number;
   subgenre: Subgenre;
+  stepCount: number;
   tracks: PersistedTrack[];
   updatedAt: number;
 }
@@ -35,6 +36,7 @@ export function snapshot(state: AppState): PersistedProject {
     cutSubdivision: state.project.cutSubdivision,
     sameTierHoldMs: state.project.sameTierHoldMs,
     subgenre: state.project.subgenre,
+    stepCount: state.project.stepCount,
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,

@@ -11,7 +11,12 @@ import type {
   Tag,
 } from "../types";
 import { clearProject } from "../lib/persistence";
-import { createInitialState } from "./initialState";
+import {
+  createInitialState,
+  MAX_STEP_COUNT,
+  MIN_STEP_COUNT,
+  STEP_COUNT_INCREMENT,
+} from "./initialState";
 
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
@@ -25,6 +30,8 @@ export interface AppActions {
   setCutSubdivision: (value: CutSubdivision) => void;
   setSameTierHoldMs: (ms: number) => void;
   setSubgenre: (value: Subgenre) => void;
+  extendSteps: () => void;
+  removeStepColumn: (stepIndex: number) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -88,6 +95,39 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setSubgenre: (value) =>
       set((state) => ({ project: { ...state.project, subgenre: value } })),
+
+    extendSteps: () =>
+      set((state) => {
+        const next = Math.min(MAX_STEP_COUNT, state.project.stepCount + STEP_COUNT_INCREMENT);
+        if (next === state.project.stepCount) return state;
+        const padding = next - state.project.stepCount;
+        return {
+          project: {
+            ...state.project,
+            stepCount: next,
+            tracks: state.project.tracks.map((track) => ({
+              ...track,
+              steps: [...track.steps, ...new Array(padding).fill(false)],
+            })),
+          },
+        };
+      }),
+
+    removeStepColumn: (stepIndex) =>
+      set((state) => {
+        if (state.project.stepCount <= MIN_STEP_COUNT) return state;
+        if (stepIndex < 0 || stepIndex >= state.project.stepCount) return state;
+        return {
+          project: {
+            ...state.project,
+            stepCount: state.project.stepCount - 1,
+            tracks: state.project.tracks.map((track) => ({
+              ...track,
+              steps: track.steps.filter((_, i) => i !== stepIndex),
+            })),
+          },
+        };
+      }),
 
     setTrackVolume: (trackId, volume) =>
       set((state) => ({
@@ -200,12 +240,13 @@ export const useAppStore = create<AppStore>((set) => ({
     applyPattern: (grid) =>
       set((state) => {
         if (!Array.isArray(grid) || grid.length !== 8) return state;
+        const expectedLen = state.project.stepCount;
         return {
           project: {
             ...state.project,
             tracks: state.project.tracks.map((track, i) => {
               const row = grid[i];
-              if (!Array.isArray(row) || row.length !== 16) return track;
+              if (!Array.isArray(row) || row.length !== expectedLen) return track;
               return { ...track, steps: row.map(Boolean) };
             }),
           },

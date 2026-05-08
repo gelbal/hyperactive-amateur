@@ -13,6 +13,7 @@ export function SuggestButton() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
+  const stepCount = useAppStore((s) => s.project.stepCount);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<boolean[][] | null>(null);
@@ -34,6 +35,7 @@ export function SuggestButton() {
       const grid = await suggestPattern({
         bpm,
         subgenre,
+        stepCount,
         tracks: tracks.map((t) => ({ id: t.id, tag: t.tag })),
       });
       useAppStore.getState().actions.applyPattern(grid);
