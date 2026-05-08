@@ -46,7 +46,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
-      <header className="border-b border-zinc-800">
+      <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
         <div className="flex items-stretch justify-between gap-10 px-6 py-4">
           <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
             Hyperactive
