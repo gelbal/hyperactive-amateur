@@ -24,7 +24,7 @@ import {
   quantizeToBoundary,
   setVideoCutSubdivision,
   resetPlaybackState,
-  getDebugInfo,
+  __getCurrentlyDisplayedForTesting,
   __resetVideoEngineForTesting,
   type TrackContext,
   type TriggerEvent,
@@ -268,7 +268,6 @@ describe("videoEngine integration", () => {
     // because currentlyDisplayed is set only by the boundary callback (which
     // doesn't fire while the Transport is stopped). With the fix, the live
     // event is displayed right away.
-    const debug = getDebugInfo();
-    expect(debug.current?.trackId).toBe(3);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(3);
   });
 });

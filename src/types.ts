@@ -48,7 +48,7 @@ export interface ProjectState {
   // 0..1 — Tone.Transport swing amount.
   swing: number;
   // Visual-only quantization for the hard-cut renderer. Audio scheduling
-  // stays at 16ths regardless. See spec-v1.1 § 3.2.
+  // stays at 16ths regardless.
   cutSubdivision: CutSubdivision;
   // Minimum time the renderer holds the current frame before cutting to a
   // same-priority-tier event. Higher-tier events bypass this. ms, 0..2000.

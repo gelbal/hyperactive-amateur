@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   requestMedia,
-  stopMedia,
   tryAutoGrantMedia,
   acquireRecordingStream,
   releaseRecordingStream,
@@ -198,15 +197,4 @@ describe("media", () => {
     });
   });
 
-  it("stopMedia stops any held stream and resets state", async () => {
-    const fake = makeFakeStream();
-    stubGetUserMedia(async () => fake);
-    await acquireRecordingStream();
-    stopMedia();
-    for (const track of fake._tracks) {
-      expect(track.stop).toHaveBeenCalled();
-    }
-    expect(useAppStore.getState().media.status).toBe("idle");
-    expect(useAppStore.getState().media.stream).toBeNull();
-  });
 });

@@ -144,7 +144,7 @@ export function pickActiveEvent(
 
 // Pure: same as pickActiveEvent but takes the currently-displayed event into
 // account. If a candidate ties on priority tier with `current` AND the elapsed
-// time since `current.startTime` is below the hold, we duck — keep current.
+// time since `current.startTime` is below the hold, we duck (keep current).
 // Higher-tier candidates always win regardless of hold time.
 export function pickWithDucking(
   candidates: TriggerEvent[],
@@ -169,10 +169,8 @@ export function pickWithDucking(
 }
 
 // Pure: among triggers landing in (windowStart, windowEnd], pick the priority
-// winner. If the winner has the same priority tier as `current` AND the
-// window's earliest such trigger is the only candidate, callers may decide to
-// hold via ducking (v1.1-7). For now this returns the priority winner; the
-// ducking layer wraps it.
+// winner. The ducking layer (pickWithDucking) wraps this and may keep the
+// previously-displayed event instead.
 export function quantizeToBoundary(
   triggers: TriggerEvent[],
   windowStart: number,
@@ -305,16 +303,10 @@ export function initVideoEngine(): void {
   });
 }
 
-export function getDebugInfo(): {
-  pending: TriggerEvent[];
-  current: TriggerEvent | null;
-  audioTime: number;
-} {
-  return {
-    pending: [...pendingTriggers],
-    current: currentlyDisplayed,
-    audioTime: Tone.now(),
-  };
+// Test-only: read the currently-displayed event without going through the
+// canvas draw path.
+export function __getCurrentlyDisplayedForTesting(): TriggerEvent | null {
+  return currentlyDisplayed;
 }
 
 export function __resetVideoEngineForTesting(): void {

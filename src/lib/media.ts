@@ -86,14 +86,6 @@ export function releaseRecordingStream(stream: MediaStream): void {
   }
 }
 
-export function stopMedia(): void {
-  const state = useAppStore.getState();
-  if (state.media.stream) {
-    for (const track of state.media.stream.getTracks()) track.stop();
-  }
-  state.actions.setMedia({ stream: null, status: "idle", error: null });
-}
-
 // Test-only — clears the in-flight promise singleton between cases.
 export function __resetMediaForTesting(): void {
   inFlight = null;
