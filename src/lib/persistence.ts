@@ -8,6 +8,10 @@ export const PROJECT_KEY = "hyperactive-amateur-project";
 export interface PersistedTrack {
   id: number;
   clipBlob: Blob | null;
+  // First-frame poster image persisted alongside the clip so reload doesn't
+  // pay the regen cost. Older saves predate this field and read as undefined;
+  // rehydrate falls back to regenerating from clipBlob.
+  posterBlob: Blob | null;
   trimStartMs: number;
   trimEndMs: number;
   durationMs: number;
@@ -47,6 +51,7 @@ export function snapshot(state: AppState): PersistedProject {
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,
+      posterBlob: track.clip ? track.clip.posterBlob : null,
       trimStartMs: track.clip ? track.clip.trimStartMs : 0,
       trimEndMs: track.clip ? track.clip.trimEndMs : 0,
       durationMs: track.clip ? track.clip.durationMs : 0,

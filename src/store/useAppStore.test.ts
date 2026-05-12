@@ -87,15 +87,19 @@ describe("useAppStore", () => {
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
+      posterBlob: new Blob([new Uint8Array([9])], { type: "image/jpeg" }),
+      posterUrl: "blob:test/poster-x",
     };
     get().actions.setTrackClip(0, clip);
-    get().actions.setTrackClip(2, { ...clip, url: "blob:test/y" });
+    get().actions.setTrackClip(2, { ...clip, url: "blob:test/y", posterUrl: "blob:test/poster-y" });
     get().actions.setBpm(140);
 
     get().actions.scratch();
 
     expect(revoke).toHaveBeenCalledWith("blob:test/x");
     expect(revoke).toHaveBeenCalledWith("blob:test/y");
+    expect(revoke).toHaveBeenCalledWith("blob:test/poster-x");
+    expect(revoke).toHaveBeenCalledWith("blob:test/poster-y");
     expect(get().project.bpm).toBe(90);
     expect(get().project.tracks[0].clip).toBeNull();
     revoke.mockRestore();
@@ -113,5 +117,79 @@ describe("useAppStore", () => {
     const before = get().project.tracks[0].steps.slice();
     get().actions.applyPattern(wrong);
     expect(get().project.tracks[0].steps).toEqual(before);
+  });
+
+  it("clearTrackClip revokes both blob URL and poster URL and re-opens the recording station", () => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const clip = {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/clip",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob: new Blob([new Uint8Array([9])], { type: "image/jpeg" }),
+      posterUrl: "blob:test/poster",
+    };
+    get().actions.setTrackClip(0, clip);
+    get().actions.dismissRecordingStation();
+    expect(get().session.recordingStationDismissed).toBe(true);
+
+    get().actions.clearTrackClip(0);
+
+    expect(revoke).toHaveBeenCalledWith("blob:test/clip");
+    expect(revoke).toHaveBeenCalledWith("blob:test/poster");
+    expect(get().project.tracks[0].clip).toBeNull();
+    expect(get().session.recordingStationDismissed).toBe(false);
+    revoke.mockRestore();
+  });
+
+  it("setTrackClip revokes the previous clip's poster URL when replaced", () => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const first = {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/a",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob: new Blob([new Uint8Array([9])], { type: "image/jpeg" }),
+      posterUrl: "blob:test/poster-a",
+    };
+    const second = { ...first, url: "blob:test/b", posterUrl: "blob:test/poster-b" };
+    get().actions.setTrackClip(0, first);
+    get().actions.setTrackClip(0, second);
+    expect(revoke).toHaveBeenCalledWith("blob:test/a");
+    expect(revoke).toHaveBeenCalledWith("blob:test/poster-a");
+    revoke.mockRestore();
+  });
+
+  it("hydrateProject sets recordingStationDismissed=true when any incoming track has a clip", () => {
+    const baseline = get().project;
+    const tracks = baseline.tracks.map((t, i) =>
+      i === 0
+        ? {
+            ...t,
+            clip: {
+              blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+              url: "blob:test/hydr",
+              audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+              trimStartMs: 0,
+              trimEndMs: 800,
+              durationMs: 1000,
+              posterBlob: null,
+              posterUrl: null,
+            },
+          }
+        : t,
+    );
+    get().actions.hydrateProject({ ...baseline, tracks });
+    expect(get().session.recordingStationDismissed).toBe(true);
+  });
+
+  it("hydrateProject leaves recordingStationDismissed=false when no incoming track has a clip", () => {
+    const baseline = get().project;
+    get().actions.hydrateProject({ ...baseline });
+    expect(get().session.recordingStationDismissed).toBe(false);
   });
 });

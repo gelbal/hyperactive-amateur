@@ -8,6 +8,11 @@ vi.mock("./audio", () => ({
     decodeAudioData: vi.fn(async () => fakeAudioBuffer),
   }),
 }));
+// jsdom can't decode video — short-circuit poster regen so legacy-row tests
+// don't wait on the 1.5s captureFirstFrame timeout.
+vi.mock("./posterFrame", () => ({
+  captureFirstFrame: vi.fn(async () => null),
+}));
 
 import { rehydrateFromStorage } from "./rehydrate";
 import { saveProject, clearProject } from "./persistence";
@@ -22,6 +27,8 @@ function makeClip(): Clip {
     trimStartMs: 50,
     trimEndMs: 950,
     durationMs: 1000,
+    posterBlob: new Blob([new Uint8Array([9])], { type: "image/jpeg" }),
+    posterUrl: "blob:test/poster",
   };
 }
 
@@ -54,5 +61,18 @@ describe("rehydrateFromStorage", () => {
     expect(restored.project.tracks[0].steps[4]).toBe(true);
     expect(restored.project.tracks[0].clip?.audioBuffer).toBe(fakeAudioBuffer);
     expect(restored.project.tracks[0].clip?.url).toMatch(/^blob:/);
+    // Persisted posterBlob is restored as a fresh object URL.
+    expect(restored.project.tracks[0].clip?.posterUrl).toMatch(/^blob:/);
+  });
+
+  it("sets recordingStationDismissed=true after rehydrating a project with at least one clip", async () => {
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
+    await saveProject(useAppStore.getState());
+
+    useAppStore.getState().actions.reset();
+    expect(useAppStore.getState().session.recordingStationDismissed).toBe(false);
+
+    await rehydrateFromStorage();
+    expect(useAppStore.getState().session.recordingStationDismissed).toBe(true);
   });
 });

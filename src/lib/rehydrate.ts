@@ -5,6 +5,7 @@ import { getAudioContext } from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import type { AppState, Clip, Track } from "../types";
 import { createInitialState, DEFAULT_STEP_COUNT } from "../store/initialState";
+import { captureFirstFrame } from "./posterFrame";
 
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
@@ -31,6 +32,16 @@ export async function rehydrateFromStorage(): Promise<boolean> {
       if (pt.clipBlob) {
         try {
           const audioBuffer = await decodeBlob(pt.clipBlob);
+          // Older saves predate posterBlob; regenerate from clipBlob so the
+          // <img> thumbnails have something to show. Best-effort — null on fail.
+          let posterBlob: Blob | null = pt.posterBlob ?? null;
+          if (!posterBlob) {
+            try {
+              posterBlob = await captureFirstFrame(pt.clipBlob);
+            } catch {
+              posterBlob = null;
+            }
+          }
           clip = {
             blob: pt.clipBlob,
             url: URL.createObjectURL(pt.clipBlob),
@@ -38,6 +49,8 @@ export async function rehydrateFromStorage(): Promise<boolean> {
             trimStartMs: pt.trimStartMs,
             trimEndMs: pt.trimEndMs,
             durationMs: pt.durationMs,
+            posterBlob,
+            posterUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
           };
         } catch (err) {
           // Decode failed — drop the clip rather than stranding the track.

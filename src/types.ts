@@ -13,6 +13,14 @@ export interface Clip {
   trimStartMs: number;
   trimEndMs: number;
   durationMs: number;
+  // First-frame poster image, captured at record time and persisted to
+  // IndexedDB. Used by <img> thumbnails in PadGrid + TrackInfo because
+  // WebKit (every iPadOS browser) doesn't reliably paint a first frame
+  // from a blob-backed <video preload="metadata"> that hasn't played.
+  // Null when generation failed; thumbnails fall back to a placeholder.
+  posterBlob: Blob | null;
+  // Object URL for posterBlob; recreated on rehydrate (not persisted).
+  posterUrl: string | null;
 }
 
 export interface Track {

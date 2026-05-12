@@ -21,7 +21,8 @@ function makeClip(): Clip {
     trimStartMs: 0,
     trimEndMs: 800,
     durationMs: 1000,
-  };
+    posterBlob: null,
+    posterUrl: null,  };
 }
 
 describe("SuggestButton", () => {

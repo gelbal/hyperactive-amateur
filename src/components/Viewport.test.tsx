@@ -58,4 +58,45 @@ describe("Viewport", () => {
     expect(screen.queryByLabelText("recording station")).not.toBeInTheDocument();
     expect(screen.getByText(/record a sound on any track/i)).toBeInTheDocument();
   });
+
+  it("idle media + all tracks have clips + station dismissed: gate stays hidden and fullscreen toggle is visible", () => {
+    act(() => {
+      const setTrackClip = useAppStore.getState().actions.setTrackClip;
+      for (let i = 0; i < 8; i++) {
+        setTrackClip(i, {
+          blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+          url: `blob:test/clip-${i}`,
+          audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+          trimStartMs: 0,
+          trimEndMs: 800,
+          durationMs: 1000,
+          posterBlob: null,
+          posterUrl: null,
+        });
+      }
+      useAppStore.getState().actions.dismissRecordingStation();
+    });
+    render(<Viewport />);
+    expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /enter fullscreen/i })).toBeInTheDocument();
+  });
+
+  it("idle media + some empty tracks + station dismissed: gate hidden, Record more pill is visible", () => {
+    act(() => {
+      useAppStore.getState().actions.setTrackClip(0, {
+        blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+        url: "blob:test/clip-0",
+        audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+        trimStartMs: 0,
+        trimEndMs: 800,
+        durationMs: 1000,
+        posterBlob: null,
+        posterUrl: null,
+      });
+      useAppStore.getState().actions.dismissRecordingStation();
+    });
+    render(<Viewport />);
+    expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /record more/i })).toBeInTheDocument();
+  });
 });

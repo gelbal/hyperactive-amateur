@@ -74,7 +74,8 @@ function makeClip() {
     trimStartMs: 0,
     trimEndMs: 1000,
     durationMs: 1000,
-  };
+    posterBlob: null,
+    posterUrl: null,  };
 }
 
 describe("audio: per-step trigger logic", () => {
