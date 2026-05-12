@@ -1,5 +1,5 @@
 // ABOUTME: Vercel serverless function that proxies Gemini requests so the API key stays server-side.
-// ABOUTME: Pass-through to generativelanguage.googleapis.com with Origin allowlist + AbortSignal forwarding.
+// ABOUTME: Pass-through to generativelanguage.googleapis.com with AbortSignal forwarding.
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -22,46 +22,16 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-// Allow the dev origin, the current deployment's own origin, any Vercel
-// preview alias, and (optionally) a comma-separated list of custom domains
-// from ALLOWED_ORIGINS. Cuts out drive-by scrapers without pretending to be
-// real auth — the daily Gemini quota cap is the actual backstop.
-function isOriginAllowed(origin: string | null): boolean {
-  if (!origin) return false;
-  if (origin === "http://localhost:5173") return true;
-
-  let host: string;
-  try {
-    host = new URL(origin).host;
-  } catch {
-    return false;
-  }
-
-  if (host.endsWith(".vercel.app")) return true;
-
-  const vercelUrls = [
-    process.env.VERCEL_URL,
-    process.env.VERCEL_BRANCH_URL,
-    process.env.VERCEL_PROJECT_PRODUCTION_URL,
-  ].filter((v): v is string => typeof v === "string" && v.length > 0);
-  if (vercelUrls.some((u) => host === u)) return true;
-
-  const extras = (process.env.ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (extras.some((allowed) => host === allowed)) return true;
-
-  return false;
-}
+// No origin allowlist by design. CORS already blocks browser-based
+// cross-origin embedding (we return no Access-Control-Allow-Origin, so
+// any cross-origin preflight fails). The remaining vector — scripted
+// POSTs that spoof the Origin header — is gated by the daily quota cap
+// on the Gemini key (set at aistudio.google.com). For burst abuse from
+// a single source, add per-IP rate limiting here (e.g. @upstash/ratelimit).
 
 export async function handleGeminiRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return jsonResponse({ error: "method-not-allowed" }, 405);
-  }
-
-  if (!isOriginAllowed(request.headers.get("origin"))) {
-    return jsonResponse({ error: "forbidden-origin" }, 403);
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
