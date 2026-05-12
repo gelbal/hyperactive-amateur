@@ -1,5 +1,5 @@
-// ABOUTME: RecordingStation tests — target advances on skip; Done dismisses; full-track auto-hide.
-import { render, screen, fireEvent } from "@testing-library/react";
+// ABOUTME: RecordingStation test — target advance on skip, Record fires the flow, Done dismisses, full-track hides.
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const recordIntoTrack = vi.fn();
@@ -28,7 +28,7 @@ describe("RecordingStation", () => {
     useAppStore.getState().actions.reset();
   });
 
-  it("targets the lowest empty track; Skip advances; Record fires recordIntoTrack with the target", () => {
+  it("targets the lowest empty track, Skip advances, Record fires the flow, Done dismisses, full-kit hides the station", () => {
     const actions = useAppStore.getState().actions;
     actions.setTrackClip(0, makeClip());
     actions.setTrackClip(1, makeClip());
@@ -40,17 +40,14 @@ describe("RecordingStation", () => {
 
     fireEvent.click(screen.getByLabelText("Record clip for track 4"));
     expect(recordIntoTrack).toHaveBeenCalledWith(3, expect.any(Object));
-  });
 
-  it("Done dismisses the station via the store flag", () => {
-    render(<RecordingStation size={480} />);
     fireEvent.click(screen.getByLabelText("Done recording"));
     expect(useAppStore.getState().session.recordingStationDismissed).toBe(true);
-  });
+    cleanup();
 
-  it("returns null when every track has a clip", () => {
-    const actions = useAppStore.getState().actions;
+    // Once every track has a clip, the station renders nothing.
     for (let i = 0; i < 8; i++) actions.setTrackClip(i, makeClip());
+    actions.reopenRecordingStation();
     const { container } = render(<RecordingStation size={480} />);
     expect(container.firstChild).toBeNull();
   });

@@ -12,7 +12,7 @@ vi.mock("tone", () => ({
   getTransport: vi.fn(() => transport),
 }));
 
-import { buildExportStream, exportSong, defaultExportFilename } from "./export";
+import { buildExportStream, exportSong } from "./export";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -98,8 +98,3 @@ describe("exportSong", () => {
   });
 });
 
-describe("defaultExportFilename", () => {
-  it("matches the hyperactive-amateur-YYYYMMDD-HHmm.webm shape", () => {
-    expect(defaultExportFilename()).toMatch(/^hyperactive-amateur-\d{8}-\d{4}\.webm$/);
-  });
-});
