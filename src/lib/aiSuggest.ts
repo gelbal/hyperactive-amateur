@@ -1,12 +1,15 @@
-// ABOUTME: aiSuggest — call Gemini Flash with a JSON-schema response to fill or vary the 8x16 grid.
-// ABOUTME: Client-direct in dev (env var); migrate to a server proxy before any public deploy.
-import { GoogleGenAI, Type } from "@google/genai";
-import type { Subgenre, Tag } from "../types";
+// ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8-track step grid.
+// ABOUTME: Uses thinkingLevel HIGH; one retry-with-jitter on transient errors; client-direct in dev — migrate to a server proxy before any public deploy.
+import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import type { Subgenre, Tag, Vibe } from "../types";
+import { logger, LOG_EVENTS } from "./logger";
+import { errMessage } from "./aiClient";
 
-export type Variation = "busier" | "fill" | "halftime" | "strip";
+export type Variation = "busier" | "fill" | "halftime" | "strip" | "break";
 
 export type { Subgenre } from "../types";
 export const SUBGENRES: readonly Subgenre[] = ["boom-bap", "trap", "lo-fi", "phonk"] as const;
+export const VIBES: readonly Vibe[] = ["tight", "varied", "breaky"] as const;
 
 // Minimum recorded clips before AI tools (Suggest, variations) become enabled.
 // The model needs enough tagged audio to ground its output.
@@ -15,10 +18,15 @@ export const AI_UNLOCK_CLIPS = 4;
 export interface SuggestPatternInput {
   bpm: number;
   subgenre: Subgenre;
+  vibe: Vibe;
   // Number of 16th-note steps in the loop. The model is asked to return
   // 8 tracks of exactly this length.
   stepCount: number;
-  tracks: Array<{ id: number; tag: Tag | null }>;
+  // Per-track context fed to the model. Reasoning is the AI auto-tagger's
+  // own description of the sound ("short, bright tick"), surfaced back to
+  // Suggest so it can write a pattern grounded in the actual kit rather
+  // than just the tag enum.
+  tracks: Array<{ id: number; tag: Tag | null; reasoning?: string | null }>;
 }
 
 export interface VaryPatternInput extends SuggestPatternInput {
@@ -40,21 +48,72 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-const MODEL = "gemini-3.1-flash-lite-preview";
+const MODEL = "gemini-3.1-flash-lite";
 
-const SUGGEST_SYSTEM_PROMPT =
-  "You are a hip-hop beat producer. Given track labels, tempo, and a target subgenre, return a 16-step pattern across 8 tracks as strict JSON. Patterns should feel musical, with kick on 1 and 9 by default for boom-bap, snare on 5 and 13, and varying hat density. Use vocal/fx tracks sparingly for accents.";
+const ROW_ORDER_RULE =
+  " The returned `tracks` array MUST contain exactly 8 rows in ascending " +
+  "track-id order — row 0 is track 0, row 7 is track 7.";
+
+const SUGGEST_BASE_PROMPT =
+  "You are a hip-hop beat producer. Given track labels, tempo, and a target subgenre, " +
+  "return a step pattern across 8 tracks as strict JSON. Use vocal/fx tracks sparingly for accents.";
+
+// Subgenre-specific anchors. Layered onto SUGGEST_BASE_PROMPT so the
+// system instruction matches the requested style rather than always
+// pulling toward boom-bap defaults.
+const SUBGENRE_GUIDANCE: Record<Subgenre, string> = {
+  "boom-bap":
+    " SUBGENRE: boom-bap — kick on step 1 and step 9, main snare on step 5 and 13, hats steady and slightly behind the beat.",
+  trap:
+    " SUBGENRE: trap — kick with syncopation (step 1 plus a dotted-eighth or 16th offset, e.g. 7 or 11), main snare on step 9 only (half-time feel), and rolling hats with rapid bursts (consecutive 16ths or 32nds simulated by adjacent steps).",
+  "lo-fi":
+    " SUBGENRE: lo-fi — sparse and behind-the-beat, kick on 1 and 11 (not 9), light snare on 5 and 13 with ghost hits, hats stuttered rather than steady, plenty of silent steps.",
+  phonk:
+    " SUBGENRE: phonk — heavy off-beat accents and cowbell-style stabs on the and-of-2 / and-of-4 (steps 4, 8, 12, 16), driving kick on 1 and 8, snare on 5 and 13, dark and aggressive feel.",
+};
 
 const VARIATION_PROMPTS: Record<Variation, string> = {
   busier:
-    "You are a hip-hop beat producer. Take the given 8x16 step pattern and make it BUSIER by adding hits — particularly on hat and ghost-snare positions. Preserve the kick and main snare positions. Return the modified 8x16 pattern.",
+    "You are a hip-hop beat producer. Take the given 8xN step pattern and make it BUSIER by adding hits — particularly on hat and ghost-snare positions. Preserve the kick and main snare positions. Return the modified 8xN pattern.",
   fill:
-    "You are a hip-hop beat producer. Take the given 8x16 step pattern and ADD A FILL in the last beat (steps 13-16) — typical fills layer extra snare, hat, and fx hits while keeping the main groove intact through step 12. Return the modified 8x16 pattern.",
+    "You are a hip-hop beat producer. Take the given 8xN step pattern and ADD A FILL in the last beat (the final four steps) — typical fills layer extra snare, hat, and fx hits while keeping the main groove intact through the earlier steps. Return the modified 8xN pattern.",
   halftime:
-    "You are a hip-hop beat producer. Take the given 8x16 step pattern and HALF-TIME it — keep the kick on 1, but move the main snare to step 9 (instead of 5 and 13) so the groove feels half-tempo. Thin out the hats accordingly. Return the modified 8x16 pattern.",
+    "You are a hip-hop beat producer. Take the given 8xN step pattern and HALF-TIME it — keep the kick on 1, but move the main snare to step 9 (instead of 5 and 13) so the groove feels half-tempo. Thin out the hats accordingly. Return the modified 8xN pattern.",
   strip:
-    "You are a hip-hop beat producer. Take the given 8x16 step pattern and STRIP IT BACK — remove most ghost notes and accents, focus on the downbeats (1, 5, 9, 13) and the main kick/snare skeleton. Return the modified 8x16 pattern.",
+    "You are a hip-hop beat producer. Take the given 8xN step pattern and STRIP IT BACK — remove most ghost notes and accents, focus on the downbeats (1, 5, 9, 13) and the main kick/snare skeleton. Return the modified 8xN pattern.",
+  break:
+    "You are a hip-hop beat producer. Take the given 8xN step pattern and DROP A BREAK in the last quarter of the loop — silence almost every hit in those final steps except a kick on the first step of the break and at most one accent (one snare or one fx stab). Steps before the final quarter stay intact. Return the modified pattern with exactly 8 tracks of N steps.",
 };
+
+const VIBE_GUIDANCE: Record<Vibe, string> = {
+  tight: "",
+  varied:
+    " VIBE: varied — favor space over density, leave breathing room, place hits asymmetrically rather than in uniform every-other-step grids, and prefer using 4–6 of the 8 tracks rather than all 8.",
+  breaky:
+    " VIBE: breaky — leave the final quarter of the loop sparse: drop most hits there except a kick on its first step and at most one accent, creating a sense of rest or drop.",
+};
+
+function buildSuggestSystemPrompt(subgenre: Subgenre): string {
+  return SUGGEST_BASE_PROMPT + SUBGENRE_GUIDANCE[subgenre];
+}
+
+function buildSystemInstruction(base: string, vibe: Vibe): string {
+  return base + VIBE_GUIDANCE[vibe] + ROW_ORDER_RULE;
+}
+
+// Per-track reasoning lines, included in the user message when the model
+// previously classified the kit and we have its own description on hand.
+// Untagged or unreasoned tracks are omitted to keep the prompt focused.
+function buildKitNotes(tracks: SuggestPatternInput["tracks"]): string {
+  const lines: string[] = [];
+  for (const t of tracks) {
+    const reasoning = t.reasoning?.trim();
+    if (!reasoning) continue;
+    const tagLabel = t.tag ?? "untagged";
+    lines.push(`- track ${t.id} (${tagLabel}): ${reasoning}`);
+  }
+  return lines.length === 0 ? "" : `\nKit notes:\n${lines.join("\n")}`;
+}
 
 function buildPatternSchema(stepCount: number) {
   return {
@@ -81,7 +140,8 @@ function buildSuggestUserMessage(input: SuggestPatternInput): string {
   return (
     `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. ` +
     `Loop length: ${input.stepCount} sixteenth-note steps. Tracks: ${labels}. ` +
-    `Generate a pattern of exactly 8 tracks by ${input.stepCount} steps.`
+    `Generate a pattern of exactly 8 tracks by ${input.stepCount} steps.` +
+    buildKitNotes(input.tracks)
   );
 }
 
@@ -91,7 +151,8 @@ function buildVaryUserMessage(input: VaryPatternInput): string {
     `Tempo: ${input.bpm} BPM. Subgenre: ${input.subgenre}. ` +
     `Loop length: ${input.stepCount} sixteenth-note steps. Tracks: ${labels}.\n` +
     `Current pattern (8x${input.stepCount}):\n${JSON.stringify(input.currentPattern)}\n` +
-    `Apply the ${input.variation} variation. Return 8 tracks of exactly ${input.stepCount} steps.`
+    `Apply the ${input.variation} variation. Return 8 tracks of exactly ${input.stepCount} steps.` +
+    buildKitNotes(input.tracks)
   );
 }
 
@@ -134,6 +195,17 @@ export interface GeminiPatternClient {
   };
 }
 
+// One inline retry on transient SDK errors. A network blip currently
+// turns into a red toast and a user click; one retry with a small random
+// backoff hides the most common flake without compounding latency too
+// much. Validation errors are NOT retried — they tend to repeat.
+const RETRY_BASE_MS = 200;
+const RETRY_JITTER_MS = 300;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function generateGrid(
   systemInstruction: string,
   userMessage: string,
@@ -146,29 +218,56 @@ async function generateGrid(
   const sdk: GeminiPatternClient =
     client ?? (new GoogleGenAI({ apiKey: apiKey! }) as unknown as GeminiPatternClient);
 
-  const response = await sdk.models.generateContent({
-    model: MODEL,
-    contents: [{ role: "user", parts: [{ text: userMessage }] }],
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: buildPatternSchema(stepCount),
-    },
-  });
+  const callOnce = async (): Promise<{ text?: string }> =>
+    sdk.models.generateContent({
+      model: MODEL,
+      contents: [{ role: "user", parts: [{ text: userMessage }] }],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: buildPatternSchema(stepCount),
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+      },
+    });
+
+  let response: { text?: string };
+  try {
+    response = await callOnce();
+  } catch (firstErr) {
+    const delay = RETRY_BASE_MS + Math.random() * RETRY_JITTER_MS;
+    logger.warn(LOG_EVENTS.SUGGEST_RETRY, {
+      model: MODEL,
+      message: errMessage(firstErr),
+      delayMs: Math.round(delay),
+    });
+    await sleep(delay);
+    try {
+      response = await callOnce();
+    } catch (err) {
+      logger.error(LOG_EVENTS.SUGGEST_ERROR, { model: MODEL, message: errMessage(err) });
+      throw err;
+    }
+  }
 
   const text = response.text;
   if (typeof text !== "string" || text.length === 0) {
+    logger.warn(LOG_EVENTS.SUGGEST_MISS, { model: MODEL, reason: "empty-text" });
     throw new ValidationError("Empty response text");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new ValidationError(
-      `Response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const message = errMessage(err);
+    logger.warn(LOG_EVENTS.SUGGEST_MISS, { model: MODEL, reason: "invalid-json", message });
+    throw new ValidationError(`Response is not valid JSON: ${message}`);
   }
-  return validatePattern(parsed, stepCount);
+  try {
+    return validatePattern(parsed, stepCount);
+  } catch (err) {
+    logger.warn(LOG_EVENTS.SUGGEST_MISS, { model: MODEL, reason: "schema", message: errMessage(err) });
+    throw err;
+  }
 }
 
 export async function suggestPattern(
@@ -176,7 +275,7 @@ export async function suggestPattern(
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
   return generateGrid(
-    SUGGEST_SYSTEM_PROMPT,
+    buildSystemInstruction(buildSuggestSystemPrompt(input.subgenre), input.vibe),
     buildSuggestUserMessage(input),
     input.stepCount,
     client,
@@ -188,7 +287,7 @@ export async function varyPattern(
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
   return generateGrid(
-    VARIATION_PROMPTS[input.variation],
+    buildSystemInstruction(VARIATION_PROMPTS[input.variation], input.vibe),
     buildVaryUserMessage(input),
     input.stepCount,
     client,

@@ -15,11 +15,23 @@ function pickMimeType(): string {
   return FALLBACK_MIME;
 }
 
+export interface RecordClipOptions {
+  // When this fires, stop the recorder early and reject with AbortError.
+  // Callers should not save the resulting (partial) blob.
+  signal?: AbortSignal;
+}
+
 export async function recordClip(
   stream: MediaStream,
   durationMs: number,
   audioContext: AudioContext,
+  options: RecordClipOptions = {},
 ): Promise<RecordingResult> {
+  const { signal } = options;
+  if (signal?.aborted) {
+    throw new DOMException("Recording aborted before start", "AbortError");
+  }
+
   const mimeType = pickMimeType();
   const recorder = new MediaRecorder(stream, { mimeType });
   const chunks: Blob[] = [];
@@ -28,15 +40,35 @@ export async function recordClip(
     if (event.data && event.data.size > 0) chunks.push(event.data);
   };
 
+  let abortListener: (() => void) | null = null;
   const stopped = new Promise<void>((resolve, reject) => {
     recorder.onstop = () => resolve();
     recorder.onerror = (event) => {
       const err = (event as ErrorEvent).error ?? new Error("MediaRecorder error");
       reject(err instanceof Error ? err : new Error(String(err)));
     };
+    if (signal) {
+      abortListener = () => {
+        if (recorder.state !== "inactive") {
+          try {
+            recorder.stop();
+          } catch {
+            // Ignore — recorder may have just transitioned to inactive.
+          }
+        }
+        reject(new DOMException("Recording aborted", "AbortError"));
+      };
+      signal.addEventListener("abort", abortListener);
+    }
   });
 
-  recorder.start();
+  try {
+    recorder.start();
+  } catch (err) {
+    if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+
   const stopTimer = setTimeout(() => {
     if (recorder.state !== "inactive") recorder.stop();
   }, durationMs);
@@ -45,6 +77,7 @@ export async function recordClip(
     await stopped;
   } finally {
     clearTimeout(stopTimer);
+    if (signal && abortListener) signal.removeEventListener("abort", abortListener);
   }
 
   const blob = new Blob(chunks, { type: mimeType });

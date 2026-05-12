@@ -1,4 +1,4 @@
-// ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip mutations of the current pattern.
+// ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip / Break mutations of the current pattern.
 // ABOUTME: Each click snapshots the current grid and offers an Undo toast on success.
 import { useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
@@ -16,12 +16,22 @@ const BUTTONS: ButtonSpec[] = [
   { variation: "fill", label: "Fill" },
   { variation: "halftime", label: "Half-time" },
   { variation: "strip", label: "Strip" },
+  { variation: "break", label: "Break" },
 ];
 
-export function VariationButtons() {
+interface VariationButtonsProps {
+  // Called with the busy state of any in-flight variation call. Lets a
+  // containing popover stay open while we're awaiting Gemini — otherwise a
+  // click-outside or Escape would unmount us mid-call and the Undo toast,
+  // which renders inside this component, would never appear.
+  onBusyChange?: (busy: boolean) => void;
+}
+
+export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
+  const vibe = useAppStore((s) => s.project.vibe);
   const stepCount = useAppStore((s) => s.project.stepCount);
   const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState<Variation | null>(null);
@@ -40,16 +50,28 @@ export function VariationButtons() {
     return () => window.clearTimeout(id);
   }, [undoSnapshot]);
 
+  useEffect(() => {
+    onBusyChange?.(pending !== null);
+  }, [pending, onBusyChange]);
+
   const handleClick = async (variation: Variation) => {
     setError(null);
     setPending(variation);
     const before = tracks.map((t) => [...t.steps]);
+    // Read reasoning fresh at click time — that way changes during a
+    // retag pass don't re-render this button on every write.
+    const tagReasoning = useAppStore.getState().project.tagReasoning;
     try {
       const grid = await varyPattern({
         bpm,
         subgenre,
+        vibe,
         stepCount,
-        tracks: tracks.map((t) => ({ id: t.id, tag: t.tag })),
+        tracks: tracks.map((t) => ({
+          id: t.id,
+          tag: t.tag,
+          reasoning: tagReasoning[t.id] ?? null,
+        })),
         currentPattern: before,
         variation,
       });
@@ -69,7 +91,7 @@ export function VariationButtons() {
   };
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       {BUTTONS.map(({ variation, label }) => {
         const isPending = pending === variation;
         return (
@@ -87,7 +109,7 @@ export function VariationButtons() {
             }
             onClick={() => void handleClick(variation)}
             className={
-              "px-3 py-2 text-sm rounded border transition-colors " +
+              "px-2.5 py-1.5 text-xs rounded border transition-colors " +
               "bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 " +
               "disabled:opacity-50 disabled:cursor-not-allowed " +
               (isPending ? "animate-pulse text-orange-400" : "")

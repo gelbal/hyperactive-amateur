@@ -1,13 +1,28 @@
-// ABOUTME: media — permission state + on-demand stream acquisition for the recording flow.
-// ABOUTME: Streams are acquired only during a record cycle and released immediately after, so the camera light stays off the rest of the time.
+// ABOUTME: media — permission state, on-demand stream acquisition, and input-device selection.
+// ABOUTME: Streams are held only while the RecordingStation is mounted (preview + record reuse the same stream); otherwise the camera light stays off.
 import { useAppStore } from "../store/useAppStore";
 
-const CONSTRAINTS: MediaStreamConstraints = {
-  video: { width: 720, height: 720, facingMode: "user" },
-  audio: { sampleRate: 48000, channelCount: 1 },
-};
-
 let inFlight: Promise<void> | null = null;
+
+// Build a MediaStreamConstraints honoring the user's preferred input devices.
+// `ideal` sizing lets the browser negotiate sane defaults instead of throwing
+// OverconstrainedError on cameras that don't natively shoot 720x720.
+export function buildConstraints(): MediaStreamConstraints {
+  const { videoDeviceId, audioDeviceId } = useAppStore.getState().media;
+  const video: MediaTrackConstraints = {
+    width: { ideal: 720 },
+    height: { ideal: 720 },
+    aspectRatio: { ideal: 1 },
+    facingMode: "user",
+  };
+  if (videoDeviceId) video.deviceId = { exact: videoDeviceId };
+  const audio: MediaTrackConstraints = {
+    sampleRate: { ideal: 48000 },
+    channelCount: { ideal: 1 },
+  };
+  if (audioDeviceId) audio.deviceId = { exact: audioDeviceId };
+  return { video, audio };
+}
 
 // Confirms permission to use the camera + mic. Acquires a stream just long
 // enough to trigger the browser's permission prompt (if needed), then releases
@@ -15,17 +30,17 @@ let inFlight: Promise<void> | null = null;
 // flips to 'granted' on success; the recording flow re-acquires its own stream
 // when it actually needs to capture.
 export async function requestMedia(): Promise<void> {
-  const state = useAppStore.getState();
-  if (state.media.status === "granted") return;
   if (inFlight) return inFlight;
 
-  state.actions.setMedia({ stream: null, status: "requesting", error: null });
+  useAppStore
+    .getState()
+    .actions.setMedia({ stream: null, status: "requesting", error: null });
 
   inFlight = (async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(CONSTRAINTS);
+      const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
       // Permission confirmed. Release the tracks immediately — the recording
-      // flow opens its own stream when it needs one.
+      // flow / preview opens its own stream when it needs one.
       for (const track of stream.getTracks()) track.stop();
       useAppStore
         .getState()
@@ -62,15 +77,58 @@ export async function tryAutoGrantMedia(): Promise<void> {
   }
 }
 
-// Acquire a fresh MediaStream for the duration of one recording. Stores it on
-// the media slice so the RecordingStation's <video> can preview it during the
-// countdown. Caller is responsible for releasing via releaseRecordingStream.
+// Tracks whether the most recent acquire failure was because of a stale
+// deviceId. If so, callers can clear preferences and retry with defaults.
+export class StaleDeviceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaleDeviceError";
+  }
+}
+
+function isStaleDeviceError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // Chrome surfaces NotFoundError / OverconstrainedError when a saved deviceId
+  // is no longer present (camera unplugged, mic removed).
+  return err.name === "NotFoundError" || err.name === "OverconstrainedError";
+}
+
+// Acquire a fresh MediaStream for either preview or capture (same constraints).
+// On failure, flip the media slice to 'denied' so the viewport gate re-opens —
+// requestMedia is callable again because we no longer short-circuit on
+// status === 'granted'. If the failure looks like a stale deviceId, clear the
+// preference and retry once with the browser default.
 export async function acquireRecordingStream(): Promise<MediaStream> {
-  const stream = await navigator.mediaDevices.getUserMedia(CONSTRAINTS);
-  useAppStore
-    .getState()
-    .actions.setMedia({ stream, status: "granted", error: null });
-  return stream;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+    useAppStore
+      .getState()
+      .actions.setMedia({ stream, status: "granted", error: null });
+    return stream;
+  } catch (err) {
+    if (isStaleDeviceError(err)) {
+      // Drop the offending preferences and retry once with defaults.
+      useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+        useAppStore
+          .getState()
+          .actions.setMedia({ stream, status: "granted", error: null });
+        return stream;
+      } catch (retryErr) {
+        const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        useAppStore
+          .getState()
+          .actions.setMedia({ stream: null, status: "denied", error: message });
+        throw retryErr;
+      }
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    useAppStore
+      .getState()
+      .actions.setMedia({ stream: null, status: "denied", error: message });
+    throw err;
+  }
 }
 
 // Release a stream returned by acquireRecordingStream. Stops every track (so
@@ -83,6 +141,37 @@ export function releaseRecordingStream(stream: MediaStream): void {
     useAppStore
       .getState()
       .actions.setMedia({ stream: null, status: "granted", error: null });
+  }
+}
+
+// Preview helpers — same shape as the recording acquire/release, kept as
+// separate names so future tweaks (e.g. lower bitrate hints for preview)
+// don't require changing the recording path.
+export const acquirePreviewStream = acquireRecordingStream;
+export const releasePreviewStream = releaseRecordingStream;
+
+export interface InputDeviceList {
+  videoInputs: MediaDeviceInfo[];
+  audioInputs: MediaDeviceInfo[];
+}
+
+// Enumerate available video + audio inputs. Labels are only populated after
+// permission has been granted — call after requestMedia() succeeds.
+export async function enumerateMediaDevices(): Promise<InputDeviceList> {
+  if (
+    !navigator.mediaDevices ||
+    typeof navigator.mediaDevices.enumerateDevices !== "function"
+  ) {
+    return { videoInputs: [], audioInputs: [] };
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return {
+      videoInputs: devices.filter((d) => d.kind === "videoinput"),
+      audioInputs: devices.filter((d) => d.kind === "audioinput"),
+    };
+  } catch {
+    return { videoInputs: [], audioInputs: [] };
   }
 }
 

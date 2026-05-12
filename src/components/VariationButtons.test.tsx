@@ -1,4 +1,4 @@
-// ABOUTME: VariationButtons tests — disabled gating, click → varyPattern with current subgenre.
+// ABOUTME: VariationButtons tests — disabled gating until 4+ clips & a pattern, click → varyPattern with vibe + variation.
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -29,32 +29,24 @@ describe("VariationButtons", () => {
     useAppStore.getState().actions.reset();
   });
 
-  it("disabled until 4+ clips AND a non-empty pattern exist", () => {
+  it("disabled until 4+ clips AND a non-empty pattern; clicking Break fires varyPattern with subgenre + vibe", async () => {
     render(<VariationButtons />);
-    // No clips, no pattern → disabled.
-    expect(screen.getByLabelText("Busier")).toBeDisabled();
+    expect(screen.getByLabelText("Break")).toBeDisabled();
 
-    const actions = useAppStore.getState().actions;
-    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
-    actions.toggleStep(0, 0);
-    // 4 clips + a step → enabled.
-    render(<VariationButtons />);
-    expect(screen.getAllByLabelText("Busier")[1]).not.toBeDisabled();
-  });
-
-  it("clicking a variation calls varyPattern with the current subgenre + variation arg", async () => {
     const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
     varyPattern.mockResolvedValue(grid);
     const actions = useAppStore.getState().actions;
     for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
     actions.toggleStep(0, 0);
     actions.setSubgenre("lo-fi");
+    actions.setVibe("varied");
 
     render(<VariationButtons />);
-    fireEvent.click(screen.getByLabelText("Half-time"));
+    fireEvent.click(screen.getAllByLabelText("Break")[1]);
     await waitFor(() => expect(varyPattern).toHaveBeenCalled());
-    const arg = varyPattern.mock.calls[0]?.[0] as { variation: string; subgenre: string };
-    expect(arg.variation).toBe("halftime");
+    const arg = varyPattern.mock.calls[0]?.[0] as { variation: string; subgenre: string; vibe: string };
+    expect(arg.variation).toBe("break");
     expect(arg.subgenre).toBe("lo-fi");
+    expect(arg.vibe).toBe("varied");
   });
 });

@@ -9,18 +9,40 @@ import type {
   RecordingState,
   Subgenre,
   Tag,
+  Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
 import {
+  AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
   STEP_COUNT_INCREMENT,
+  VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
+
+function persistDeviceId(key: string, value: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // localStorage may be disabled in private mode; persistence is best-effort.
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
   return Math.max(min, Math.min(max, value));
+}
+
+function omitKey<V>(obj: Record<number, V>, key: number): Record<number, V> {
+  const out: Record<number, V> = {};
+  for (const k of Object.keys(obj)) {
+    const id = Number(k);
+    if (id !== key) out[id] = obj[id];
+  }
+  return out;
 }
 
 export interface AppActions {
@@ -30,6 +52,7 @@ export interface AppActions {
   setCutSubdivision: (value: CutSubdivision) => void;
   setSameTierHoldMs: (ms: number) => void;
   setSubgenre: (value: Subgenre) => void;
+  setVibe: (value: Vibe) => void;
   extendSteps: () => void;
   removeStepColumn: (stepIndex: number) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
@@ -39,13 +62,19 @@ export interface AppActions {
   markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
   clearTrackClip: (trackId: number) => void;
-  setTrackTag: (trackId: number, tag: Tag | null) => void;
+  setTrackTag: (
+    trackId: number,
+    tag: Tag | null,
+    source?: "user" | "system",
+  ) => void;
+  setTrackTagReasoning: (trackId: number, reasoning: string | null) => void;
   setTrackShowVideo: (
     trackId: number,
     showVideo: boolean,
     source?: "user" | "system",
   ) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
+  setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
@@ -98,6 +127,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setSubgenre: (value) =>
       set((state) => ({ project: { ...state.project, subgenre: value } })),
+
+    setVibe: (value) =>
+      set((state) => ({ project: { ...state.project, vibe: value } })),
 
     extendSteps: () =>
       set((state) => {
@@ -173,9 +205,16 @@ export const useAppStore = create<AppStore>((set) => ({
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
         }
+        // Reasoning describes the previous sound; a fresh recording on
+        // the same track invalidates it until the next auto-tag pass.
+        const tagReasoning =
+          trackId in state.project.tagReasoning
+            ? omitKey(state.project.tagReasoning, trackId)
+            : state.project.tagReasoning;
         return {
           project: {
             ...state.project,
+            tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId ? { ...track, clip } : track,
             ),
@@ -187,9 +226,14 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => {
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
+        const tagReasoning =
+          trackId in state.project.tagReasoning
+            ? omitKey(state.project.tagReasoning, trackId)
+            : state.project.tagReasoning;
         return {
           project: {
             ...state.project,
+            tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId ? { ...track, clip: null } : track,
             ),
@@ -197,15 +241,55 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
-    setTrackTag: (trackId, tag) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId ? { ...track, tag } : track,
-          ),
-        },
-      })),
+    setTrackTag: (trackId, tag, source = "user") =>
+      set((state) => {
+        const prevTrack = state.project.tracks[trackId];
+        const tagUnchanged = prevTrack?.tag === tag;
+        const wouldClaim =
+          source === "user" && !state.session.manuallyTagged.includes(trackId);
+        const wouldClearReasoning =
+          source === "user" && trackId in state.project.tagReasoning;
+        if (tagUnchanged && !wouldClaim && !wouldClearReasoning) return state;
+
+        // User-driven picks claim the track from future auto-tag passes
+        // and invalidate any prior reasoning string (the chip picker has
+        // no idea why the model picked what it picked).
+        let project = tagUnchanged
+          ? state.project
+          : {
+              ...state.project,
+              tracks: state.project.tracks.map((track) =>
+                track.id === trackId ? { ...track, tag } : track,
+              ),
+            };
+        let session = state.session;
+        if (wouldClaim) {
+          session = {
+            ...session,
+            manuallyTagged: [...session.manuallyTagged, trackId],
+          };
+        }
+        if (wouldClearReasoning) {
+          project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
+        }
+        return { project, session };
+      }),
+
+    setTrackTagReasoning: (trackId, reasoning) =>
+      set((state) => {
+        const current = state.project.tagReasoning;
+        if (reasoning === null || reasoning === "") {
+          if (!(trackId in current)) return state;
+          return { project: { ...state.project, tagReasoning: omitKey(current, trackId) } };
+        }
+        if (current[trackId] === reasoning) return state;
+        return {
+          project: {
+            ...state.project,
+            tagReasoning: { ...current, [trackId]: reasoning },
+          },
+        };
+      }),
 
     setTrackShowVideo: (trackId, showVideo, source = "user") =>
       set((state) => {
@@ -222,7 +306,27 @@ export const useAppStore = create<AppStore>((set) => ({
         return { project: { ...state.project, tracks: next }, session };
       }),
 
-    setMedia: (next) => set({ media: next }),
+    setMedia: (next) =>
+      set((state) => ({
+        media: {
+          ...next,
+          videoDeviceId: state.media.videoDeviceId,
+          audioDeviceId: state.media.audioDeviceId,
+        },
+      })),
+
+    setPreferredDevices: (next) =>
+      set((state) => {
+        const videoDeviceId =
+          next.video === undefined ? state.media.videoDeviceId : next.video;
+        const audioDeviceId =
+          next.audio === undefined ? state.media.audioDeviceId : next.audio;
+        if (next.video !== undefined)
+          persistDeviceId(VIDEO_DEVICE_STORAGE_KEY, videoDeviceId);
+        if (next.audio !== undefined)
+          persistDeviceId(AUDIO_DEVICE_STORAGE_KEY, audioDeviceId);
+        return { media: { ...state.media, videoDeviceId, audioDeviceId } };
+      }),
 
     setRecordingState: (recordingState, activeTrackId) =>
       set((state) => ({

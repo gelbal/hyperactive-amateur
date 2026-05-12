@@ -87,36 +87,29 @@ describe("audio: per-step trigger logic", () => {
     videoEngineTrigger.mockClear();
   });
 
-  it("fires the player + videoEngine for a clipped track on its toggled step", () => {
+  it("clipped track: fires player + videoEngine; showVideo=false skips video; muted skips both", () => {
     initTransport();
-    useAppStore.getState().actions.setTrackClip(0, makeClip());
-    useAppStore.getState().actions.toggleStep(0, 0);
+    const a = useAppStore.getState().actions;
+    // Track 0: normal — should trigger player + video.
+    a.setTrackClip(0, makeClip());
+    a.toggleStep(0, 0);
+    // Track 1: showVideo=false — audio only.
+    a.setTrackClip(1, makeClip());
+    a.toggleStep(1, 0);
+    a.setTrackShowVideo(1, false);
+    // Track 2: muted — neither audio nor video.
+    a.setTrackClip(2, makeClip());
+    a.toggleStep(2, 0);
+    a.setTrackMuted(2, true);
+
     const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
     cb?.(0.25);
+
     expect(playerInstances[0].start).toHaveBeenCalledWith(0.25, 0, 1);
     expect(videoEngineTrigger).toHaveBeenCalledWith(0, 0.25);
-  });
-
-  it("respects track.showVideo: audio plays, video skipped", () => {
-    initTransport();
-    useAppStore.getState().actions.setTrackClip(0, makeClip());
-    useAppStore.getState().actions.toggleStep(0, 0);
-    useAppStore.getState().actions.setTrackShowVideo(0, false);
-    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
-    cb?.(0.1);
-    expect(playerInstances[0].start).toHaveBeenCalled();
-    expect(videoEngineTrigger).not.toHaveBeenCalled();
-  });
-
-  it("muted tracks skip both audio and video even when their step is on", () => {
-    initTransport();
-    useAppStore.getState().actions.setTrackClip(0, makeClip());
-    useAppStore.getState().actions.toggleStep(0, 0);
-    useAppStore.getState().actions.setTrackMuted(0, true);
-    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
-    cb?.(0);
-    expect(playerInstances[0].start).not.toHaveBeenCalled();
-    expect(videoEngineTrigger).not.toHaveBeenCalled();
+    expect(playerInstances[1].start).toHaveBeenCalled();
+    expect(videoEngineTrigger).toHaveBeenCalledTimes(1); // only track 0 cut
+    expect(playerInstances[2].start).not.toHaveBeenCalled();
   });
 
   it("falls back to a synth click for tracks without a clip", () => {

@@ -2,11 +2,14 @@
 // ABOUTME: The button label is the live state (cut rate · swing · hold) so the value stays visible while the panel is closed.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, selectClipCount } from "../store/useAppStore";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
 import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
+import { RetagAllControl } from "./RetagAllControl";
+import { VariationButtons } from "./VariationButtons";
+import { AI_UNLOCK_CLIPS } from "../lib/aiSuggest";
 import type { CutSubdivision } from "../types";
 
 const CUT_LABEL: Record<CutSubdivision, string> = {
@@ -21,10 +24,16 @@ export function FeelDisclosure() {
   const cut = useAppStore((s) => s.project.cutSubdivision);
   const swing = useAppStore((s) => s.project.swing);
   const hold = useAppStore((s) => s.project.sameTierHoldMs);
+  const clipsCount = useAppStore(selectClipCount);
   const [open, setOpen] = useState(false);
+  const [retagBusy, setRetagBusy] = useState(false);
+  const [variationBusy, setVariationBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
-  usePopoverDismiss(rootRef, open, close);
+  // Pin the popover open while either AI call is in flight — otherwise a
+  // click-outside or Escape would unmount the busy child and swallow its
+  // Undo / result toast.
+  usePopoverDismiss(rootRef, open, close, { whileBusy: retagBusy || variationBusy });
 
   const summary = `${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
 
@@ -56,6 +65,15 @@ export function FeelDisclosure() {
           <CutSubdivisionSelect />
           <SwingSlider />
           <HoldTimeControl />
+          {clipsCount >= AI_UNLOCK_CLIPS && (
+            <div className="border-t border-zinc-800 pt-3 flex flex-col gap-2">
+              <span className="text-sm text-zinc-300">Variations</span>
+              <VariationButtons onBusyChange={setVariationBusy} />
+            </div>
+          )}
+          <div className="border-t border-zinc-800 pt-3">
+            <RetagAllControl clipsCount={clipsCount} onBusyChange={setRetagBusy} />
+          </div>
           <div className="border-t border-zinc-800 pt-3">
             <ScratchControl onScratched={() => setOpen(false)} />
           </div>

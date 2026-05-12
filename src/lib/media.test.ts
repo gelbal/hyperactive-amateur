@@ -46,16 +46,18 @@ describe("media", () => {
     });
   });
 
-  it("requestMedia confirms permission, releases tracks, leaves no stream held", async () => {
+  it("requestMedia confirms then releases (granted, no stream held), and surfaces denied with error on rejection", async () => {
+    // Granted path.
     const fake = makeFakeStream();
     stubGetUserMedia(async () => fake);
     await requestMedia();
     expect(useAppStore.getState().media.status).toBe("granted");
     expect(useAppStore.getState().media.stream).toBeNull();
     for (const track of fake._tracks) expect(track.stop).toHaveBeenCalled();
-  });
 
-  it("requestMedia transitions to denied with the error message on rejection", async () => {
+    // Denied path.
+    __resetMediaForTesting();
+    useAppStore.getState().actions.reset();
     stubGetUserMedia(async () => {
       throw new DOMException("user blocked it", "NotAllowedError");
     });
@@ -73,6 +75,30 @@ describe("media", () => {
     for (const track of fake._tracks) expect(track.stop).toHaveBeenCalled();
     expect(useAppStore.getState().media.stream).toBeNull();
     // Permission state stays granted — user already approved.
+    expect(useAppStore.getState().media.status).toBe("granted");
+  });
+
+  it("acquireRecordingStream rolls media status back to 'denied' on failure so requestMedia can re-prompt (regression)", async () => {
+    // First: grant permission so the store status is 'granted', stream null.
+    const fake = makeFakeStream();
+    stubGetUserMedia(async () => fake);
+    await requestMedia();
+    expect(useAppStore.getState().media.status).toBe("granted");
+
+    // Now the camera is revoked — acquireRecordingStream throws.
+    stubGetUserMedia(async () => {
+      throw new DOMException("revoked", "NotAllowedError");
+    });
+    await expect(acquireRecordingStream()).rejects.toBeInstanceOf(DOMException);
+
+    // Status must be 'denied' so requestMedia no longer short-circuits.
+    expect(useAppStore.getState().media.status).toBe("denied");
+
+    // Re-grant: requestMedia must be callable again and flip back to granted.
+    const fake2 = makeFakeStream();
+    stubGetUserMedia(async () => fake2);
+    __resetMediaForTesting();
+    await requestMedia();
     expect(useAppStore.getState().media.status).toBe("granted");
   });
 

@@ -78,10 +78,10 @@ re-recording:
 
 ## Inspiration
 
-Built as a homage to Lasse Gjertsen's two videos:
+Inspired by Lasse Gjertsen's two videos:
 
-- **Hyperactive** — [youtube.com/watch?v=o9698TqtY4A](https://www.youtube.com/watch?v=o9698TqtY4A)
-- **Amateur** — [youtube.com/watch?v=JzqumbhfxRo](https://www.youtube.com/watch?v=JzqumbhfxRo)
+- [Hyperactive](https://www.youtube.com/watch?v=o9698TqtY4A)
+- [Amateur](https://www.youtube.com/watch?v=JzqumbhfxRo)
 
 He cut every shot by hand. This app collapses the workflow into a
 sequencer.

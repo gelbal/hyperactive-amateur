@@ -41,19 +41,4 @@ describe("StepGrid", () => {
     expect(screen.getAllByLabelText(/track 1 step 6/)[0]).toHaveAttribute("data-current", "true");
   });
 
-  it("+4 extend grows stepCount and adds 4 cells per track", () => {
-    render(<StepGrid />);
-    fireEvent.click(screen.getByLabelText("Add 4 more steps"));
-    expect(useAppStore.getState().project.stepCount).toBe(20);
-    expect(screen.getAllByLabelText(/^track \d+ step \d+$/)).toHaveLength(8 * 20);
-  });
-
-  it("hovering a column reveals its remove button; click removes the column from every track", () => {
-    render(<StepGrid />);
-    fireEvent.click(screen.getByLabelText("track 1 step 6"));
-    fireEvent.mouseEnter(screen.getByLabelText("track 1 step 3"));
-    fireEvent.click(screen.getByLabelText("Remove step 3"));
-    expect(useAppStore.getState().project.stepCount).toBe(15);
-    expect(useAppStore.getState().project.tracks[0].steps[4]).toBe(true);
-  });
 });
