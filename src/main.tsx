@@ -4,6 +4,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import { App } from "./App";
+import { installWindowHook } from "./lib/logger";
+
+installWindowHook();
 
 if (import.meta.env.PROD && import.meta.env.GEMINI_API_KEY) {
   // eslint-disable-next-line no-console
