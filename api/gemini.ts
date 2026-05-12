@@ -128,4 +128,9 @@ export async function handleGeminiRequest(request: Request): Promise<Response> {
   });
 }
 
-export default handleGeminiRequest;
+// Vercel Node runtime expects the `{ fetch }` wrapper export, not a bare
+// default-export function. Keep handleGeminiRequest as a named export so
+// the Vite dev middleware in vite.config.ts can import it unchanged.
+export default {
+  fetch: handleGeminiRequest,
+};
