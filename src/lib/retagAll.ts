@@ -5,7 +5,7 @@ import { autoTagBatch, type BatchAutoTagItem } from "./aiAutoTagBatch";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD, type AutoTagResult } from "./aiAutoTag";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { logger, LOG_EVENTS } from "./logger";
-import { applyClassifiedTag } from "./recordingFlow";
+import { applyClassifiedTag } from "./applyClassifiedTag";
 
 export interface RetagResult {
   ok: boolean;
