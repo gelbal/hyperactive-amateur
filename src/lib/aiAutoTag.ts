@@ -1,21 +1,22 @@
-// ABOUTME: aiAutoTag — classify a recorded clip via Gemini 3 Flash Preview.
-// ABOUTME: Returns null on any failure (network, schema, missing key) so callers can fail open.
+// ABOUTME: aiAutoTag — classify a recorded clip via Gemini 3.1 Flash Lite with thinkingLevel HIGH.
+// ABOUTME: Returns null on any failure (network, schema, missing key) so callers can fail open; observability via logger.
 import { GoogleGenAI, Type } from "@google/genai";
-import type { Tag } from "../types";
+import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
+import { logger, LOG_EVENTS } from "./logger";
+import { blobToBase64, errMessage, TAG_DEFINITIONS_BLOCK } from "./aiClient";
 
-export const AUTO_TAG_MODEL = "gemini-3.1-flash-lite-preview";
+export const AUTO_TAG_MODEL = "gemini-3.1-flash-lite";
 
-const TAG_VALUES: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
+// Minimum confidence required before an auto-tag result is written to a track.
+// Below this, the result is logged but discarded — both the per-record flow
+// and the holistic re-tag flow honor this same threshold.
+export const AUTO_TAG_CONFIDENCE_THRESHOLD = 0.6;
 
 const CLASSIFICATION_PROMPT =
   "Classify this short audio sample for a hip-hop step sequencer. Listen to the sound and pick exactly one tag:\n" +
-  "- kick: low-frequency thump or boom (mouth, chest hit, sub bass)\n" +
-  "- snare: mid-frequency crack or slap (claps, tongue pops, table hits with brightness)\n" +
-  "- hat: high-frequency tick or hiss (ts, sh, finger snaps)\n" +
-  "- vocal: any voiced sound, word, syllable, or extended tone (yeah, uh, hm, sung note)\n" +
-  "- fx: anything else or ambiguous (whooshes, weird noises, breaths)\n\n" +
-  "Return your best guess with a confidence score 0-1 reflecting how clearly the audio matches that category.";
+  TAG_DEFINITIONS_BLOCK +
+  "\n\nReturn your best guess with a confidence score 0-1 reflecting how clearly the audio matches that category.";
 
 export interface AutoTagResult {
   tag: Tag;
@@ -33,21 +34,8 @@ export function readGeminiApiKey(): string | undefined {
   return (import.meta.env.GEMINI_API_KEY as string | undefined) || undefined;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
-}
-
 function isTag(v: unknown): v is Tag {
-  return typeof v === "string" && (TAG_VALUES as string[]).includes(v);
+  return typeof v === "string" && (TAGS as readonly string[]).includes(v);
 }
 
 export function validateAutoTag(value: unknown): AutoTagResult | null {
@@ -67,9 +55,13 @@ export async function autoTag(
   // Test seam — bypasses SDK construction so unit tests don't need a key.
   client?: GeminiClient,
 ): Promise<AutoTagResult | null> {
+  const audioMs = Math.round(audioBuffer.duration * 1000);
   try {
     const apiKey = client ? "test-key" : readGeminiApiKey();
-    if (!client && !apiKey) return null;
+    if (!client && !apiKey) {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "no-key", model: AUTO_TAG_MODEL });
+      return null;
+    }
 
     const wav = audioBufferToWav(audioBuffer);
     const base64 = await blobToBase64(wav);
@@ -77,6 +69,9 @@ export async function autoTag(
     const sdk: GeminiClient =
       client ??
       (new GoogleGenAI({ apiKey: apiKey! }) as unknown as GeminiClient);
+
+    logger.info(LOG_EVENTS.AUTOTAG_START, { model: AUTO_TAG_MODEL, audioMs });
+    const startedAt = Date.now();
 
     const response = await sdk.models.generateContent({
       model: AUTO_TAG_MODEL,
@@ -96,26 +91,48 @@ export async function autoTag(
           properties: {
             tag: {
               type: Type.STRING,
-              enum: TAG_VALUES as unknown as string[],
+              enum: [...TAGS],
             },
             confidence: { type: Type.NUMBER },
             reasoning: { type: Type.STRING },
           },
           required: ["tag", "confidence"],
         },
+        // Per-clip classification is a 5-way choice over one short sample —
+        // the model doesn't need extended thinking for that. The holistic
+        // batch path keeps ThinkingLevel.HIGH because it balances roles
+        // across the whole kit at once.
       },
     });
 
+    const latencyMs = Date.now() - startedAt;
     const text = response.text;
-    if (typeof text !== "string" || text.length === 0) return null;
+    if (typeof text !== "string" || text.length === 0) {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "empty-text", model: AUTO_TAG_MODEL, latencyMs });
+      return null;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
     } catch {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "invalid-json", model: AUTO_TAG_MODEL, latencyMs, text });
       return null;
     }
-    return validateAutoTag(parsed);
-  } catch {
+    const validated = validateAutoTag(parsed);
+    if (!validated) {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "schema", model: AUTO_TAG_MODEL, latencyMs, parsed });
+      return null;
+    }
+    logger.info(LOG_EVENTS.AUTOTAG_RESULT, {
+      model: AUTO_TAG_MODEL,
+      tag: validated.tag,
+      confidence: validated.confidence,
+      reasoning: validated.reasoning,
+      latencyMs,
+    });
+    return validated;
+  } catch (err) {
+    logger.error(LOG_EVENTS.AUTOTAG_ERROR, { model: AUTO_TAG_MODEL, message: errMessage(err) });
     return null;
   }
 }

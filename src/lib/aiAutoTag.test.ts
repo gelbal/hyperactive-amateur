@@ -1,6 +1,7 @@
-// ABOUTME: aiAutoTag tests — schema validation + happy path + fail-open behavior.
+// ABOUTME: aiAutoTag tests — schema validation, request shape, and fail-open behavior across error branches.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { autoTag, validateAutoTag, type GeminiClient } from "./aiAutoTag";
+import { autoTag, validateAutoTag, AUTO_TAG_MODEL, type GeminiClient } from "./aiAutoTag";
+import { clearLogs, getLogs } from "./logger";
 
 function fakeBuffer(): AudioBuffer {
   return {
@@ -19,7 +20,7 @@ function makeClient(behavior: (params: object) => Promise<{ text?: string }>): G
 }
 
 describe("validateAutoTag", () => {
-  it("accepts a valid result and rejects bad shapes", () => {
+  it("accepts valid shapes and rejects bad tag enum / out-of-range confidence / null", () => {
     expect(validateAutoTag({ tag: "kick", confidence: 0.85 })).toEqual({
       tag: "kick",
       confidence: 0.85,
@@ -34,21 +35,40 @@ describe("validateAutoTag", () => {
 describe("autoTag", () => {
   beforeEach(() => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
+    clearLogs();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    clearLogs();
   });
 
-  it("returns the parsed result on a valid response", async () => {
-    const client = makeClient(async () => ({
-      text: JSON.stringify({ tag: "kick", confidence: 0.9, reasoning: "low thump" }),
-    }));
+  it("happy path: sends gemini-3.1-flash-lite without extended thinking and returns the parsed result", async () => {
+    type Captured = { model?: string; config?: { thinkingConfig?: unknown } };
+    let captured: Captured = {};
+    const client: GeminiClient = {
+      models: {
+        generateContent: vi.fn(async (params: object) => {
+          captured = params as Captured;
+          return { text: JSON.stringify({ tag: "kick", confidence: 0.9, reasoning: "low thump" }) };
+        }),
+      },
+    };
     const result = await autoTag(fakeBuffer(), client);
     expect(result).toEqual({ tag: "kick", confidence: 0.9, reasoning: "low thump" });
+    expect(AUTO_TAG_MODEL).toBe("gemini-3.1-flash-lite");
+    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    // Per-clip path intentionally omits thinkingConfig — the batch path
+    // keeps HIGH for kit-balance reasoning, the single-clip path doesn't
+    // need it for a 5-way classification.
+    expect(captured.config?.thinkingConfig).toBeUndefined();
   });
 
-  it("fails open: returns null on SDK throw, malformed JSON, missing key", async () => {
-    expect(await autoTag(fakeBuffer(), makeClient(async () => ({ text: "not json {{" })))).toBeNull();
+  it("fails open across every error branch: SDK throw, malformed JSON, missing key", async () => {
+    // 1. SDK throw → autotag.error.
     expect(
       await autoTag(
         fakeBuffer(),
@@ -57,8 +77,20 @@ describe("autoTag", () => {
         }),
       ),
     ).toBeNull();
+    expect(getLogs().some((l) => l.event === "autotag.error")).toBe(true);
 
+    clearLogs();
+    // 2. Malformed JSON → autotag.miss with reason invalid-json.
+    expect(
+      await autoTag(fakeBuffer(), makeClient(async () => ({ text: "not json {{" }))),
+    ).toBeNull();
+    expect(getLogs().some((l) => l.event === "autotag.miss")).toBe(true);
+
+    clearLogs();
+    // 3. Missing key with no test client → autotag.miss with reason no-key.
     vi.stubEnv("GEMINI_API_KEY", "");
     expect(await autoTag(fakeBuffer())).toBeNull();
+    const noKey = getLogs().find((l) => l.event === "autotag.miss");
+    expect((noKey?.payload as { reason?: string })?.reason).toBe("no-key");
   });
 });
