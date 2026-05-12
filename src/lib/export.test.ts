@@ -12,7 +12,7 @@ vi.mock("tone", () => ({
   getTransport: vi.fn(() => transport),
 }));
 
-import { buildExportStream, exportSong } from "./export";
+import { buildExportStream, defaultExportFilename, exportSong } from "./export";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -81,6 +81,12 @@ describe("exportSong", () => {
 
   afterEach(() => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+  });
+
+  it("defaultExportFilename returns the expected YYYYMMDD-HHmm.webm shape", () => {
+    expect(defaultExportFilename()).toMatch(
+      /^hyperactive-amateur-\d{4}\d{2}\d{2}-\d{2}\d{2}\.webm$/,
+    );
   });
 
   it("starts/stops the Transport, reports progress, and resolves with a Blob", async () => {

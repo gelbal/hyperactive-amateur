@@ -1,5 +1,5 @@
-// ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8x16 grid.
-// ABOUTME: Uses thinkingLevel HIGH; client-direct in dev (env var) — migrate to a server proxy before any public deploy.
+// ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8-track step grid.
+// ABOUTME: Uses thinkingLevel HIGH; one retry-with-jitter on transient errors; client-direct in dev — migrate to a server proxy before any public deploy.
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import type { Subgenre, Tag, Vibe } from "../types";
 import { logger, LOG_EVENTS } from "./logger";

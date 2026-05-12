@@ -46,6 +46,26 @@ describe("useAppStore", () => {
     expect(get().session.manuallyTagged.filter((id) => id === 2).length).toBe(1);
   });
 
+  it("extendSteps grows every track by the increment with false padding and caps at MAX_STEP_COUNT", () => {
+    get().actions.toggleStep(0, 5);
+    const start = get().project.stepCount;
+    get().actions.extendSteps();
+    const grown = get().project.stepCount;
+    expect(grown).toBeGreaterThan(start);
+    // Every track now has the new length; the original true step survives;
+    // the new trailing cells are false.
+    for (const t of get().project.tracks) {
+      expect(t.steps.length).toBe(grown);
+      for (let i = start; i < grown; i++) expect(t.steps[i]).toBe(false);
+    }
+    expect(get().project.tracks[0].steps[5]).toBe(true);
+    // Push to the cap — further extends must be no-ops.
+    while (get().project.stepCount < 64) get().actions.extendSteps();
+    expect(get().project.stepCount).toBe(64);
+    get().actions.extendSteps();
+    expect(get().project.stepCount).toBe(64);
+  });
+
   it("removeStepColumn drops the column from every track and clamps at the floor", () => {
     get().actions.toggleStep(0, 5);
     get().actions.removeStepColumn(2);
