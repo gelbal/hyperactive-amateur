@@ -46,13 +46,11 @@ the path of least resistance:
 1. Push your fork to GitHub and import the repo at vercel.com → "Add New
    Project". Vercel auto-detects Vite — accept the defaults.
 2. In Project Settings → Environment Variables, add `GEMINI_API_KEY` for
-   both **Production** and **Preview** environments. Optionally add
-   `ALLOWED_ORIGINS` (comma-separated hostnames) once you wire up a
-   custom domain.
+   both **Production** and **Preview** environments.
 3. Set a daily quota cap on the same Gemini key at
-   [aistudio.google.com](https://aistudio.google.com) — even with the
-   `Origin` allowlist on `/api/gemini`, this is your real backstop
-   against quota abuse.
+   [aistudio.google.com](https://aistudio.google.com) — this is the real
+   backstop against quota abuse, since `/api/gemini` is intentionally
+   open (CORS blocks cross-origin embedding automatically).
 4. Push to any branch → Vercel publishes a preview URL. Merge to `main`
    → production URL.
 
