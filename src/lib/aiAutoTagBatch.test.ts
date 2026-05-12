@@ -1,6 +1,6 @@
 // ABOUTME: aiAutoTagBatch tests — multi-clip request shape, response validation, fail-open paths.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ThinkingLevel } from "@google/genai";
+import { ThinkingLevel } from "./aiSchemaConstants";
 import {
   autoTagBatch,
   validateBatchAutoTag,
@@ -46,14 +46,12 @@ describe("validateBatchAutoTag", () => {
 
 describe("autoTagBatch", () => {
   beforeEach(() => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
     clearLogs();
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     clearLogs();
   });
@@ -123,9 +121,13 @@ describe("autoTagBatch", () => {
     expect(await autoTagBatch([])).toBeNull();
 
     clearLogs();
-    // 4. Missing key.
-    vi.stubEnv("GEMINI_API_KEY", "");
-    expect(await autoTagBatch([{ trackId: 0, audioBuffer: fakeBuffer() }])).toBeNull();
+    // 4. Transport surfaces MissingApiKeyError → batchtag.miss with reason no-key.
+    const { MissingApiKeyError } = await import("./aiErrors");
+    expect(
+      await autoTagBatch([{ trackId: 0, audioBuffer: fakeBuffer() }], {
+        models: { generateContent: vi.fn(async () => { throw new MissingApiKeyError(); }) },
+      }),
+    ).toBeNull();
     const noKey = getLogs().find((l) => l.event === "batchtag.miss");
     expect((noKey?.payload as { reason?: string })?.reason).toBe("no-key");
   });

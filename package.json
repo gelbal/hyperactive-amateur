@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,7 +15,6 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@google/genai": "^1.52.0",
     "clsx": "^2.1.1",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.460.0",

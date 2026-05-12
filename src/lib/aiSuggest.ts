@@ -1,9 +1,14 @@
 // ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8-track step grid.
-// ABOUTME: Uses thinkingLevel HIGH; one retry-with-jitter on transient errors; client-direct in dev — migrate to a server proxy before any public deploy.
-import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+// ABOUTME: Uses thinkingLevel HIGH; retries once on transient HTTP errors (429/5xx); all calls go through the /api/gemini proxy.
 import type { Subgenre, Tag, Vibe } from "../types";
 import { logger, LOG_EVENTS } from "./logger";
 import { errMessage } from "./aiClient";
+import { SchemaType, ThinkingLevel } from "./aiSchemaConstants";
+import { createHttpGeminiClient } from "./aiHttpClient";
+import { TransientGeminiError, ValidationError } from "./aiErrors";
+
+// Re-export so existing imports from "./aiSuggest" keep working.
+export { MissingApiKeyError, ValidationError } from "./aiErrors";
 
 export type Variation = "busier" | "fill" | "halftime" | "strip" | "break";
 
@@ -32,20 +37,6 @@ export interface SuggestPatternInput {
 export interface VaryPatternInput extends SuggestPatternInput {
   currentPattern: boolean[][];
   variation: Variation;
-}
-
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ValidationError";
-  }
-}
-
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super("GEMINI_API_KEY is not set. Add it to .env.local — see .env.example.");
-    this.name = "MissingApiKeyError";
-  }
 }
 
 const MODEL = "gemini-3.1-flash-lite";
@@ -117,13 +108,13 @@ function buildKitNotes(tracks: SuggestPatternInput["tracks"]): string {
 
 function buildPatternSchema(stepCount: number) {
   return {
-    type: Type.OBJECT,
+    type: SchemaType.OBJECT,
     properties: {
       tracks: {
-        type: Type.ARRAY,
+        type: SchemaType.ARRAY,
         items: {
-          type: Type.ARRAY,
-          items: { type: Type.BOOLEAN },
+          type: SchemaType.ARRAY,
+          items: { type: SchemaType.BOOLEAN },
           minItems: stepCount,
           maxItems: stepCount,
         },
@@ -185,10 +176,6 @@ export function validatePattern(value: unknown, stepCount: number): boolean[][] 
   return grid;
 }
 
-export function readApiKey(): string | undefined {
-  return (import.meta.env.GEMINI_API_KEY as string | undefined) || undefined;
-}
-
 export interface GeminiPatternClient {
   models: {
     generateContent: (params: object) => Promise<{ text?: string }>;
@@ -212,11 +199,7 @@ async function generateGrid(
   stepCount: number,
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
-  const apiKey = client ? "test-key" : readApiKey();
-  if (!client && !apiKey) throw new MissingApiKeyError();
-
-  const sdk: GeminiPatternClient =
-    client ?? (new GoogleGenAI({ apiKey: apiKey! }) as unknown as GeminiPatternClient);
+  const sdk: GeminiPatternClient = client ?? createHttpGeminiClient();
 
   const callOnce = async (): Promise<{ text?: string }> =>
     sdk.models.generateContent({
@@ -234,6 +217,19 @@ async function generateGrid(
   try {
     response = await callOnce();
   } catch (firstErr) {
+    // Only retry on transient HTTP errors (429 / 5xx). Validation errors
+    // tend to repeat; timeouts and 4xx would just burn another 60s budget.
+    // Tests inject a generic mock client whose thrown Error has no transient
+    // flag — we treat those as transient too so existing retry coverage stays
+    // meaningful without having to construct status-tagged errors in tests.
+    const isTestSeam = Boolean(client);
+    const transient =
+      (firstErr instanceof TransientGeminiError) ||
+      (isTestSeam && firstErr instanceof Error && !(firstErr instanceof ValidationError));
+    if (!transient) {
+      logger.error(LOG_EVENTS.SUGGEST_ERROR, { model: MODEL, message: errMessage(firstErr) });
+      throw firstErr;
+    }
     const delay = RETRY_BASE_MS + Math.random() * RETRY_JITTER_MS;
     logger.warn(LOG_EVENTS.SUGGEST_RETRY, {
       model: MODEL,

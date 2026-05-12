@@ -1,10 +1,2 @@
-// ABOUTME: Vite client type augmentation — declares import.meta.env for our project vars.
+// ABOUTME: Vite client type augmentation — kept minimal since no app vars are exposed via import.meta.env.
 /// <reference types="vite/client" />
-
-interface ImportMetaEnv {
-  readonly GEMINI_API_KEY?: string;
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}

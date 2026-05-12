@@ -1,10 +1,11 @@
 // ABOUTME: aiAutoTagBatch — classify multiple recorded clips holistically in a single Gemini call.
 // ABOUTME: Returns null on any failure so callers (retagAll) can fall back to per-clip auto-tag.
-import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
-import { readGeminiApiKey } from "./aiAutoTag";
+import { SchemaType, ThinkingLevel } from "./aiSchemaConstants";
+import { createHttpGeminiClient } from "./aiHttpClient";
+import { MissingApiKeyError } from "./aiErrors";
 import {
   blobToBase64,
   errMessage,
@@ -104,11 +105,6 @@ export async function autoTagBatch(
   }
   try {
     if (signal?.aborted) return null;
-    const apiKey = client ? "test-key" : readGeminiApiKey();
-    if (!client && !apiKey) {
-      logger.warn(LOG_EVENTS.BATCHTAG_MISS, { reason: "no-key", model: BATCH_TAG_MODEL });
-      return null;
-    }
 
     const sorted = items.slice().sort((a, b) => a.trackId - b.trackId);
 
@@ -126,9 +122,7 @@ export async function autoTagBatch(
     const wavs = sorted.map((it) => audioBufferToWav(it.audioBuffer));
     const base64s = await Promise.all(wavs.map(blobToBase64));
 
-    const sdk: GeminiClient =
-      client ??
-      (new GoogleGenAI({ apiKey: apiKey! }) as unknown as GeminiClient);
+    const sdk: GeminiClient = client ?? createHttpGeminiClient();
 
     const inlineParts = base64s.map((data) => ({
       inlineData: { mimeType: "audio/wav", data },
@@ -152,17 +146,17 @@ export async function autoTagBatch(
         config: {
           responseMimeType: "application/json",
           responseSchema: {
-            type: Type.ARRAY,
+            type: SchemaType.ARRAY,
             items: {
-              type: Type.OBJECT,
+              type: SchemaType.OBJECT,
               properties: {
-                index: { type: Type.INTEGER },
+                index: { type: SchemaType.INTEGER },
                 tag: {
-                  type: Type.STRING,
+                  type: SchemaType.STRING,
                   enum: [...TAGS],
                 },
-                confidence: { type: Type.NUMBER },
-                reasoning: { type: Type.STRING },
+                confidence: { type: SchemaType.NUMBER },
+                reasoning: { type: SchemaType.STRING },
               },
               required: ["index", "tag", "confidence"],
             },
@@ -212,6 +206,10 @@ export async function autoTagBatch(
     return out;
   } catch (err) {
     if (isAbortError(err)) return null;
+    if (err instanceof MissingApiKeyError) {
+      logger.warn(LOG_EVENTS.BATCHTAG_MISS, { reason: "no-key", model: BATCH_TAG_MODEL });
+      return null;
+    }
     logger.error(LOG_EVENTS.BATCHTAG_ERROR, { model: BATCH_TAG_MODEL, message: errMessage(err) });
     return null;
   }

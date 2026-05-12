@@ -1,6 +1,6 @@
 // ABOUTME: aiSuggest tests — schema validation, model + thinking + vibe wiring, variation enumeration, key-missing.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ThinkingLevel } from "@google/genai";
+import { ThinkingLevel } from "./aiSchemaConstants";
 import {
   suggestPattern,
   varyPattern,
@@ -28,14 +28,12 @@ describe("validatePattern", () => {
 
 describe("suggestPattern", () => {
   beforeEach(() => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
     clearLogs();
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     clearLogs();
   });
@@ -185,13 +183,17 @@ describe("suggestPattern", () => {
     expect(stubborn.models.generateContent).toHaveBeenCalledTimes(2);
   });
 
-  it("missing key throws MissingApiKeyError; malformed JSON throws ValidationError", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "");
+  it("transport surfaces MissingApiKeyError; malformed JSON throws ValidationError", async () => {
+    const noKey: GeminiPatternClient = {
+      models: { generateContent: vi.fn(async () => { throw new MissingApiKeyError(); }) },
+    };
     await expect(
-      suggestPattern({ bpm: 90, subgenre: "boom-bap", vibe: "tight", stepCount: 16, tracks: [] }),
+      suggestPattern(
+        { bpm: 90, subgenre: "boom-bap", vibe: "tight", stepCount: 16, tracks: [] },
+        noKey,
+      ),
     ).rejects.toThrow(MissingApiKeyError);
 
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
     const garbage: GeminiPatternClient = {
       models: { generateContent: vi.fn(async () => ({ text: "not json {{" })) },
     };
@@ -206,13 +208,11 @@ describe("suggestPattern", () => {
 
 describe("varyPattern", () => {
   beforeEach(() => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 

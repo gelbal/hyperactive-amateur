@@ -1,9 +1,11 @@
 // ABOUTME: aiAutoTag — classify a single recorded clip via Gemini 3.1 Flash Lite (default thinking level — batch path uses HIGH).
 // ABOUTME: Returns null on any failure (network, schema, missing key, abort) so callers can fail open; observability via logger.
-import { GoogleGenAI, Type } from "@google/genai";
 import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
+import { SchemaType } from "./aiSchemaConstants";
+import { createHttpGeminiClient } from "./aiHttpClient";
+import { MissingApiKeyError } from "./aiErrors";
 import {
   blobToBase64,
   errMessage,
@@ -36,10 +38,6 @@ export interface GeminiClient {
   };
 }
 
-export function readGeminiApiKey(): string | undefined {
-  return (import.meta.env.GEMINI_API_KEY as string | undefined) || undefined;
-}
-
 function isTag(v: unknown): v is Tag {
   return typeof v === "string" && (TAGS as readonly string[]).includes(v);
 }
@@ -58,27 +56,22 @@ export function validateAutoTag(value: unknown): AutoTagResult | null {
 
 export async function autoTag(
   audioBuffer: AudioBuffer,
-  // Test seam — bypasses SDK construction so unit tests don't need a key.
+  // Test seam — bypasses the real HTTP transport so unit tests don't hit /api/gemini.
   client?: GeminiClient,
-  // Optional cancellation. The Gemini SDK ignores signals, so we race
-  // the call instead — see runWithSignal in aiClient.ts.
+  // Optional cancellation. The proxy forwards req.signal to the upstream Gemini
+  // call, so abort propagates end-to-end — but runWithSignal stays as the
+  // promise-level cancellation glue, since fetch+signal doesn't reject the
+  // already-returned promise once the response has begun streaming.
   signal?: AbortSignal,
 ): Promise<AutoTagResult | null> {
   const audioMs = Math.round(audioBuffer.duration * 1000);
   try {
     if (signal?.aborted) return null;
-    const apiKey = client ? "test-key" : readGeminiApiKey();
-    if (!client && !apiKey) {
-      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "no-key", model: AUTO_TAG_MODEL });
-      return null;
-    }
 
     const wav = audioBufferToWav(audioBuffer);
     const base64 = await blobToBase64(wav);
 
-    const sdk: GeminiClient =
-      client ??
-      (new GoogleGenAI({ apiKey: apiKey! }) as unknown as GeminiClient);
+    const sdk: GeminiClient = client ?? createHttpGeminiClient();
 
     logger.info(LOG_EVENTS.AUTOTAG_START, { model: AUTO_TAG_MODEL, audioMs });
     const startedAt = Date.now();
@@ -98,14 +91,14 @@ export async function autoTag(
         config: {
           responseMimeType: "application/json",
           responseSchema: {
-            type: Type.OBJECT,
+            type: SchemaType.OBJECT,
             properties: {
               tag: {
-                type: Type.STRING,
+                type: SchemaType.STRING,
                 enum: [...TAGS],
               },
-              confidence: { type: Type.NUMBER },
-              reasoning: { type: Type.STRING },
+              confidence: { type: SchemaType.NUMBER },
+              reasoning: { type: SchemaType.STRING },
             },
             required: ["tag", "confidence"],
           },
@@ -146,6 +139,10 @@ export async function autoTag(
     return validated;
   } catch (err) {
     if (isAbortError(err)) return null;
+    if (err instanceof MissingApiKeyError) {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "no-key", model: AUTO_TAG_MODEL });
+      return null;
+    }
     logger.error(LOG_EVENTS.AUTOTAG_ERROR, { model: AUTO_TAG_MODEL, message: errMessage(err) });
     return null;
   }
