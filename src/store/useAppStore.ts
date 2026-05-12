@@ -9,6 +9,7 @@ import type {
   RecordingState,
   Subgenre,
   Tag,
+  Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
 import {
@@ -42,6 +43,7 @@ export interface AppActions {
   setCutSubdivision: (value: CutSubdivision) => void;
   setSameTierHoldMs: (ms: number) => void;
   setSubgenre: (value: Subgenre) => void;
+  setVibe: (value: Vibe) => void;
   extendSteps: () => void;
   removeStepColumn: (stepIndex: number) => void;
   setTrackVolume: (trackId: number, volume: number) => void;
@@ -51,7 +53,12 @@ export interface AppActions {
   markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
   clearTrackClip: (trackId: number) => void;
-  setTrackTag: (trackId: number, tag: Tag | null) => void;
+  setTrackTag: (
+    trackId: number,
+    tag: Tag | null,
+    source?: "user" | "system",
+  ) => void;
+  setTrackTagReasoning: (trackId: number, reasoning: string | null) => void;
   setTrackShowVideo: (
     trackId: number,
     showVideo: boolean,
@@ -111,6 +118,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setSubgenre: (value) =>
       set((state) => ({ project: { ...state.project, subgenre: value } })),
+
+    setVibe: (value) =>
+      set((state) => ({ project: { ...state.project, vibe: value } })),
 
     extendSteps: () =>
       set((state) => {
@@ -210,15 +220,40 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
-    setTrackTag: (trackId, tag) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId ? { ...track, tag } : track,
-          ),
-        },
-      })),
+    setTrackTag: (trackId, tag, source = "user") =>
+      set((state) => {
+        const tracks = state.project.tracks.map((track) =>
+          track.id === trackId ? { ...track, tag } : track,
+        );
+        // User-driven picks claim the track from future auto-tag passes
+        // and invalidate any prior reasoning string (the chip picker has
+        // no idea why the model picked what it picked).
+        let session = state.session;
+        if (source === "user") {
+          const manuallyTagged = session.manuallyTagged.includes(trackId)
+            ? session.manuallyTagged
+            : [...session.manuallyTagged, trackId];
+          const { [trackId]: _dropped, ...remainingReasoning } = session.tagReasoning;
+          session = { ...session, manuallyTagged, tagReasoning: remainingReasoning };
+        }
+        return { project: { ...state.project, tracks }, session };
+      }),
+
+    setTrackTagReasoning: (trackId, reasoning) =>
+      set((state) => {
+        if (reasoning === null || reasoning === "") {
+          if (!(trackId in state.session.tagReasoning)) return state;
+          const { [trackId]: _dropped, ...rest } = state.session.tagReasoning;
+          return { session: { ...state.session, tagReasoning: rest } };
+        }
+        if (state.session.tagReasoning[trackId] === reasoning) return state;
+        return {
+          session: {
+            ...state.session,
+            tagReasoning: { ...state.session.tagReasoning, [trackId]: reasoning },
+          },
+        };
+      }),
 
     setTrackShowVideo: (trackId, showVideo, source = "user") =>
       set((state) => {

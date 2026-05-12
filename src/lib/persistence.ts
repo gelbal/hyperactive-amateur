@@ -1,7 +1,7 @@
 // ABOUTME: persistence — save and rehydrate the project state to IndexedDB via idb-keyval.
 // ABOUTME: AudioBuffer and object URLs are derived; only the blob and trim numbers are stored.
 import { get, set, del } from "idb-keyval";
-import type { AppState, CutSubdivision, Subgenre, Tag } from "../types";
+import type { AppState, CutSubdivision, Subgenre, Tag, Vibe } from "../types";
 
 export const PROJECT_KEY = "hyperactive-amateur-project";
 
@@ -24,6 +24,7 @@ export interface PersistedProject {
   cutSubdivision: CutSubdivision;
   sameTierHoldMs: number;
   subgenre: Subgenre;
+  vibe: Vibe;
   stepCount: number;
   tracks: PersistedTrack[];
   updatedAt: number;
@@ -36,6 +37,7 @@ export function snapshot(state: AppState): PersistedProject {
     cutSubdivision: state.project.cutSubdivision,
     sameTierHoldMs: state.project.sameTierHoldMs,
     subgenre: state.project.subgenre,
+    vibe: state.project.vibe,
     stepCount: state.project.stepCount,
     tracks: state.project.tracks.map((track) => ({
       id: track.id,

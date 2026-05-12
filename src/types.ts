@@ -1,7 +1,8 @@
 // ABOUTME: Shared type definitions for Hyperactive Amateur's domain (clips, tracks, app state).
 // ABOUTME: Pure types — no runtime values. Mutations live in the store actions module.
 
-export type Tag = "kick" | "snare" | "hat" | "vocal" | "fx";
+export const TAGS = ["kick", "snare", "hat", "vocal", "fx"] as const;
+export type Tag = (typeof TAGS)[number];
 
 export interface Clip {
   blob: Blob;
@@ -43,6 +44,13 @@ export type CutSubdivision = "16n" | "8n" | "4n" | "2n" | "1m";
 
 export type Subgenre = "boom-bap" | "trap" | "lo-fi" | "phonk";
 
+// Persistent style hint sent to AI Suggest + variations. Does not mutate the
+// pattern at runtime; it shapes the next AI generation.
+// - tight: dense, all 8 tracks engaged, classic boom-bap repetition.
+// - varied: fewer tracks per loop, asymmetric placement, more breathing room.
+// - breaky: sparse last quarter — drop most hits there for a sense of rest.
+export type Vibe = "tight" | "varied" | "breaky";
+
 export interface ProjectState {
   bpm: number;
   // 0..1 — Tone.Transport swing amount.
@@ -55,6 +63,9 @@ export interface ProjectState {
   sameTierHoldMs: number;
   // Genre hint sent to the AI suggester and pattern variations.
   subgenre: Subgenre;
+  // Style hint sent to the AI suggester and pattern variations. Tight is the
+  // default; Varied and Breaky bias the model toward space and drops.
+  vibe: Vibe;
   // Number of 16th-note steps in the loop. Always a multiple of 4. Each
   // track's `steps` array has exactly this length.
   stepCount: number;
@@ -98,6 +109,15 @@ export interface SessionSlice {
   // Track ids whose showVideo has been manually toggled in this session.
   // Transient — not persisted, cleared on reset and on page load.
   manuallyToggledShowVideo: number[];
+  // Track ids whose tag has been picked by the user in this session.
+  // Auto-tag flows (per-clip + holistic retag) skip these so a stale
+  // classification can't overwrite a deliberate user choice. Transient.
+  manuallyTagged: number[];
+  // Per-track reasoning string returned by the most recent successful
+  // auto-tag (per-clip or batch). Folded into the Suggest / vary prompt
+  // as "Kit notes:" so the model has the same ontology that classified
+  // the sounds. Transient — regenerated on next retag.
+  tagReasoning: Record<number, string>;
   // True after the user has clicked "Done" on the in-viewport recording
   // walkthrough; the station goes away until they re-open it. Transient.
   recordingStationDismissed: boolean;

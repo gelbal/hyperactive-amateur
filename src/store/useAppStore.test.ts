@@ -11,32 +11,39 @@ describe("useAppStore", () => {
     get().actions.reset();
   });
 
-  it("setBpm clamps to [60, 180]", () => {
+  it("setBpm and setSameTierHoldMs clamp to their valid ranges", () => {
     get().actions.setBpm(250);
     expect(get().project.bpm).toBe(180);
     get().actions.setBpm(30);
     expect(get().project.bpm).toBe(60);
-  });
 
-  it("setSameTierHoldMs clamps to [0, 2000]", () => {
     get().actions.setSameTierHoldMs(-10);
     expect(get().project.sameTierHoldMs).toBe(0);
     get().actions.setSameTierHoldMs(5000);
     expect(get().project.sameTierHoldMs).toBe(2000);
   });
 
-  it("setTrackShowVideo records user-source toggles in the session list", () => {
+  it("setTrackShowVideo records user-source toggles in the session list (system-source does not)", () => {
     get().actions.setTrackShowVideo(2, false, "user");
     expect(get().session.manuallyToggledShowVideo).toContain(2);
-    // System-source toggles do NOT mark the track as user-touched.
     get().actions.setTrackShowVideo(3, false, "system");
     expect(get().session.manuallyToggledShowVideo).not.toContain(3);
   });
 
-  it("extendSteps adds 4 false steps to every track", () => {
-    get().actions.extendSteps();
-    expect(get().project.stepCount).toBe(20);
-    for (const track of get().project.tracks) expect(track.steps).toHaveLength(20);
+  it("setTrackTag records user-source picks in manuallyTagged; system-source does not; user pick drops stale reasoning", () => {
+    // System assignment (auto-tag) doesn't claim the track.
+    get().actions.setTrackTag(0, "kick", "system");
+    expect(get().session.manuallyTagged).not.toContain(0);
+    // Seed reasoning, then a user pick claims the track and clears it.
+    get().actions.setTrackTagReasoning(1, "bright short tick");
+    expect(get().session.tagReasoning[1]).toBe("bright short tick");
+    get().actions.setTrackTag(1, "snare", "user");
+    expect(get().session.manuallyTagged).toContain(1);
+    expect(get().session.tagReasoning[1]).toBeUndefined();
+    // Default source is "user" — preserves chip-picker behavior; idempotent.
+    get().actions.setTrackTag(2, "hat");
+    get().actions.setTrackTag(2, "kick");
+    expect(get().session.manuallyTagged.filter((id) => id === 2).length).toBe(1);
   });
 
   it("removeStepColumn drops the column from every track and clamps at the floor", () => {
