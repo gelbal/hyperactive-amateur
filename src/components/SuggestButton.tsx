@@ -7,6 +7,25 @@ import { AI_UNLOCK_CLIPS, suggestPattern, SUBGENRES } from "../lib/aiSuggest";
 import type { Subgenre } from "../types";
 
 const TOAST_MS = 5000;
+const PENDING_VERB_ROTATE_MS = 3000;
+const PENDING_VERBS = [
+  "Vibing",
+  "Cooking",
+  "Chopping",
+  "Crate-diggin'",
+  "Flipping",
+  "Layering",
+  "Brewing",
+  "Loopin'",
+  "Sampling",
+  "Bouncing",
+] as const;
+
+function nextVerb(exclude: string | null): string {
+  const pool =
+    exclude === null ? PENDING_VERBS : PENDING_VERBS.filter((v) => v !== exclude);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 export function SuggestButton() {
   const tracks = useAppStore((s) => s.project.tracks);
@@ -16,6 +35,7 @@ export function SuggestButton() {
   const stepCount = useAppStore((s) => s.project.stepCount);
   const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState(false);
+  const [pendingVerb, setPendingVerb] = useState(() => nextVerb(null));
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<boolean[][] | null>(null);
 
@@ -26,6 +46,18 @@ export function SuggestButton() {
     const id = window.setTimeout(() => setUndoSnapshot(null), TOAST_MS);
     return () => window.clearTimeout(id);
   }, [undoSnapshot]);
+
+  // While pending, swap the verb every few seconds so the wait feels alive
+  // instead of frozen. Each pick excludes the current verb so the label
+  // visibly changes rather than re-rolling the same word.
+  useEffect(() => {
+    if (!pending) return;
+    setPendingVerb((current) => nextVerb(current));
+    const id = window.setInterval(() => {
+      setPendingVerb((current) => nextVerb(current));
+    }, PENDING_VERB_ROTATE_MS);
+    return () => window.clearInterval(id);
+  }, [pending]);
 
   const handleClick = async () => {
     setError(null);
@@ -92,7 +124,7 @@ export function SuggestButton() {
         className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Sparkles size={14} className={pending ? "animate-pulse text-orange-400" : "text-orange-400"} />
-        {pending ? "Thinking…" : "Suggest a beat"}
+        {pending ? `${pendingVerb}…` : "Suggest a beat"}
       </button>
       {error && (
         <span role="alert" className="text-xs text-red-400 max-w-[14rem]">
