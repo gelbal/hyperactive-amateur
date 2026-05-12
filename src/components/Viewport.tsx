@@ -8,6 +8,7 @@ import { useAppStore } from "../store/useAppStore";
 import { requestMedia } from "../lib/media";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
+import { RecordCountdown } from "./RecordCountdown";
 
 const SIZE = 480;
 const TRACK_COUNT = 8;
@@ -24,9 +25,12 @@ export function Viewport() {
   const mediaError = useAppStore((s) => s.media.error);
   const { isFullscreen, enter, exit } = useFullscreen();
 
-  const showOverlays = !isFullscreen;
+  // The overlays (gate, station, record-prompt, countdown) stay visible in
+  // fullscreen so the user can still record from presentation mode. Only the
+  // "Record more" pill below the frame and the fullscreen toggle button
+  // itself adapt to fullscreen.
   const showStation =
-    showOverlays && mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+    mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
   const showRecordMore =
     !isFullscreen &&
     mediaStatus === "granted" &&
@@ -86,13 +90,14 @@ export function Viewport() {
           className="ha-canvas block bg-zinc-950 rounded shadow-lg"
           style={{ width: SIZE, height: SIZE }}
         />
-        {showOverlays && mediaStatus !== "granted" && (
+        {mediaStatus !== "granted" && (
           <PermissionGate status={mediaStatus} error={mediaError} />
         )}
         {showStation && <RecordingStation size={SIZE} />}
-        {showOverlays && mediaStatus === "granted" && !hasClips && stationDismissed && (
+        {mediaStatus === "granted" && !hasClips && stationDismissed && (
           <RecordPrompt />
         )}
+        <RecordCountdown />
         {showFullscreenToggle && (
           <button
             type="button"
