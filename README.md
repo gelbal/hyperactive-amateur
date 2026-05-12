@@ -5,6 +5,8 @@ videos. Record eight short clips of yourself making sounds, drop them
 on a 16-step grid, hit play, and watch a hip-hop video of you
 "performing" the song play back in real time. Export to WebM.
 
+Live at [hyperactive-amateur.com](https://hyperactive-amateur.com).
+
 ## Quick start
 
 ```bash
@@ -37,22 +39,6 @@ through `/api/gemini`. It never reaches the client bundle.
 
 Without a key the rest of the app works fine; AI features just go
 quiet.
-
-## Deploying
-
-The app is a static Vite build plus one serverless function. Vercel is
-the path of least resistance:
-
-1. Push your fork to GitHub and import the repo at vercel.com → "Add New
-   Project". Vercel auto-detects Vite — accept the defaults.
-2. In Project Settings → Environment Variables, add `GEMINI_API_KEY` for
-   both **Production** and **Preview** environments.
-3. Set a daily quota cap on the same Gemini key at
-   [aistudio.google.com](https://aistudio.google.com) — this is the real
-   backstop against quota abuse, since `/api/gemini` is intentionally
-   open (CORS blocks cross-origin embedding automatically).
-4. Push to any branch → Vercel publishes a preview URL. Merge to `main`
-   → production URL.
 
 ## Recording for best results
 
