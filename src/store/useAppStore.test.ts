@@ -36,10 +36,10 @@ describe("useAppStore", () => {
     expect(get().session.manuallyTagged).not.toContain(0);
     // Seed reasoning, then a user pick claims the track and clears it.
     get().actions.setTrackTagReasoning(1, "bright short tick");
-    expect(get().session.tagReasoning[1]).toBe("bright short tick");
+    expect(get().project.tagReasoning[1]).toBe("bright short tick");
     get().actions.setTrackTag(1, "snare", "user");
     expect(get().session.manuallyTagged).toContain(1);
-    expect(get().session.tagReasoning[1]).toBeUndefined();
+    expect(get().project.tagReasoning[1]).toBeUndefined();
     // Default source is "user" — preserves chip-picker behavior; idempotent.
     get().actions.setTrackTag(2, "hat");
     get().actions.setTrackTag(2, "kick");

@@ -36,6 +36,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function omitKey<V>(obj: Record<number, V>, key: number): Record<number, V> {
+  const out: Record<number, V> = {};
+  for (const k of Object.keys(obj)) {
+    const id = Number(k);
+    if (id !== key) out[id] = obj[id];
+  }
+  return out;
+}
+
 export interface AppActions {
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
@@ -196,9 +205,16 @@ export const useAppStore = create<AppStore>((set) => ({
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
         }
+        // Reasoning describes the previous sound; a fresh recording on
+        // the same track invalidates it until the next auto-tag pass.
+        const tagReasoning =
+          trackId in state.project.tagReasoning
+            ? omitKey(state.project.tagReasoning, trackId)
+            : state.project.tagReasoning;
         return {
           project: {
             ...state.project,
+            tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId ? { ...track, clip } : track,
             ),
@@ -210,9 +226,14 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => {
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
+        const tagReasoning =
+          trackId in state.project.tagReasoning
+            ? omitKey(state.project.tagReasoning, trackId)
+            : state.project.tagReasoning;
         return {
           project: {
             ...state.project,
+            tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId ? { ...track, clip: null } : track,
             ),
@@ -222,35 +243,50 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setTrackTag: (trackId, tag, source = "user") =>
       set((state) => {
-        const tracks = state.project.tracks.map((track) =>
-          track.id === trackId ? { ...track, tag } : track,
-        );
+        const prevTrack = state.project.tracks[trackId];
+        const tagUnchanged = prevTrack?.tag === tag;
+        const wouldClaim =
+          source === "user" && !state.session.manuallyTagged.includes(trackId);
+        const wouldClearReasoning =
+          source === "user" && trackId in state.project.tagReasoning;
+        if (tagUnchanged && !wouldClaim && !wouldClearReasoning) return state;
+
         // User-driven picks claim the track from future auto-tag passes
         // and invalidate any prior reasoning string (the chip picker has
         // no idea why the model picked what it picked).
+        let project = tagUnchanged
+          ? state.project
+          : {
+              ...state.project,
+              tracks: state.project.tracks.map((track) =>
+                track.id === trackId ? { ...track, tag } : track,
+              ),
+            };
         let session = state.session;
-        if (source === "user") {
-          const manuallyTagged = session.manuallyTagged.includes(trackId)
-            ? session.manuallyTagged
-            : [...session.manuallyTagged, trackId];
-          const { [trackId]: _dropped, ...remainingReasoning } = session.tagReasoning;
-          session = { ...session, manuallyTagged, tagReasoning: remainingReasoning };
+        if (wouldClaim) {
+          session = {
+            ...session,
+            manuallyTagged: [...session.manuallyTagged, trackId],
+          };
         }
-        return { project: { ...state.project, tracks }, session };
+        if (wouldClearReasoning) {
+          project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
+        }
+        return { project, session };
       }),
 
     setTrackTagReasoning: (trackId, reasoning) =>
       set((state) => {
+        const current = state.project.tagReasoning;
         if (reasoning === null || reasoning === "") {
-          if (!(trackId in state.session.tagReasoning)) return state;
-          const { [trackId]: _dropped, ...rest } = state.session.tagReasoning;
-          return { session: { ...state.session, tagReasoning: rest } };
+          if (!(trackId in current)) return state;
+          return { project: { ...state.project, tagReasoning: omitKey(current, trackId) } };
         }
-        if (state.session.tagReasoning[trackId] === reasoning) return state;
+        if (current[trackId] === reasoning) return state;
         return {
-          session: {
-            ...state.session,
-            tagReasoning: { ...state.session.tagReasoning, [trackId]: reasoning },
+          project: {
+            ...state.project,
+            tagReasoning: { ...current, [trackId]: reasoning },
           },
         };
       }),

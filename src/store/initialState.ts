@@ -43,6 +43,7 @@ export function createInitialState(): AppState {
       subgenre: "boom-bap",
       vibe: "tight",
       stepCount: DEFAULT_STEP_COUNT,
+      tagReasoning: {},
       tracks: Array.from({ length: TRACK_COUNT }, (_, i) =>
         createEmptyTrack(i, DEFAULT_STEP_COUNT),
       ),
@@ -71,7 +72,6 @@ export function createInitialState(): AppState {
     session: {
       manuallyToggledShowVideo: [],
       manuallyTagged: [],
-      tagReasoning: {},
       recordingStationDismissed: false,
     },
   };

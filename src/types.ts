@@ -69,6 +69,12 @@ export interface ProjectState {
   // Number of 16th-note steps in the loop. Always a multiple of 4. Each
   // track's `steps` array has exactly this length.
   stepCount: number;
+  // Per-track reasoning string returned by the most recent successful
+  // auto-tag (per-clip or batch). Folded into the Suggest / vary prompt
+  // as "Kit notes:" so the model has the same ontology that classified
+  // the sounds. Persisted because it's a property of the kit, not the
+  // current browser session — a refresh shouldn't wipe it.
+  tagReasoning: Record<number, string>;
   tracks: Track[];
 }
 
@@ -113,11 +119,6 @@ export interface SessionSlice {
   // Auto-tag flows (per-clip + holistic retag) skip these so a stale
   // classification can't overwrite a deliberate user choice. Transient.
   manuallyTagged: number[];
-  // Per-track reasoning string returned by the most recent successful
-  // auto-tag (per-clip or batch). Folded into the Suggest / vary prompt
-  // as "Kit notes:" so the model has the same ontology that classified
-  // the sounds. Transient — regenerated on next retag.
-  tagReasoning: Record<number, string>;
   // True after the user has clicked "Done" on the in-viewport recording
   // walkthrough; the station goes away until they re-open it. Transient.
   recordingStationDismissed: boolean;

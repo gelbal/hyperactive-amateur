@@ -26,6 +26,10 @@ export interface PersistedProject {
   subgenre: Subgenre;
   vibe: Vibe;
   stepCount: number;
+  // Per-track reasoning strings from the most recent auto-tag pass.
+  // Persisted because they describe the kit, not the browser session —
+  // a refresh shouldn't lose the model's notes about each clip.
+  tagReasoning: Record<number, string>;
   tracks: PersistedTrack[];
   updatedAt: number;
 }
@@ -39,6 +43,7 @@ export function snapshot(state: AppState): PersistedProject {
     subgenre: state.project.subgenre,
     vibe: state.project.vibe,
     stepCount: state.project.stepCount,
+    tagReasoning: { ...state.project.tagReasoning },
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,

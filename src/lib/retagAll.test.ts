@@ -165,7 +165,7 @@ describe("retagAllClipsWith", () => {
     expect(tracks[1].tag).toBe("kick");
   });
 
-  it("batch reasoning strings are persisted in session.tagReasoning for the suggester to read later", async () => {
+  it("batch reasoning strings land in project.tagReasoning for the suggester to read later", async () => {
     seedTracks([0, 1]);
     const deps: RetagDeps = {
       batch: vi.fn(async () => [
@@ -175,7 +175,7 @@ describe("retagAllClipsWith", () => {
       single: vi.fn(async () => null),
     };
     await retagAllClipsWith(deps);
-    const reasoning = useAppStore.getState().session.tagReasoning;
+    const reasoning = useAppStore.getState().project.tagReasoning;
     expect(reasoning[0]).toBe("short low thump");
     expect(reasoning[1]).toBe("bright tick");
   });

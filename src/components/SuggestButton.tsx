@@ -14,7 +14,6 @@ export function SuggestButton() {
   const subgenre = useAppStore((s) => s.project.subgenre);
   const vibe = useAppStore((s) => s.project.vibe);
   const stepCount = useAppStore((s) => s.project.stepCount);
-  const tagReasoning = useAppStore((s) => s.session.tagReasoning);
   const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +31,9 @@ export function SuggestButton() {
     setError(null);
     setPending(true);
     const before = tracks.map((t) => [...t.steps]);
+    // Read reasoning fresh at click time — that way changes during a
+    // retag pass don't re-render this button on every write.
+    const tagReasoning = useAppStore.getState().project.tagReasoning;
     try {
       const grid = await suggestPattern({
         bpm,
