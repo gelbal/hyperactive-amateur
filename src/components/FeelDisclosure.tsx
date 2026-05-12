@@ -2,11 +2,13 @@
 // ABOUTME: The button label is the live state (cut rate · swing · hold) so the value stays visible while the panel is closed.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, selectClipCount } from "../store/useAppStore";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
 import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
+import { RetagAllControl } from "./RetagAllControl";
+import { VibeSelector } from "./VibeSelector";
 import type { CutSubdivision } from "../types";
 
 const CUT_LABEL: Record<CutSubdivision, string> = {
@@ -21,10 +23,12 @@ export function FeelDisclosure() {
   const cut = useAppStore((s) => s.project.cutSubdivision);
   const swing = useAppStore((s) => s.project.swing);
   const hold = useAppStore((s) => s.project.sameTierHoldMs);
+  const clipsCount = useAppStore(selectClipCount);
   const [open, setOpen] = useState(false);
+  const [retagBusy, setRetagBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
-  usePopoverDismiss(rootRef, open, close);
+  usePopoverDismiss(rootRef, open, close, { whileBusy: retagBusy });
 
   const summary = `${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
 
@@ -56,6 +60,12 @@ export function FeelDisclosure() {
           <CutSubdivisionSelect />
           <SwingSlider />
           <HoldTimeControl />
+          <div className="border-t border-zinc-800 pt-3">
+            <VibeSelector />
+          </div>
+          <div className="border-t border-zinc-800 pt-3">
+            <RetagAllControl clipsCount={clipsCount} onBusyChange={setRetagBusy} />
+          </div>
           <div className="border-t border-zinc-800 pt-3">
             <ScratchControl onScratched={() => setOpen(false)} />
           </div>
