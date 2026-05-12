@@ -2,12 +2,21 @@
 // ABOUTME: Tone is mocked deterministically; the canvas-draw path isn't exercised (jsdom can't render video frames).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// `Tone.Draw.schedule` is the audio-aligned playback scheduler. Inside
+// the videoEngine each trigger lands two scheduled callbacks (seek, play)
+// which we run immediately so the integration tests still observe the
+// post-trigger displayed state deterministically.
+const drawSchedule = vi.fn((cb: () => void, _time: number) => {
+  cb();
+  return 1;
+});
 vi.mock("tone", () => ({
   now: vi.fn(() => 0),
   getTransport: vi.fn(() => ({
     clear: vi.fn(),
     scheduleRepeat: vi.fn(() => 1),
   })),
+  getDraw: vi.fn(() => ({ schedule: drawSchedule })),
 }));
 
 import {
@@ -17,6 +26,8 @@ import {
   pickWithDucking,
   quantizeToBoundary,
   __getCurrentlyDisplayedForTesting,
+  __getPendingTriggerCountForTesting,
+  __markMetadataReadyForTesting,
   __resetVideoEngineForTesting,
   type TrackContext,
   type TriggerEvent,
@@ -113,6 +124,7 @@ describe("videoEngine integration", () => {
   beforeEach(() => {
     __resetVideoEngineForTesting();
     useAppStore.getState().actions.reset();
+    drawSchedule.mockClear();
   });
 
   it("live trigger while not playing immediately becomes the displayed event (so pad clicks show video)", () => {
@@ -120,5 +132,36 @@ describe("videoEngine integration", () => {
     expect(useAppStore.getState().playback.isPlaying).toBe(false);
     trigger(3, 0.5);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(3);
+  });
+
+  it("does not leak pendingTriggers while the transport is stopped (regression)", () => {
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    for (let i = 0; i < 50; i++) {
+      trigger(i % 2, 0.1 + i * 0.05);
+    }
+    // No transport ticks mean the boundary drain never runs; the queue
+    // must therefore stay empty when nothing is playing.
+    expect(__getPendingTriggerCountForTesting()).toBe(0);
+  });
+
+  it("far-future triggers split seek+play across the lookahead; near-now triggers collapse to one", () => {
+    setClipForTrack(4, makeClip(4));
+    __markMetadataReadyForTesting(4);
+    drawSchedule.mockClear();
+    // Far-future: seek at 0.92, play at 1.0.
+    trigger(4, 1.0);
+    const farTimes = drawSchedule.mock.calls.map((c) => c[1] as number).sort((a, b) => a - b);
+    expect(farTimes.length).toBe(2);
+    expect(farTimes[0]).toBeCloseTo(0.92, 6);
+    expect(farTimes[1]).toBeCloseTo(1.0, 6);
+    // Near-now: single combined task at when.
+    setClipForTrack(5, makeClip(5));
+    __markMetadataReadyForTesting(5);
+    drawSchedule.mockClear();
+    trigger(5, 0.05);
+    expect(drawSchedule.mock.calls.length).toBe(1);
+    expect(drawSchedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
   });
 });

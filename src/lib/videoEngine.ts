@@ -27,9 +27,21 @@ export interface TriggerEvent {
   startTime: number;
 }
 
+// Pre-seek lookahead. A real <video> element needs a few render frames
+// between `currentTime = X` and a decoded frame on the element — so if we
+// seek + play at the same moment the audio fires, the first ~30–60 ms of
+// the hard-cut shows a stale paused frame. Doing the seek slightly early
+// (and the play exactly on time) leaves the element ready to render.
+const LOOKAHEAD_S = 0.08;
+
 let host: HTMLDivElement | null = null;
 const videos = new Map<number, HTMLVideoElement>();
 const trims = new Map<number, { startMs: number; endMs: number }>();
+// Per-track flag indicating whether the hidden <video> has loaded enough
+// metadata to safely seek + play. Triggers received before this is true
+// queue the most recent {trackId, when} and replay from loadedmetadata.
+const metadataReady = new Map<number, boolean>();
+const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
 let storeUnsubscribe: (() => void) | null = null;
@@ -66,6 +78,8 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
     existing.remove();
     videos.delete(trackId);
     trims.delete(trackId);
+    metadataReady.delete(trackId);
+    pendingFirstTrigger.delete(trackId);
   }
   if (!clip) return;
 
@@ -74,40 +88,76 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   video.playsInline = true;
   video.preload = "auto";
   video.src = clip.url;
+  video.addEventListener("loadedmetadata", () => {
+    metadataReady.set(trackId, true);
+    const queued = pendingFirstTrigger.get(trackId);
+    if (queued) {
+      pendingFirstTrigger.delete(trackId);
+      startPlayback(trackId, queued.when);
+    }
+  });
   ensureHost().appendChild(video);
   videos.set(trackId, video);
   trims.set(trackId, { startMs: clip.trimStartMs, endMs: clip.trimEndMs });
+  metadataReady.set(trackId, false);
 }
 
-// Push a new trigger onto the pending queue and schedule the underlying video
-// element to seek+play at the requested audio time. The visible cut is decided
-// later, at the next boundary callback.
-export function trigger(trackId: number, when: number): void {
+function startPlayback(trackId: number, when: number): void {
+  const video = videos.get(trackId);
   const trim = trims.get(trackId);
-  if (!trim) return;
+  if (!video || !trim) return;
 
-  pendingTriggers.push({ trackId, startTime: when });
-
-  const delaySeconds = Math.max(0, when - Tone.now());
-  const start = () => {
-    const video = videos.get(trackId);
-    if (!video) return;
+  const seek = () => {
     try {
       video.currentTime = trim.startMs / 1000;
     } catch {
       // currentTime can throw before metadata loads; later triggers retry.
     }
+  };
+  const play = () => {
     void video.play().catch(() => undefined);
   };
-  if (delaySeconds <= 0) start();
-  else setTimeout(start, delaySeconds * 1000);
 
-  // Live triggers (pad clicks, keyboard hits) when the Transport isn't
-  // running won't get picked up by the boundary scheduleRepeat callback.
-  // Show them immediately so the canvas reflects the user's input.
+  const draw = Tone.getDraw();
+  const now = Tone.now();
+  // Within (or past) the lookahead window: seek + play back-to-back on
+  // the next audio-aligned tick. Preserves the pre-1.1 behavior for pad
+  // clicks and live keyboard hits while the transport is stopped.
+  if (when - now <= LOOKAHEAD_S) {
+    draw.schedule(() => {
+      seek();
+      play();
+    }, Math.max(when, now));
+    return;
+  }
+  // Comfortable lead time: seek early so the decoder has time to settle,
+  // then play exactly on the audio beat.
+  draw.schedule(seek, when - LOOKAHEAD_S);
+  draw.schedule(play, when);
+}
+
+// Schedule the underlying video element to seek+play at the requested audio
+// time. While the Transport is running, push the event onto the pending queue
+// so the next boundary callback picks the visible cut; while it's stopped,
+// promote the trigger to the displayed event immediately (so pad clicks /
+// keyboard hits show video) and skip the queue (which would otherwise leak).
+export function trigger(trackId: number, when: number): void {
+  const trim = trims.get(trackId);
+  if (!trim) return;
+
   const playing = useAppStore.getState().playback.isPlaying;
-  if (!playing) {
+  if (playing) {
+    pendingTriggers.push({ trackId, startTime: when });
+  } else {
     currentlyDisplayed = { trackId, startTime: when };
+  }
+
+  if (metadataReady.get(trackId)) {
+    startPlayback(trackId, when);
+  } else {
+    // Metadata isn't ready yet — keep only the latest trigger; the
+    // loadedmetadata handler will replay it.
+    pendingFirstTrigger.set(trackId, { when });
   }
 }
 
@@ -236,7 +286,16 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, _audioTime: numb
   if (!currentlyDisplayed) return;
   const video = videos.get(currentlyDisplayed.trackId);
   if (!video) return;
-  ctx.drawImage(video, 0, 0, w, h);
+  // Cameras typically negotiate 16:9 (e.g. 1280x720) even when we ask for
+  // 1:1, so the raw video is wider than tall. Center-crop a square source
+  // rect so we draw without horizontal squish on the 1:1 canvas.
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (vw === 0 || vh === 0) return;
+  const side = Math.min(vw, vh);
+  const sx = (vw - side) / 2;
+  const sy = (vh - side) / 2;
+  ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
 }
 
 function disposeBoundaryEvent(): void {
@@ -309,6 +368,21 @@ export function __getCurrentlyDisplayedForTesting(): TriggerEvent | null {
   return currentlyDisplayed;
 }
 
+// Test-only: jsdom never fires loadedmetadata on the synthetic <video>,
+// so triggers stay queued in pendingFirstTrigger and the scheduler is
+// never exercised. This seam lets the scheduling tests pretend metadata
+// has loaded.
+export function __markMetadataReadyForTesting(trackId: number): void {
+  metadataReady.set(trackId, true);
+  pendingFirstTrigger.delete(trackId);
+}
+
+// Test-only: inspect the pending-triggers queue length so we can guard the
+// "no growth while transport is stopped" regression.
+export function __getPendingTriggerCountForTesting(): number {
+  return pendingTriggers.length;
+}
+
 export function __resetVideoEngineForTesting(): void {
   if (storeUnsubscribe) {
     storeUnsubscribe();
@@ -322,6 +396,8 @@ export function __resetVideoEngineForTesting(): void {
   for (const video of videos.values()) video.remove();
   videos.clear();
   trims.clear();
+  metadataReady.clear();
+  pendingFirstTrigger.clear();
   pendingTriggers = [];
   currentlyDisplayed = null;
   if (host) {
