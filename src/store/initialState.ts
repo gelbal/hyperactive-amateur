@@ -8,6 +8,19 @@ export const STEP_COUNT_INCREMENT = 4;
 export const MIN_STEP_COUNT = 4;
 export const MAX_STEP_COUNT = 64;
 
+export const VIDEO_DEVICE_STORAGE_KEY = "hyperactive-amateur-video-device";
+export const AUDIO_DEVICE_STORAGE_KEY = "hyperactive-amateur-audio-device";
+
+function readStoredDeviceId(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(key);
+    return value && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function createEmptyTrack(id: number, stepCount: number): Track {
   return {
     id,
@@ -51,6 +64,8 @@ export function createInitialState(): AppState {
       stream: null,
       status: "idle",
       error: null,
+      videoDeviceId: readStoredDeviceId(VIDEO_DEVICE_STORAGE_KEY),
+      audioDeviceId: readStoredDeviceId(AUDIO_DEVICE_STORAGE_KEY),
     },
     session: {
       manuallyToggledShowVideo: [],

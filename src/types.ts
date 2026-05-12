@@ -88,6 +88,10 @@ export interface MediaSlice {
   stream: MediaStream | null;
   status: MediaStatus;
   error: string | null;
+  // Preferred input device ids (per-machine, persisted in localStorage —
+  // not part of the saved project). When null, the browser picks the default.
+  videoDeviceId: string | null;
+  audioDeviceId: string | null;
 }
 
 export interface SessionSlice {

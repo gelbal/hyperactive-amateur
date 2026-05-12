@@ -12,11 +12,23 @@ import type {
 } from "../types";
 import { clearProject } from "../lib/persistence";
 import {
+  AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
   STEP_COUNT_INCREMENT,
+  VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
+
+function persistDeviceId(key: string, value: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // localStorage may be disabled in private mode; persistence is best-effort.
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
@@ -46,6 +58,7 @@ export interface AppActions {
     source?: "user" | "system",
   ) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
+  setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
@@ -222,7 +235,27 @@ export const useAppStore = create<AppStore>((set) => ({
         return { project: { ...state.project, tracks: next }, session };
       }),
 
-    setMedia: (next) => set({ media: next }),
+    setMedia: (next) =>
+      set((state) => ({
+        media: {
+          ...next,
+          videoDeviceId: state.media.videoDeviceId,
+          audioDeviceId: state.media.audioDeviceId,
+        },
+      })),
+
+    setPreferredDevices: (next) =>
+      set((state) => {
+        const videoDeviceId =
+          next.video === undefined ? state.media.videoDeviceId : next.video;
+        const audioDeviceId =
+          next.audio === undefined ? state.media.audioDeviceId : next.audio;
+        if (next.video !== undefined)
+          persistDeviceId(VIDEO_DEVICE_STORAGE_KEY, videoDeviceId);
+        if (next.audio !== undefined)
+          persistDeviceId(AUDIO_DEVICE_STORAGE_KEY, audioDeviceId);
+        return { media: { ...state.media, videoDeviceId, audioDeviceId } };
+      }),
 
     setRecordingState: (recordingState, activeTrackId) =>
       set((state) => ({
