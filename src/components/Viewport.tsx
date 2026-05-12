@@ -5,6 +5,7 @@ import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
+import type { MediaStatus } from "../types";
 import { requestMedia } from "../lib/media";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
@@ -29,15 +30,22 @@ export function Viewport() {
   // fullscreen so the user can still record from presentation mode. Only the
   // "Record more" pill below the frame and the fullscreen toggle button
   // itself adapt to fullscreen.
+  //
+  // The permission gate is gated behind explicit recording intent — on reload
+  // with persisted clips we don't want it flashing up. It mirrors the station
+  // precondition: empty tracks exist AND the user hasn't dismissed the
+  // walkthrough. Clicking "Record more" or "Re-record" both reopen the
+  // station, which in turn reveals the gate when media isn't granted yet.
   const showStation =
     mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+  const showGate =
+    mediaStatus !== "granted" && emptyTrackCount > 0 && !stationDismissed;
   const showRecordMore =
     !isFullscreen &&
-    mediaStatus === "granted" &&
     emptyTrackCount > 0 &&
     emptyTrackCount < TRACK_COUNT &&
     stationDismissed;
-  const showFullscreenToggle = mediaStatus === "granted";
+  const showFullscreenToggle = mediaStatus === "granted" || hasClips;
 
   useEffect(() => {
     initVideoEngine();
@@ -90,7 +98,7 @@ export function Viewport() {
           className="ha-canvas block bg-zinc-950 rounded shadow-lg"
           style={{ width: SIZE, height: SIZE }}
         />
-        {mediaStatus !== "granted" && (
+        {showGate && (
           <PermissionGate status={mediaStatus} error={mediaError} />
         )}
         {showStation && <RecordingStation size={SIZE} />}
@@ -128,7 +136,9 @@ function RecordMoreButton() {
 }
 
 interface PermissionGateProps {
-  status: "idle" | "requesting" | "denied";
+  // Accepts the full MediaStatus union; "granted" is unreachable here because
+  // the parent only renders this gate when status !== "granted".
+  status: MediaStatus;
   error: string | null;
 }
 

@@ -31,7 +31,8 @@ function fakeClip(): Clip {
     trimStartMs: 0,
     trimEndMs: 2000,
     durationMs: 2000,
-  };
+    posterBlob: null,
+    posterUrl: null,  };
 }
 
 function seedTracks(trackIds: number[]): void {

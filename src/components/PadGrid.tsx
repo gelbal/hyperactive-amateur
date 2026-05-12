@@ -38,13 +38,19 @@ function Pad({ trackId }: PadProps) {
       }
     >
       {clip ? (
-        <video
-          src={clip.url}
-          muted
-          playsInline
-          preload="metadata"
-          className="absolute inset-0 w-full h-full object-cover opacity-80"
-        />
+        clip.posterUrl ? (
+          <img
+            src={clip.posterUrl}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 w-full h-full object-cover opacity-80"
+          />
+        ) : (
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-zinc-800"
+          />
+        )
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-600">
           empty

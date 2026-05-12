@@ -10,6 +10,7 @@ import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
+import { captureFirstFrame } from "./posterFrame";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -122,6 +123,15 @@ async function runFlow(
     const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext(), { signal });
     const url = URL.createObjectURL(result.blob);
     const trim = autoTrim(result.audioBuffer);
+    // Poster generation is best-effort — never let a poster failure block
+    // the clip save. captureFirstFrame returns null on any decode/timeout.
+    let posterBlob: Blob | null = null;
+    try {
+      posterBlob = await captureFirstFrame(result.blob);
+    } catch {
+      posterBlob = null;
+    }
+    const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
     const newClip: Clip = {
       blob: result.blob,
       url,
@@ -129,6 +139,8 @@ async function runFlow(
       trimStartMs: trim.trimStartMs,
       trimEndMs: trim.trimEndMs,
       durationMs: result.durationMs,
+      posterBlob,
+      posterUrl,
     };
     actions.setTrackClip(trackId, newClip);
     // Send only the trimmed window to the AI tagger — the raw recording

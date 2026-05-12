@@ -199,13 +199,21 @@ interface ClipThumbnailProps {
 function ClipThumbnail({ clip, onClear }: ClipThumbnailProps) {
   return (
     <div className="relative group w-12 h-12">
-      <video
-        src={clip.url}
-        muted
-        playsInline
-        preload="metadata"
-        className="w-12 h-12 rounded object-cover bg-zinc-900"
-      />
+      {clip.posterUrl ? (
+        <img
+          src={clip.posterUrl}
+          alt=""
+          aria-hidden
+          className="w-12 h-12 rounded object-cover bg-zinc-900"
+        />
+      ) : (
+        <div
+          aria-hidden
+          className="w-12 h-12 rounded bg-zinc-900 flex items-center justify-center"
+        >
+          <Mic size={18} className="text-zinc-600" />
+        </div>
+      )}
       <button
         type="button"
         aria-label="re-record"

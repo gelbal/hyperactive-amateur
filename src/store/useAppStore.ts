@@ -205,6 +205,13 @@ export const useAppStore = create<AppStore>((set) => ({
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
         }
+        if (
+          previous &&
+          previous.posterUrl &&
+          previous.posterUrl !== clip.posterUrl
+        ) {
+          URL.revokeObjectURL(previous.posterUrl);
+        }
         // Reasoning describes the previous sound; a fresh recording on
         // the same track invalidates it until the next auto-tag pass.
         const tagReasoning =
@@ -226,6 +233,7 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => {
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
+        if (previous && previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
         const tagReasoning =
           trackId in state.project.tagReasoning
             ? omitKey(state.project.tagReasoning, trackId)
@@ -238,6 +246,11 @@ export const useAppStore = create<AppStore>((set) => ({
               track.id === trackId ? { ...track, clip: null } : track,
             ),
           },
+          // Re-recording a track means the user wants the station back. Without
+          // this, "Re-record" on a fully-finished project would clear the clip
+          // but leave the empty-slot UI invisible until the user finds the
+          // "Record more" pill.
+          session: { ...state.session, recordingStationDismissed: false },
         };
       }),
 
@@ -342,7 +355,20 @@ export const useAppStore = create<AppStore>((set) => ({
     reopenRecordingStation: () =>
       set((state) => ({ session: { ...state.session, recordingStationDismissed: false } })),
 
-    hydrateProject: (project) => set({ project }),
+    hydrateProject: (project) =>
+      set((state) => {
+        // If the rehydrated project has any recorded clip, the user is past
+        // the first-recording walkthrough; suppress the in-viewport station
+        // (and its permission gate) on reload until they explicitly opt back
+        // in via "Record more" or "Re-record".
+        const hasAnyClip = project.tracks.some((t) => t.clip);
+        return {
+          project,
+          session: hasAnyClip
+            ? { ...state.session, recordingStationDismissed: true }
+            : state.session,
+        };
+      }),
 
     applyPattern: (grid) =>
       set((state) => {
@@ -365,6 +391,7 @@ export const useAppStore = create<AppStore>((set) => ({
       // Revoke object URLs on every existing clip.
       for (const track of state.project.tracks) {
         if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
+        if (track.clip?.posterUrl) URL.revokeObjectURL(track.clip.posterUrl);
       }
       // Stop any held media stream so getUserMedia is re-armed cleanly.
       if (state.media.stream) {

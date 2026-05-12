@@ -31,4 +31,26 @@ describe("persistence", () => {
     await clearProject();
     expect(await loadProject()).toBeNull();
   });
+
+  it("round-trips posterBlob alongside the clip blob", async () => {
+    const posterBlob = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: "image/jpeg" });
+    useAppStore.getState().actions.setTrackClip(1, {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/clip",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob,
+      posterUrl: "blob:test/poster",
+    });
+    await saveProject(useAppStore.getState());
+
+    const loaded = await loadProject();
+    // fake-indexeddb rehydrates blobs into an opaque value; we just need to
+    // confirm it round-trips as non-null where set and stays null elsewhere.
+    expect(loaded?.tracks[1].posterBlob).not.toBeNull();
+    expect(loaded?.tracks[1].posterBlob).toBeDefined();
+    expect(loaded?.tracks[0].posterBlob).toBeNull();
+  });
 });
