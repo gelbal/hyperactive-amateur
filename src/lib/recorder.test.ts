@@ -5,6 +5,7 @@ import { recordClip } from "./recorder";
 
 class FakeMediaRecorder {
   static isTypeSupported = vi.fn(() => true);
+  static stopCalls = 0;
   state: "inactive" | "recording" = "inactive";
   ondataavailable: ((e: BlobEvent) => void) | null = null;
   onstop: (() => void) | null = null;
@@ -17,6 +18,7 @@ class FakeMediaRecorder {
   }
 
   stop() {
+    FakeMediaRecorder.stopCalls += 1;
     this.state = "inactive";
     queueMicrotask(() => {
       this.ondataavailable?.({
@@ -37,6 +39,7 @@ describe("recordClip", () => {
   let originalRecorder: typeof MediaRecorder | undefined;
 
   beforeEach(() => {
+    FakeMediaRecorder.stopCalls = 0;
     originalRecorder = (globalThis as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
   });
@@ -64,5 +67,17 @@ describe("recordClip", () => {
     await expect(recordClip(stream, 20, ctx)).rejects.toThrow(
       /Failed to decode recorded audio.*boom/,
     );
+  });
+
+  it("aborting the signal mid-record stops the recorder and rejects with AbortError (regression for Esc cancel)", async () => {
+    const ctx = makeAudioContext(async () => fakeAudioBuffer);
+    const stream = {} as MediaStream;
+    const controller = new AbortController();
+    // Fire abort after the recorder has been started but before its timer.
+    queueMicrotask(() => controller.abort());
+    await expect(
+      recordClip(stream, 1000, ctx, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(FakeMediaRecorder.stopCalls).toBeGreaterThan(0);
   });
 });
