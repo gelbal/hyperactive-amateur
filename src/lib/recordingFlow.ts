@@ -4,13 +4,14 @@ import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
 import { autoTrim } from "./autoTrim";
-import { autoTag } from "./aiAutoTag";
+import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
+import { sliceAudioBuffer } from "./audioBufferSlice";
+import { logger, LOG_EVENTS } from "./logger";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
-export const AUTO_TAG_CONFIDENCE_THRESHOLD = 0.6;
 
 export type AutoTagEvent =
   | { kind: "tagging" }
@@ -132,7 +133,14 @@ async function runFlow(
       durationMs: result.durationMs,
     };
     actions.setTrackClip(trackId, newClip);
-    void runAutoTag(trackId, result.audioBuffer, options.onAutoTag);
+    // Send only the trimmed window to the AI tagger — the raw recording
+    // is ~2 s and is mostly silence on either side of the actual sound.
+    const trimmedForTagging = sliceAudioBuffer(
+      result.audioBuffer,
+      trim.trimStartMs,
+      trim.trimEndMs,
+    );
+    void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
     if (isAbortError(e)) {
@@ -147,6 +155,37 @@ async function runFlow(
   }
 }
 
+// Apply a classified tag to a track. Skipped entirely when the user has
+// hand-picked a tag for this track in this session — a stale auto-tag
+// result must not silently override a deliberate user choice. The user's
+// explicit showVideo toggle always wins; otherwise the system picks
+// audio-only for hat and video-on for every other tag. Symmetry matters
+// when re-tag changes a track's category — without it, a track previously
+// system-flipped to audio-only as a hat would stay hidden after being
+// re-classified as kick / snare / vocal / fx.
+export interface ApplyClassifiedTagOutcome {
+  applied: boolean;
+  hatAudioOnly: boolean;
+}
+export function applyClassifiedTag(
+  trackId: number,
+  tag: Tag,
+  reasoning?: string | null,
+): ApplyClassifiedTagOutcome {
+  const state = useAppStore.getState();
+  if (state.session.manuallyTagged.includes(trackId)) {
+    return { applied: false, hatAudioOnly: false };
+  }
+  state.actions.setTrackTag(trackId, tag, "system");
+  state.actions.setTrackTagReasoning(trackId, reasoning ?? null);
+  if (state.session.manuallyToggledShowVideo.includes(trackId)) {
+    return { applied: true, hatAudioOnly: false };
+  }
+  const desiredShowVideo = tag !== "hat";
+  state.actions.setTrackShowVideo(trackId, desiredShowVideo, "system");
+  return { applied: true, hatAudioOnly: tag === "hat" };
+}
+
 async function runAutoTag(
   trackId: number,
   audioBuffer: AudioBuffer,
@@ -154,21 +193,30 @@ async function runAutoTag(
 ): Promise<void> {
   onEvent?.({ kind: "tagging" });
   const result = await autoTag(audioBuffer);
-  if (!result || result.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
+  if (!result) {
     onEvent?.({ kind: "miss" });
     return;
   }
-  const actions = useAppStore.getState().actions;
-  actions.setTrackTag(trackId, result.tag);
-  let hatAudioOnly = false;
-  if (result.tag === "hat") {
-    const manuallyToggled = useAppStore
-      .getState()
-      .session.manuallyToggledShowVideo.includes(trackId);
-    if (!manuallyToggled) {
-      actions.setTrackShowVideo(trackId, false, "system");
-      hatAudioOnly = true;
-    }
+  if (result.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
+    logger.warn(LOG_EVENTS.AUTOTAG_BELOW_THRESHOLD, {
+      trackId,
+      tag: result.tag,
+      confidence: result.confidence,
+      threshold: AUTO_TAG_CONFIDENCE_THRESHOLD,
+    });
+    onEvent?.({ kind: "miss" });
+    return;
+  }
+  const { applied, hatAudioOnly } = applyClassifiedTag(
+    trackId,
+    result.tag,
+    result.reasoning,
+  );
+  if (!applied) {
+    // User picked a tag while we were thinking — keep their choice and
+    // tell the caller this looked like a miss UX-wise.
+    onEvent?.({ kind: "miss" });
+    return;
   }
   onEvent?.({ kind: "applied", tag: result.tag, hatAudioOnly });
 }
