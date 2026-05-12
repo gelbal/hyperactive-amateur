@@ -8,7 +8,8 @@ import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
 import { RetagAllControl } from "./RetagAllControl";
-import { VibeSelector } from "./VibeSelector";
+import { VariationButtons } from "./VariationButtons";
+import { AI_UNLOCK_CLIPS } from "../lib/aiSuggest";
 import type { CutSubdivision } from "../types";
 
 const CUT_LABEL: Record<CutSubdivision, string> = {
@@ -60,9 +61,12 @@ export function FeelDisclosure() {
           <CutSubdivisionSelect />
           <SwingSlider />
           <HoldTimeControl />
-          <div className="border-t border-zinc-800 pt-3">
-            <VibeSelector />
-          </div>
+          {clipsCount >= AI_UNLOCK_CLIPS && (
+            <div className="border-t border-zinc-800 pt-3 flex flex-col gap-2">
+              <span className="text-sm text-zinc-300">Variations</span>
+              <VariationButtons />
+            </div>
+          )}
           <div className="border-t border-zinc-800 pt-3">
             <RetagAllControl clipsCount={clipsCount} onBusyChange={setRetagBusy} />
           </div>

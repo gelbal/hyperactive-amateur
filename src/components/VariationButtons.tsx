@@ -79,7 +79,7 @@ export function VariationButtons() {
   };
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       {BUTTONS.map(({ variation, label }) => {
         const isPending = pending === variation;
         return (
@@ -97,7 +97,7 @@ export function VariationButtons() {
             }
             onClick={() => void handleClick(variation)}
             className={
-              "px-3 py-2 text-sm rounded border transition-colors " +
+              "px-2.5 py-1.5 text-xs rounded border transition-colors " +
               "bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:border-zinc-500 " +
               "disabled:opacity-50 disabled:cursor-not-allowed " +
               (isPending ? "animate-pulse text-orange-400" : "")
