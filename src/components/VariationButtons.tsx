@@ -16,13 +16,16 @@ const BUTTONS: ButtonSpec[] = [
   { variation: "fill", label: "Fill" },
   { variation: "halftime", label: "Half-time" },
   { variation: "strip", label: "Strip" },
+  { variation: "break", label: "Break" },
 ];
 
 export function VariationButtons() {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
+  const vibe = useAppStore((s) => s.project.vibe);
   const stepCount = useAppStore((s) => s.project.stepCount);
+  const tagReasoning = useAppStore((s) => s.session.tagReasoning);
   const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState<Variation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +51,13 @@ export function VariationButtons() {
       const grid = await varyPattern({
         bpm,
         subgenre,
+        vibe,
         stepCount,
-        tracks: tracks.map((t) => ({ id: t.id, tag: t.tag })),
+        tracks: tracks.map((t) => ({
+          id: t.id,
+          tag: t.tag,
+          reasoning: tagReasoning[t.id] ?? null,
+        })),
         currentPattern: before,
         variation,
       });
