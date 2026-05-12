@@ -5,7 +5,13 @@ import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
 import { readGeminiApiKey } from "./aiAutoTag";
-import { blobToBase64, errMessage, TAG_DEFINITIONS_BLOCK } from "./aiClient";
+import {
+  blobToBase64,
+  errMessage,
+  isAbortError,
+  runWithSignal,
+  TAG_DEFINITIONS_BLOCK,
+} from "./aiClient";
 
 export const BATCH_TAG_MODEL = "gemini-3.1-flash-lite";
 
@@ -18,7 +24,7 @@ const BASE64_INFLATION = 4 / 3;
 
 const HOLISTIC_PROMPT =
   "You are tagging the sounds in a hip-hop step sequencer. " +
-  "There are N short audio samples below, indexed 0..N-1 in the order provided. " +
+  "There are {{count}} short audio samples below, indexed 0..{{count}}-1 in the order provided. " +
   "Listen to all of them as a kit and assign each one to exactly one tag from " +
   "{kick, snare, hat, vocal, fx}. Use the sounds' relative pitch, brightness, " +
   "length, and attack — not absolute thresholds. Distribute roles sensibly " +
@@ -90,12 +96,14 @@ function estimateBase64Bytes(items: BatchAutoTagInput[]): number {
 export async function autoTagBatch(
   items: BatchAutoTagInput[],
   client?: GeminiClient,
+  signal?: AbortSignal,
 ): Promise<BatchAutoTagItem[] | null> {
   if (items.length === 0) {
     logger.warn(LOG_EVENTS.BATCHTAG_MISS, { reason: "empty-input", model: BATCH_TAG_MODEL });
     return null;
   }
   try {
+    if (signal?.aborted) return null;
     const apiKey = client ? "test-key" : readGeminiApiKey();
     if (!client && !apiKey) {
       logger.warn(LOG_EVENTS.BATCHTAG_MISS, { reason: "no-key", model: BATCH_TAG_MODEL });
@@ -125,7 +133,10 @@ export async function autoTagBatch(
     const inlineParts = base64s.map((data) => ({
       inlineData: { mimeType: "audio/wav", data },
     }));
-    const parts = [...inlineParts, { text: HOLISTIC_PROMPT.replace(/\bN\b/g, String(sorted.length)) }];
+    const parts = [
+      ...inlineParts,
+      { text: HOLISTIC_PROMPT.replaceAll("{{count}}", String(sorted.length)) },
+    ];
 
     logger.info(LOG_EVENTS.BATCHTAG_START, {
       model: BATCH_TAG_MODEL,
@@ -134,32 +145,35 @@ export async function autoTagBatch(
     });
     const startedAt = Date.now();
 
-    const response = await sdk.models.generateContent({
-      model: BATCH_TAG_MODEL,
-      contents: [{ role: "user", parts }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              index: { type: Type.INTEGER },
-              tag: {
-                type: Type.STRING,
-                enum: [...TAGS],
+    const response = await runWithSignal(
+      sdk.models.generateContent({
+        model: BATCH_TAG_MODEL,
+        contents: [{ role: "user", parts }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                index: { type: Type.INTEGER },
+                tag: {
+                  type: Type.STRING,
+                  enum: [...TAGS],
+                },
+                confidence: { type: Type.NUMBER },
+                reasoning: { type: Type.STRING },
               },
-              confidence: { type: Type.NUMBER },
-              reasoning: { type: Type.STRING },
+              required: ["index", "tag", "confidence"],
             },
-            required: ["index", "tag", "confidence"],
+            minItems: sorted.length,
+            maxItems: sorted.length,
           },
-          minItems: sorted.length,
-          maxItems: sorted.length,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         },
-        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-      },
-    });
+      }),
+      signal,
+    );
 
     const latencyMs = Date.now() - startedAt;
     const text = response.text;
@@ -197,6 +211,7 @@ export async function autoTagBatch(
     });
     return out;
   } catch (err) {
+    if (isAbortError(err)) return null;
     logger.error(LOG_EVENTS.BATCHTAG_ERROR, { model: BATCH_TAG_MODEL, message: errMessage(err) });
     return null;
   }

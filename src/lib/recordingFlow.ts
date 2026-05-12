@@ -8,6 +8,7 @@ import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
 import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
 import { sliceAudioBuffer } from "./audioBufferSlice";
+import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
 import type { Clip, Tag } from "../types";
 
@@ -44,10 +45,6 @@ export function cancelCurrentRecording(): void {
 
 export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }
 
 function waitMs(ms: number, signal: AbortSignal): Promise<void> {

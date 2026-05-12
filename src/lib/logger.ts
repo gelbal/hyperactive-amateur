@@ -22,6 +22,7 @@ export const LOG_EVENTS = {
   RETAG_FALLBACK: "retag.fallback",
   RETAG_BELOW_THRESHOLD: "retag.below-threshold",
   RETAG_MISS: "retag.miss",
+  RETAG_CANCELLED: "retag.cancelled",
   SUGGEST_ERROR: "suggest.error",
   SUGGEST_MISS: "suggest.miss",
   SUGGEST_RETRY: "suggest.retry",

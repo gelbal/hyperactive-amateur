@@ -6,21 +6,29 @@ import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD, type AutoTagResult } from "./ai
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { logger, LOG_EVENTS } from "./logger";
 import { applyClassifiedTag } from "./applyClassifiedTag";
+import type { Tag } from "../types";
 
 export interface RetagResult {
   ok: boolean;
   tagged: number;
-  reason?: "no-clips" | "all-failed";
+  reason?: "no-clips" | "all-failed" | "cancelled";
 }
 
 export interface RetagDeps {
-  batch: (items: { trackId: number; audioBuffer: AudioBuffer }[]) => Promise<BatchAutoTagItem[] | null>;
-  single: (audioBuffer: AudioBuffer, trackId: number) => Promise<AutoTagResult | null>;
+  batch: (
+    items: { trackId: number; audioBuffer: AudioBuffer }[],
+    signal?: AbortSignal,
+  ) => Promise<BatchAutoTagItem[] | null>;
+  single: (
+    audioBuffer: AudioBuffer,
+    trackId: number,
+    signal?: AbortSignal,
+  ) => Promise<AutoTagResult | null>;
 }
 
 const defaultDeps: RetagDeps = {
-  batch: (items) => autoTagBatch(items),
-  single: (buf) => autoTag(buf),
+  batch: (items, signal) => autoTagBatch(items, undefined, signal),
+  single: (buf, _trackId, signal) => autoTag(buf, undefined, signal),
 };
 
 interface PopulatedTrack {
@@ -44,7 +52,49 @@ function populatedTracks(): PopulatedTrack[] {
     }));
 }
 
-export async function retagAllClipsWith(deps: RetagDeps): Promise<RetagResult> {
+function cancelled(total: number): RetagResult {
+  logger.warn(LOG_EVENTS.RETAG_CANCELLED, { total });
+  return { ok: false, tagged: 0, reason: "cancelled" };
+}
+
+interface Classification {
+  trackId: number;
+  tag: Tag;
+  confidence: number;
+  reasoning?: string;
+}
+
+function applyAcceptedTags(items: Classification[]): number {
+  let tagged = 0;
+  for (const item of items) {
+    if (item.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
+      logger.warn(LOG_EVENTS.RETAG_BELOW_THRESHOLD, {
+        trackId: item.trackId,
+        tag: item.tag,
+        confidence: item.confidence,
+        threshold: AUTO_TAG_CONFIDENCE_THRESHOLD,
+      });
+      continue;
+    }
+    const { applied } = applyClassifiedTag(item.trackId, item.tag, item.reasoning);
+    if (applied) tagged++;
+  }
+  return tagged;
+}
+
+function completion(mode: "batch" | "per-clip", tagged: number, total: number): RetagResult {
+  if (tagged === 0) {
+    logger.warn(LOG_EVENTS.RETAG_COMPLETE, { mode, tagged: 0, total });
+    return { ok: false, tagged: 0, reason: "all-failed" };
+  }
+  logger.info(LOG_EVENTS.RETAG_COMPLETE, { mode, tagged, total });
+  return { ok: true, tagged };
+}
+
+export async function retagAllClipsWith(
+  deps: RetagDeps,
+  signal?: AbortSignal,
+): Promise<RetagResult> {
   const tracks = populatedTracks();
   if (tracks.length === 0) {
     logger.warn(LOG_EVENTS.RETAG_MISS, { reason: "no-clips" });
@@ -52,61 +102,29 @@ export async function retagAllClipsWith(deps: RetagDeps): Promise<RetagResult> {
   }
 
   logger.info(LOG_EVENTS.RETAG_START, { count: tracks.length });
+  if (signal?.aborted) return cancelled(tracks.length);
 
-  const batchResult = await deps.batch(tracks);
+  const batchResult = await deps.batch(tracks, signal);
+  if (signal?.aborted) return cancelled(tracks.length);
   if (batchResult) {
-    let tagged = 0;
-    for (const item of batchResult) {
-      if (item.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
-        logger.warn(LOG_EVENTS.RETAG_BELOW_THRESHOLD, {
-          trackId: item.trackId,
-          tag: item.tag,
-          confidence: item.confidence,
-          threshold: AUTO_TAG_CONFIDENCE_THRESHOLD,
-        });
-        continue;
-      }
-      const { applied } = applyClassifiedTag(item.trackId, item.tag, item.reasoning);
-      if (applied) tagged++;
-    }
-    if (tagged === 0) {
-      logger.warn(LOG_EVENTS.RETAG_COMPLETE, { mode: "batch", tagged: 0, total: tracks.length });
-      return { ok: false, tagged: 0, reason: "all-failed" };
-    }
-    logger.info(LOG_EVENTS.RETAG_COMPLETE, { mode: "batch", tagged, total: tracks.length });
-    return { ok: true, tagged };
+    return completion("batch", applyAcceptedTags(batchResult), tracks.length);
   }
 
   logger.warn(LOG_EVENTS.RETAG_FALLBACK, { mode: "per-clip", count: tracks.length });
   const perClipResults = await Promise.all(
     tracks.map(async (t) => ({
       trackId: t.trackId,
-      result: await deps.single(t.audioBuffer, t.trackId),
+      result: await deps.single(t.audioBuffer, t.trackId, signal),
     })),
   );
-  let tagged = 0;
+  if (signal?.aborted) return cancelled(tracks.length);
+  const accepted: Classification[] = [];
   for (const { trackId, result } of perClipResults) {
-    if (!result) continue;
-    if (result.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
-      logger.warn(LOG_EVENTS.RETAG_BELOW_THRESHOLD, {
-        trackId,
-        tag: result.tag,
-        confidence: result.confidence,
-        threshold: AUTO_TAG_CONFIDENCE_THRESHOLD,
-      });
-      continue;
-    }
-    const { applied } = applyClassifiedTag(trackId, result.tag, result.reasoning);
-    if (applied) tagged++;
+    if (result) accepted.push({ trackId, ...result });
   }
-  if (tagged === 0) {
-    logger.warn(LOG_EVENTS.RETAG_COMPLETE, { mode: "per-clip", tagged: 0, total: tracks.length });
-    return { ok: false, tagged: 0, reason: "all-failed" };
-  }
-  logger.info(LOG_EVENTS.RETAG_COMPLETE, { mode: "per-clip", tagged, total: tracks.length });
-  return { ok: true, tagged };
+  return completion("per-clip", applyAcceptedTags(accepted), tracks.length);
 }
 
-export function retagAllClips(): Promise<RetagResult> {
-  return retagAllClipsWith(defaultDeps);
+export function retagAllClips(signal?: AbortSignal): Promise<RetagResult> {
+  return retagAllClipsWith(defaultDeps, signal);
 }

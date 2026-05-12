@@ -1,10 +1,16 @@
-// ABOUTME: aiAutoTag — classify a recorded clip via Gemini 3.1 Flash Lite with thinkingLevel HIGH.
-// ABOUTME: Returns null on any failure (network, schema, missing key) so callers can fail open; observability via logger.
+// ABOUTME: aiAutoTag — classify a single recorded clip via Gemini 3.1 Flash Lite (default thinking level — batch path uses HIGH).
+// ABOUTME: Returns null on any failure (network, schema, missing key, abort) so callers can fail open; observability via logger.
 import { GoogleGenAI, Type } from "@google/genai";
 import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
-import { blobToBase64, errMessage, TAG_DEFINITIONS_BLOCK } from "./aiClient";
+import {
+  blobToBase64,
+  errMessage,
+  isAbortError,
+  runWithSignal,
+  TAG_DEFINITIONS_BLOCK,
+} from "./aiClient";
 
 export const AUTO_TAG_MODEL = "gemini-3.1-flash-lite";
 
@@ -54,9 +60,13 @@ export async function autoTag(
   audioBuffer: AudioBuffer,
   // Test seam — bypasses SDK construction so unit tests don't need a key.
   client?: GeminiClient,
+  // Optional cancellation. The Gemini SDK ignores signals, so we race
+  // the call instead — see runWithSignal in aiClient.ts.
+  signal?: AbortSignal,
 ): Promise<AutoTagResult | null> {
   const audioMs = Math.round(audioBuffer.duration * 1000);
   try {
+    if (signal?.aborted) return null;
     const apiKey = client ? "test-key" : readGeminiApiKey();
     if (!client && !apiKey) {
       logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "no-key", model: AUTO_TAG_MODEL });
@@ -73,37 +83,40 @@ export async function autoTag(
     logger.info(LOG_EVENTS.AUTOTAG_START, { model: AUTO_TAG_MODEL, audioMs });
     const startedAt = Date.now();
 
-    const response = await sdk.models.generateContent({
-      model: AUTO_TAG_MODEL,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: "audio/wav", data: base64 } },
-            { text: CLASSIFICATION_PROMPT },
-          ],
-        },
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            tag: {
-              type: Type.STRING,
-              enum: [...TAGS],
-            },
-            confidence: { type: Type.NUMBER },
-            reasoning: { type: Type.STRING },
+    const response = await runWithSignal(
+      sdk.models.generateContent({
+        model: AUTO_TAG_MODEL,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { mimeType: "audio/wav", data: base64 } },
+              { text: CLASSIFICATION_PROMPT },
+            ],
           },
-          required: ["tag", "confidence"],
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              tag: {
+                type: Type.STRING,
+                enum: [...TAGS],
+              },
+              confidence: { type: Type.NUMBER },
+              reasoning: { type: Type.STRING },
+            },
+            required: ["tag", "confidence"],
+          },
+          // Per-clip classification is a 5-way choice over one short sample —
+          // the model doesn't need extended thinking for that. The holistic
+          // batch path keeps ThinkingLevel.HIGH because it balances roles
+          // across the whole kit at once.
         },
-        // Per-clip classification is a 5-way choice over one short sample —
-        // the model doesn't need extended thinking for that. The holistic
-        // batch path keeps ThinkingLevel.HIGH because it balances roles
-        // across the whole kit at once.
-      },
-    });
+      }),
+      signal,
+    );
 
     const latencyMs = Date.now() - startedAt;
     const text = response.text;
@@ -132,6 +145,7 @@ export async function autoTag(
     });
     return validated;
   } catch (err) {
+    if (isAbortError(err)) return null;
     logger.error(LOG_EVENTS.AUTOTAG_ERROR, { model: AUTO_TAG_MODEL, message: errMessage(err) });
     return null;
   }

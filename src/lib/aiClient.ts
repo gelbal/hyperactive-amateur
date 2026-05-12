@@ -18,6 +18,37 @@ export function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+export function abortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
+// Race a promise against an AbortSignal. The Gemini SDK doesn't accept
+// signals natively, so this is "soft cancel": the in-flight HTTP request
+// may complete, but its resolved value is discarded as soon as the signal
+// fires. The try/finally guarantees the abort listener is removed even
+// if the racer rejects with our own abort error.
+export async function runWithSignal<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw abortError();
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort);
+  });
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 // Single source of truth for the tag-definitions text used in both the
 // per-clip and holistic classification prompts. Keeping these aligned avoids
 // silent drift between the two paths.

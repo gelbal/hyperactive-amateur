@@ -179,4 +179,21 @@ describe("retagAllClipsWith", () => {
     expect(reasoning[0]).toBe("short low thump");
     expect(reasoning[1]).toBe("bright tick");
   });
+
+  it("aborts cleanly mid-flight: returns cancelled and does not write tags", async () => {
+    seedTracks([0, 1]);
+    const controller = new AbortController();
+    // Simulate autoTagBatch's "aborted → returns null" contract — the
+    // orchestration must see signal.aborted afterwards and bail.
+    const deps: RetagDeps = {
+      batch: vi.fn(async () => {
+        controller.abort();
+        return null;
+      }),
+      single: vi.fn(async () => null),
+    };
+    const result = await retagAllClipsWith(deps, controller.signal);
+    expect(result.reason).toBe("cancelled");
+    for (const t of useAppStore.getState().project.tracks) expect(t.tag).toBeNull();
+  });
 });
