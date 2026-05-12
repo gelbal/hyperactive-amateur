@@ -31,8 +31,30 @@ key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 GEMINI_API_KEY=AIza...
 ```
 
+The key stays server-side — a tiny Vite middleware in dev (and a Vercel
+function in production) reads it from `process.env` and proxies calls
+through `/api/gemini`. It never reaches the client bundle.
+
 Without a key the rest of the app works fine; AI features just go
 quiet.
+
+## Deploying
+
+The app is a static Vite build plus one serverless function. Vercel is
+the path of least resistance:
+
+1. Push your fork to GitHub and import the repo at vercel.com → "Add New
+   Project". Vercel auto-detects Vite — accept the defaults.
+2. In Project Settings → Environment Variables, add `GEMINI_API_KEY` for
+   both **Production** and **Preview** environments. Optionally add
+   `ALLOWED_ORIGINS` (comma-separated hostnames) once you wire up a
+   custom domain.
+3. Set a daily quota cap on the same Gemini key at
+   [aistudio.google.com](https://aistudio.google.com) — even with the
+   `Origin` allowlist on `/api/gemini`, this is your real backstop
+   against quota abuse.
+4. Push to any branch → Vercel publishes a preview URL. Merge to `main`
+   → production URL.
 
 ## Recording for best results
 

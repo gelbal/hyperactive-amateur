@@ -34,14 +34,12 @@ describe("validateAutoTag", () => {
 
 describe("autoTag", () => {
   beforeEach(() => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
     clearLogs();
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     clearLogs();
   });
@@ -67,7 +65,7 @@ describe("autoTag", () => {
     expect(captured.config?.thinkingConfig).toBeUndefined();
   });
 
-  it("fails open across every error branch: SDK throw, malformed JSON, missing key", async () => {
+  it("fails open across error branches: SDK throw, malformed JSON, MissingApiKeyError from transport", async () => {
     // 1. SDK throw → autotag.error.
     expect(
       await autoTag(
@@ -87,9 +85,16 @@ describe("autoTag", () => {
     expect(getLogs().some((l) => l.event === "autotag.miss")).toBe(true);
 
     clearLogs();
-    // 3. Missing key with no test client → autotag.miss with reason no-key.
-    vi.stubEnv("GEMINI_API_KEY", "");
-    expect(await autoTag(fakeBuffer())).toBeNull();
+    // 3. Transport surfaces MissingApiKeyError → autotag.miss with reason no-key.
+    const { MissingApiKeyError } = await import("./aiErrors");
+    expect(
+      await autoTag(
+        fakeBuffer(),
+        makeClient(async () => {
+          throw new MissingApiKeyError();
+        }),
+      ),
+    ).toBeNull();
     const noKey = getLogs().find((l) => l.event === "autotag.miss");
     expect((noKey?.payload as { reason?: string })?.reason).toBe("no-key");
   });
