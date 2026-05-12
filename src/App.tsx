@@ -52,11 +52,33 @@ export function App() {
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
         <div className="flex items-end justify-between gap-10 px-6 py-4">
-          <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
-            Hyperactive
-            <br />
-            Amateur
-          </h1>
+          <div>
+            <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
+              Hyperactive
+              <br />
+              Amateur
+            </h1>
+            <p className="mt-1 text-xs text-zinc-500">
+              <a
+                href="https://fgelbal.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-zinc-300 transition-colors"
+              >
+                Fırat Gelbal
+              </a>
+              <span aria-hidden> · </span>
+              <a
+                href="https://github.com/gelbal/hyperactive-amateur"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View source on GitHub"
+                className="hover:text-zinc-300 transition-colors"
+              >
+                source
+              </a>
+            </p>
+          </div>
           <div className="flex flex-col items-end gap-3">
             <div className="flex items-center gap-4">
               <PlayButton />
