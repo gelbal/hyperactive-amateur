@@ -12,20 +12,12 @@ const LABELS: Record<Vibe, string> = {
   breaky: "Breaky",
 };
 
-const HINT: Record<Vibe, string> = {
-  tight: "Dense, repetitive — classic.",
-  varied: "More space, fewer tracks per loop.",
-  breaky: "Drops the last quarter for a rest.",
-};
-
 export function FlowSelector() {
   const value = useAppStore((s) => s.project.vibe);
   return (
     <label className="flex items-center gap-2 text-sm text-zinc-300">
       <span>Flow</span>
       <select
-        aria-label="Flow"
-        title={HINT[value]}
         value={value}
         onChange={(e) =>
           useAppStore.getState().actions.setVibe(e.target.value as Vibe)

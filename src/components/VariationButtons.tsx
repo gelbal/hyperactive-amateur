@@ -1,4 +1,4 @@
-// ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip mutations of the current pattern.
+// ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip / Break mutations of the current pattern.
 // ABOUTME: Each click snapshots the current grid and offers an Undo toast on success.
 import { useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
@@ -19,7 +19,15 @@ const BUTTONS: ButtonSpec[] = [
   { variation: "break", label: "Break" },
 ];
 
-export function VariationButtons() {
+interface VariationButtonsProps {
+  // Called with the busy state of any in-flight variation call. Lets a
+  // containing popover stay open while we're awaiting Gemini — otherwise a
+  // click-outside or Escape would unmount us mid-call and the Undo toast,
+  // which renders inside this component, would never appear.
+  onBusyChange?: (busy: boolean) => void;
+}
+
+export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   const tracks = useAppStore((s) => s.project.tracks);
   const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
@@ -41,6 +49,10 @@ export function VariationButtons() {
     const id = window.setTimeout(() => setUndoSnapshot(null), TOAST_MS);
     return () => window.clearTimeout(id);
   }, [undoSnapshot]);
+
+  useEffect(() => {
+    onBusyChange?.(pending !== null);
+  }, [pending, onBusyChange]);
 
   const handleClick = async (variation: Variation) => {
     setError(null);

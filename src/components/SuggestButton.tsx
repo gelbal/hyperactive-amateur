@@ -7,7 +7,7 @@ import { AI_UNLOCK_CLIPS, suggestPattern, SUBGENRES } from "../lib/aiSuggest";
 import type { Subgenre } from "../types";
 
 const TOAST_MS = 5000;
-const PENDING_VERB_ROTATE_MS = 3000;
+const PENDING_VERB_ROTATE_MS = 7000;
 const PENDING_VERBS = [
   "Vibing",
   "Cooking",

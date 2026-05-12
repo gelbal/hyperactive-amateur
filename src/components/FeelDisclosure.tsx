@@ -27,9 +27,13 @@ export function FeelDisclosure() {
   const clipsCount = useAppStore(selectClipCount);
   const [open, setOpen] = useState(false);
   const [retagBusy, setRetagBusy] = useState(false);
+  const [variationBusy, setVariationBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
-  usePopoverDismiss(rootRef, open, close, { whileBusy: retagBusy });
+  // Pin the popover open while either AI call is in flight — otherwise a
+  // click-outside or Escape would unmount the busy child and swallow its
+  // Undo / result toast.
+  usePopoverDismiss(rootRef, open, close, { whileBusy: retagBusy || variationBusy });
 
   const summary = `${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
 
@@ -64,7 +68,7 @@ export function FeelDisclosure() {
           {clipsCount >= AI_UNLOCK_CLIPS && (
             <div className="border-t border-zinc-800 pt-3 flex flex-col gap-2">
               <span className="text-sm text-zinc-300">Variations</span>
-              <VariationButtons />
+              <VariationButtons onBusyChange={setVariationBusy} />
             </div>
           )}
           <div className="border-t border-zinc-800 pt-3">
