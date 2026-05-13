@@ -5,7 +5,7 @@ videos. Record eight short clips of yourself making sounds, drop them
 on a 16-step grid, hit play, and watch a hip-hop video of you
 "performing" the song play back in real time. Export to WebM.
 
-Live at [hyperactive-amateur.com](https://hyperactive-amateur.com).
+Live at [hyperactive-amateur.fgelbal.com](https://hyperactive-amateur.fgelbal.com/).
 
 ## Quick start
 
