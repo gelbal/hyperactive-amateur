@@ -1,6 +1,6 @@
 // ABOUTME: BpmDial — circular knob for tempo, snaps to discrete stops in the hip-hop range.
 // ABOUTME: Scroll wheel or vertical drag changes the value; arrow keys adjust by one stop.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 
 const STOPS = [70, 80, 90, 100, 110, 120, 130, 140, 150, 160] as const;
@@ -46,27 +46,6 @@ export function BpmDial() {
 
   const setBpm = (next: number) => useAppStore.getState().actions.setBpm(next);
 
-  // Document-level mousemove / mouseup so a drag survives leaving the SVG bounds.
-  useEffect(() => {
-    if (!dragging) return;
-    const onMove = (event: MouseEvent) => {
-      if (!dragRef.current) return;
-      const dy = dragRef.current.startY - event.clientY;
-      const stepDelta = Math.round(dy / DRAG_PIXELS_PER_STOP);
-      setBpm(stepBy(dragRef.current.startBpm, stepDelta));
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      setDragging(false);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-  }, [dragging]);
-
   const angleDeg = angleFor(bpm);
   const angleRad = (angleDeg * Math.PI) / 180;
   const notchX1 = CENTER + NOTCH_INNER * Math.sin(angleRad);
@@ -99,10 +78,30 @@ export function BpmDial() {
           event.preventDefault();
           setBpm(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
         }}
-        onMouseDown={(event) => {
+        onPointerDown={(event) => {
           event.preventDefault();
+          (event.currentTarget as HTMLButtonElement).setPointerCapture(
+            event.pointerId,
+          );
           dragRef.current = { startY: event.clientY, startBpm: bpm };
           setDragging(true);
+        }}
+        onPointerMove={(event) => {
+          if (!dragRef.current) return;
+          const dy = dragRef.current.startY - event.clientY;
+          const stepDelta = Math.round(dy / DRAG_PIXELS_PER_STOP);
+          setBpm(stepBy(dragRef.current.startBpm, stepDelta));
+        }}
+        onPointerUp={(event) => {
+          (event.currentTarget as HTMLButtonElement).releasePointerCapture(
+            event.pointerId,
+          );
+          dragRef.current = null;
+          setDragging(false);
+        }}
+        onPointerCancel={() => {
+          dragRef.current = null;
+          setDragging(false);
         }}
         onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowRight") {
@@ -118,7 +117,7 @@ export function BpmDial() {
           "relative shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-colors " +
           (dragging ? "cursor-grabbing" : "cursor-ns-resize")
         }
-        style={{ width: SIZE, height: SIZE }}
+        style={{ width: SIZE, height: SIZE, touchAction: "none" }}
       >
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden>
           <circle

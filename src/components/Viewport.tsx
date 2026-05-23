@@ -11,7 +11,6 @@ import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
 
-const SIZE = 480;
 const TRACK_COUNT = 8;
 
 export function Viewport() {
@@ -24,7 +23,7 @@ export function Viewport() {
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
-  const { isFullscreen, enter, exit } = useFullscreen();
+  const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
   // The overlays (gate, station, record-prompt, countdown) stay visible in
   // fullscreen so the user can still record from presentation mode. Only the
@@ -38,14 +37,22 @@ export function Viewport() {
   // station, which in turn reveals the gate when media isn't granted yet.
   const showStation =
     mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+  // "suspended" is "was granted, currently disconnected" — the gate must NOT
+  // appear (the user already approved permission); the reconnect pill takes
+  // its place.
   const showGate =
-    mediaStatus !== "granted" && emptyTrackCount > 0 && !stationDismissed;
+    (mediaStatus === "idle" ||
+      mediaStatus === "requesting" ||
+      mediaStatus === "denied") &&
+    emptyTrackCount > 0 &&
+    !stationDismissed;
+  const showReconnectPill = mediaStatus === "suspended";
   const showRecordMore =
     !isFullscreen &&
     emptyTrackCount > 0 &&
     emptyTrackCount < TRACK_COUNT &&
     stationDismissed;
-  const showFullscreenToggle = mediaStatus === "granted" || hasClips;
+  const showFullscreenToggle = fullscreenSupported && (mediaStatus === "granted" || hasClips);
 
   useEffect(() => {
     initVideoEngine();
@@ -87,21 +94,20 @@ export function Viewport() {
     <div className="flex flex-col items-center gap-3">
       <div
         ref={frameRef}
-        className="ha-viewport-frame relative"
-        style={{ width: SIZE, height: SIZE }}
+        className="ha-viewport-frame relative aspect-square w-full max-w-[480px]"
       >
         <canvas
           ref={canvasRef}
-          width={SIZE}
-          height={SIZE}
+          width={480}
+          height={480}
           aria-label="hard-cut video viewport"
-          className="ha-canvas block bg-zinc-950 rounded shadow-lg"
-          style={{ width: SIZE, height: SIZE }}
+          className="ha-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
         {showGate && (
           <PermissionGate status={mediaStatus} error={mediaError} />
         )}
-        {showStation && <RecordingStation size={SIZE} />}
+        {showStation && <RecordingStation />}
+        {showReconnectPill && <ReconnectPill />}
         {mediaStatus === "granted" && !hasClips && stationDismissed && (
           <RecordPrompt />
         )}
@@ -111,13 +117,27 @@ export function Viewport() {
             type="button"
             aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             onClick={onToggleFullscreen}
-            className="absolute top-2 right-2 z-10 flex items-center justify-center w-8 h-8 rounded bg-zinc-950/60 text-zinc-200 hover:bg-zinc-950/90 hover:text-white transition-colors"
+            className="absolute top-2 right-2 z-10 flex items-center justify-center w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 rounded bg-zinc-950/60 text-zinc-200 hover:bg-zinc-950/90 hover:text-white transition-colors"
           >
             {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         )}
       </div>
       {showRecordMore && <RecordMoreButton />}
+    </div>
+  );
+}
+
+function ReconnectPill() {
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+      <button
+        type="button"
+        onClick={() => void useAppStore.getState().actions.resumeMedia()}
+        className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
+      >
+        Camera disconnected — tap to reconnect
+      </button>
     </div>
   );
 }

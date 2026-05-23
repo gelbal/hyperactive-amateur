@@ -10,6 +10,15 @@ import { installWindowHook } from "./lib/logger";
 // log buffer from devtools — no need to expose it on a public deploy.
 if (import.meta.env.DEV) installWindowHook();
 
+// Register the service worker in production builds only — a SW in dev would
+// cache Vite's HMR assets and break the dev loop. Registration failure is
+// non-fatal; the app still works online without the SW.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
+
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("#root element not found");
 

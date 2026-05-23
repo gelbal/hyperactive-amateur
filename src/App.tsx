@@ -19,6 +19,8 @@ import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
 import { startAutoSave, stopAutoSave } from "./lib/autoSave";
 import { tryAutoGrantMedia } from "./lib/media";
+import { installVisibilityListener } from "./lib/streamLifecycle";
+import { captureInstallPrompt, persistStorage } from "./lib/install";
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
@@ -28,6 +30,9 @@ export function App() {
 
   useEffect(() => {
     initTransport();
+    const detachInstallPrompt = captureInstallPrompt();
+    void persistStorage();
+    const detachVisibility = installVisibilityListener();
     let cancelled = false;
     rehydrateFromStorage()
       .catch(() => undefined)
@@ -41,6 +46,8 @@ export function App() {
     void tryAutoGrantMedia();
     return () => {
       cancelled = true;
+      detachInstallPrompt();
+      detachVisibility();
       stopAutoSave();
     };
   }, []);
@@ -51,9 +58,9 @@ export function App() {
     <div className="min-h-screen bg-zinc-950 text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
-        <div className="flex items-end justify-between gap-10 px-6 py-4">
+        <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:gap-10 sm:px-6 sm:py-4">
           <div>
-            <h1 className="text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
+            <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
               Hyperactive
               <br />
               Amateur
@@ -79,8 +86,8 @@ export function App() {
               </a>
             </p>
           </div>
-          <div className="flex flex-col items-end gap-3">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-col items-start sm:items-end gap-3 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-4">
               <PlayButton />
               <span className="text-[10px] text-zinc-500 -ml-2">space</span>
               <BpmDial />
@@ -92,7 +99,7 @@ export function App() {
               )}
             </div>
             {hasAnyClips && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <FeelDisclosure />
                 {hasAiUnlock && (
                   <>
@@ -106,7 +113,7 @@ export function App() {
           </div>
         </div>
       </header>
-      <main className="flex flex-col items-center gap-6 py-6">
+      <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
         ) : (

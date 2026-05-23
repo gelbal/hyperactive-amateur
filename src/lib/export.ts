@@ -3,8 +3,6 @@
 import * as Tone from "tone";
 
 const FRAMERATE = 30;
-const PREFERRED_MIME = "video/webm; codecs=vp9,opus";
-const FALLBACK_MIME = "video/webm";
 
 export interface ExportStream {
   stream: MediaStream;
@@ -41,15 +39,13 @@ export function buildExportStream(
   return { stream, cleanup };
 }
 
-function pickExportMime(): string {
-  if (typeof MediaRecorder === "undefined") return PREFERRED_MIME;
-  if (MediaRecorder.isTypeSupported(PREFERRED_MIME)) return PREFERRED_MIME;
-  return FALLBACK_MIME;
-}
-
 export interface ExportOptions {
   bars: number;
   bpm: number;
+  // Caller-chosen MediaRecorder MIME. Use `detectSupportedFormats()` to find
+  // a supported one; the export pipeline is codec-agnostic (canvas+audio go
+  // in as raw streams) so any supported MIME works.
+  mimeType: string;
   onProgress?: (fraction: number) => void;
 }
 
@@ -61,9 +57,8 @@ export async function exportSong(
   audioContext: AudioContext,
   options: ExportOptions,
 ): Promise<Blob> {
-  const { bars, bpm, onProgress } = options;
+  const { bars, bpm, mimeType, onProgress } = options;
   const durationMs = (bars * 4 * 60_000) / bpm;
-  const mimeType = pickExportMime();
 
   const { stream, cleanup } = buildExportStream(canvas, audioContext);
   const recorder = new MediaRecorder(stream, {
@@ -123,10 +118,10 @@ export function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function defaultExportFilename(): string {
+export function defaultExportFilename(extension = "webm"): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `hyperactive-amateur-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(
     d.getHours(),
-  )}${pad(d.getMinutes())}.webm`;
+  )}${pad(d.getMinutes())}.${extension}`;
 }

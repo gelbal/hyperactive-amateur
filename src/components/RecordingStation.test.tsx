@@ -33,7 +33,7 @@ describe("RecordingStation", () => {
     const actions = useAppStore.getState().actions;
     actions.setTrackClip(0, makeClip());
     actions.setTrackClip(1, makeClip());
-    render(<RecordingStation size={480} />);
+    render(<RecordingStation />);
     expect(screen.getByText("Recording for Track 3")).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Skip this track"));
@@ -49,7 +49,7 @@ describe("RecordingStation", () => {
     // Once every track has a clip, the station renders nothing.
     for (let i = 0; i < 8; i++) actions.setTrackClip(i, makeClip());
     actions.reopenRecordingStation();
-    const { container } = render(<RecordingStation size={480} />);
+    const { container } = render(<RecordingStation />);
     expect(container.firstChild).toBeNull();
   });
 });

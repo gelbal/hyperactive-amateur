@@ -28,6 +28,9 @@ function StepCell({ trackId, stepIndex, onHover }: StepCellProps) {
   else className += "bg-zinc-800 hover:bg-zinc-600";
   if (isCurrent) className += " ring-2 ring-orange-300";
 
+  // Tailwind's important-modifier (!) on the coarse-pointer override forces it
+  // to win against the inline width/height set for fine-pointer (mouse) layouts.
+  const sizeClass = " pointer-coarse:!w-11 pointer-coarse:!h-11";
   return (
     <button
       type="button"
@@ -39,7 +42,7 @@ function StepCell({ trackId, stepIndex, onHover }: StepCellProps) {
       onMouseEnter={() => onHover(stepIndex)}
       onMouseLeave={() => onHover(null)}
       style={{ width: STEP_WIDTH, height: 40 }}
-      className={className}
+      className={className + sizeClass}
     />
   );
 }
@@ -66,10 +69,10 @@ function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderPr
         disabled={!canRemove}
         onClick={() => useAppStore.getState().actions.removeStepColumn(stepIndex)}
         className={
-          "w-5 h-5 rounded-full flex items-center justify-center transition-opacity " +
+          "w-5 h-5 pointer-coarse:w-8 pointer-coarse:h-8 rounded-full flex items-center justify-center transition-opacity bg-red-500/80 hover:bg-red-500 text-white " +
           (showMinus
-            ? "opacity-100 bg-red-500/80 hover:bg-red-500 text-white"
-            : "opacity-0 pointer-events-none")
+            ? "opacity-100"
+            : "opacity-0 pointer-events-none any-pointer-coarse:opacity-40 any-pointer-coarse:pointer-events-auto")
         }
       >
         <Minus size={12} />
@@ -103,7 +106,7 @@ export function StepGrid() {
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
 
   return (
-    <div className="px-6 py-4 flex gap-3">
+    <div className="px-3 sm:px-6 py-4 flex gap-3">
       {/* Left fixed panel: 8 TrackInfo rows */}
       <div className="shrink-0 flex flex-col gap-1">
         <div className="h-6" aria-hidden />
@@ -112,7 +115,7 @@ export function StepGrid() {
         ))}
       </div>
       {/* Right scrollable: column header (-) buttons + 8 cell rows + trailing + button */}
-      <div className="flex-1 overflow-x-auto">
+      <div className="flex-1 min-w-0 overflow-x-auto">
         <div className="inline-flex flex-col gap-1">
           <div className="flex items-center" style={{ gap: STEP_GAP }}>
             {Array.from({ length: stepCount }, (_, j) => (

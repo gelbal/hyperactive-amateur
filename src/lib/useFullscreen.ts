@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 export interface UseFullscreenResult {
   isFullscreen: boolean;
+  isSupported: boolean;
   enter: (element: Element) => Promise<void>;
   exit: () => Promise<void>;
 }
@@ -12,6 +13,11 @@ export function useFullscreen(): UseFullscreenResult {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(
     () => typeof document !== "undefined" && Boolean(document.fullscreenElement),
   );
+  // iOS Safari doesn't implement requestFullscreen on arbitrary elements
+  // (only on <video>). Feature-detect so the toggle can hide itself.
+  const isSupported =
+    typeof document !== "undefined" &&
+    typeof document.documentElement.requestFullscreen === "function";
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -38,5 +44,5 @@ export function useFullscreen(): UseFullscreenResult {
     }
   }, []);
 
-  return { isFullscreen, enter, exit };
+  return { isFullscreen, isSupported, enter, exit };
 }

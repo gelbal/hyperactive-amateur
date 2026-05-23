@@ -2,6 +2,7 @@
 // ABOUTME: Mocks MediaRecorder via a tiny fake that fires events on a timer.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { recordClip } from "./recorder";
+import * as streamLifecycle from "./streamLifecycle";
 
 class FakeMediaRecorder {
   static isTypeSupported = vi.fn(() => true);
@@ -67,6 +68,27 @@ describe("recordClip", () => {
     await expect(recordClip(stream, 20, ctx)).rejects.toThrow(
       /Failed to decode recorded audio.*boom/,
     );
+  });
+
+  it("on MediaRecorder.onerror, recordClip rejects AND notifies streamLifecycle.onMediaRecorderError with the stream", async () => {
+    const spy = vi.spyOn(streamLifecycle, "onMediaRecorderError").mockImplementation(() => undefined);
+    // Use a custom fake that fires onerror instead of stopping cleanly.
+    class ErrorFake extends FakeMediaRecorder {
+      start() {
+        this.state = "recording";
+        queueMicrotask(() => {
+          const event = new Event("error") as Event & { error: Error };
+          event.error = new Error("encoder died");
+          this.onerror?.(event);
+        });
+      }
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = ErrorFake;
+    const ctx = makeAudioContext(async () => fakeAudioBuffer);
+    const stream = {} as MediaStream;
+    await expect(recordClip(stream, 1000, ctx)).rejects.toThrow(/encoder died/);
+    expect(spy).toHaveBeenCalledWith(stream, expect.any(Error));
+    spy.mockRestore();
   });
 
   it("aborting the signal mid-record stops the recorder and rejects with AbortError (regression for Esc cancel)", async () => {
