@@ -1,5 +1,8 @@
 /// <reference types="vitest" />
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
@@ -72,12 +75,41 @@ async function writeWebResponseToNodeResponse(
   nodeRes.end();
 }
 
+// Substitute %BUILD_HASH% in dist/sw.js with a per-deploy token so the SW
+// invalidates its caches when the bundle changes. Without this, a deployed
+// SW serves stale assets and users see a "broken in a way you can't explain"
+// state after a release.
+//
+// The hash input is dist/index.html, which Vite has already rewritten to
+// embed the content-hashed JS/CSS asset filenames. Any code change → new
+// asset name → new index.html → new SW cache key. Hashing sw.js itself
+// would NOT work because that file is constant ("ha-shell-%BUILD_HASH%").
+function swBuildHash(): Plugin {
+  return {
+    name: "ha-sw-build-hash",
+    apply: "build",
+    writeBundle(options) {
+      const outDir = options.dir ?? resolvePath(process.cwd(), "dist");
+      const swPath = resolvePath(outDir, "sw.js");
+      const indexPath = resolvePath(outDir, "index.html");
+      if (!existsSync(swPath) || !existsSync(indexPath)) return;
+      const indexText = readFileSync(indexPath, "utf8");
+      const hash = createHash("sha256")
+        .update(indexText)
+        .digest("hex")
+        .slice(0, 8);
+      const swText = readFileSync(swPath, "utf8");
+      writeFileSync(swPath, swText.replace(/%BUILD_HASH%/g, hash));
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   // Loads .env.local (and friends) so GEMINI_API_KEY is available to the
   // dev middleware without being exposed to the client bundle.
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), geminiDevProxy(env)],
+    plugins: [react(), geminiDevProxy(env), swBuildHash()],
     // GEMINI_API_KEY is intentionally NOT in envPrefix: the key only ever
     // lives in process.env on the dev/proxy server, not in import.meta.env.
     test: {

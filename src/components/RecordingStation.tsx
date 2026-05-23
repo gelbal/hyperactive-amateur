@@ -1,7 +1,7 @@
 // ABOUTME: RecordingStation — in-viewport sequential walkthrough for filling track clips one by one.
 // ABOUTME: Holds a live preview stream while mounted and reuses it for each capture; exposes a Sources picker for camera/mic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, SkipForward, Check, Settings2 } from "lucide-react";
+import { Circle, SkipForward, Check, Settings2, SwitchCamera } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordIntoTrack } from "../lib/recordingFlow";
 import {
@@ -10,19 +10,17 @@ import {
   releasePreviewStream,
   type InputDeviceList,
 } from "../lib/media";
+import { isStandalone, triggerInstall, useCanInstall } from "../lib/install";
 
 const TRACK_COUNT = 8;
 const EMPTY_DEVICES: InputDeviceList = { videoInputs: [], audioInputs: [] };
 
-interface Props {
-  size: number;
-}
-
-export function RecordingStation({ size }: Props) {
+export function RecordingStation() {
   const recordingState = useAppStore((s) => s.recording.state);
   const tracks = useAppStore((s) => s.project.tracks);
   const videoDeviceId = useAppStore((s) => s.media.videoDeviceId);
   const audioDeviceId = useAppStore((s) => s.media.audioDeviceId);
+  const videoFacingMode = useAppStore((s) => s.media.videoFacingMode);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const previewStreamRef = useRef<MediaStream | null>(null);
 
@@ -75,7 +73,7 @@ export function RecordingStation({ size }: Props) {
       previewStreamRef.current = null;
       setPreviewStream(null);
     };
-  }, [videoDeviceId, audioDeviceId, refreshDevices]);
+  }, [videoDeviceId, audioDeviceId, videoFacingMode, refreshDevices]);
 
   useEffect(() => {
     if (videoRef.current && previewStream) {
@@ -124,7 +122,6 @@ export function RecordingStation({ size }: Props) {
   return (
     <div
       className="absolute inset-0 rounded overflow-hidden"
-      style={{ width: size, height: size }}
       aria-label="recording station"
       role="region"
     >
@@ -149,17 +146,31 @@ export function RecordingStation({ size }: Props) {
         Recording for Track {target + 1}
       </div>
       <div className="absolute top-3 left-3">
-        <button
-          type="button"
-          aria-label="Choose camera and microphone"
-          aria-expanded={showSources}
-          onClick={() => setShowSources((v) => !v)}
-          disabled={isBusy}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950/70 border border-zinc-800 text-[11px] uppercase tracking-wide text-zinc-300 hover:bg-zinc-900/90 disabled:opacity-50"
-        >
-          <Settings2 size={12} />
-          Sources
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Choose camera and microphone"
+            aria-expanded={showSources}
+            onClick={() => setShowSources((v) => !v)}
+            disabled={isBusy}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950/70 border border-zinc-800 text-[11px] uppercase tracking-wide text-zinc-300 hover:bg-zinc-900/90 disabled:opacity-50"
+          >
+            <Settings2 size={12} />
+            Sources
+          </button>
+          {/* Front/rear flip — only shows on touch devices; deviceId selection
+            in the Sources panel always wins (see media.ts buildConstraints). */}
+          <button
+            type="button"
+            aria-label="Switch camera"
+            onClick={() => useAppStore.getState().actions.toggleVideoFacingMode()}
+            disabled={isBusy}
+            className="hidden any-pointer-coarse:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950/70 border border-zinc-800 text-[11px] uppercase tracking-wide text-zinc-300 hover:bg-zinc-900/90 disabled:opacity-50"
+          >
+            <SwitchCamera size={12} />
+            Flip
+          </button>
+        </div>
         {showSources && (
           <div
             role="dialog"
@@ -198,6 +209,7 @@ export function RecordingStation({ size }: Props) {
                 ))}
               </select>
             </label>
+            <InstallAffordance />
           </div>
         )}
       </div>
@@ -242,4 +254,37 @@ export function RecordingStation({ size }: Props) {
       </div>
     </div>
   );
+}
+
+// Chromium-on-Android (and desktop Chrome) fires beforeinstallprompt — show
+// the install button when the prompt is available. The hook subscribes to
+// install-state changes so the button appears even if the event fires AFTER
+// the Sources panel is open (Chrome's install-eligibility heuristics can take
+// several seconds). iOS Safari has no install prompt API at all, so we
+// surface a one-line hint pointing at Share → Add to Home Screen. The UA
+// sniff is for the hint surface only; it does not gate functionality.
+function InstallAffordance() {
+  const installable = useCanInstall();
+  if (installable) {
+    return (
+      <button
+        type="button"
+        onClick={() => void triggerInstall()}
+        className="mt-1 px-2 py-1.5 rounded bg-orange-500 text-zinc-950 text-[11px] font-medium uppercase tracking-wide hover:bg-orange-400"
+      >
+        Install app
+      </button>
+    );
+  }
+  const isIOS =
+    typeof navigator !== "undefined" &&
+    /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (isIOS && !isStandalone()) {
+    return (
+      <p className="mt-1 text-[10px] text-zinc-500 leading-snug">
+        Tap Share → Add to Home Screen to install.
+      </p>
+    );
+  }
+  return null;
 }

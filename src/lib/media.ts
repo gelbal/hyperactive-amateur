@@ -1,21 +1,35 @@
 // ABOUTME: media — permission state, on-demand stream acquisition, and input-device selection.
 // ABOUTME: Streams are held only while the RecordingStation is mounted (preview + record reuse the same stream); otherwise the camera light stays off.
 import { useAppStore } from "../store/useAppStore";
+import {
+  attachStreamEndedListeners,
+  type StreamLifecycleHandle,
+} from "./streamLifecycle";
 
 let inFlight: Promise<void> | null = null;
+
+// Map every active stream to its lifecycle handle so we can detach listeners
+// when the stream is intentionally released. WeakMap keeps this GC-safe.
+const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
 
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
 // OverconstrainedError on cameras that don't natively shoot 720x720.
 export function buildConstraints(): MediaStreamConstraints {
-  const { videoDeviceId, audioDeviceId } = useAppStore.getState().media;
+  const { videoDeviceId, audioDeviceId, videoFacingMode } = useAppStore.getState().media;
   const video: MediaTrackConstraints = {
     width: { ideal: 720 },
     height: { ideal: 720 },
     aspectRatio: { ideal: 1 },
-    facingMode: "user",
   };
-  if (videoDeviceId) video.deviceId = { exact: videoDeviceId };
+  // deviceId wins over facingMode: when the user picks a specific camera in
+  // the Sources picker we must honor that exact device, otherwise the front/
+  // rear hint can pull a different camera on hybrid devices.
+  if (videoDeviceId) {
+    video.deviceId = { exact: videoDeviceId };
+  } else {
+    video.facingMode = videoFacingMode;
+  }
   const audio: MediaTrackConstraints = {
     sampleRate: { ideal: 48000 },
     channelCount: { ideal: 1 },
@@ -101,6 +115,7 @@ function isStaleDeviceError(err: unknown): boolean {
 export async function acquireRecordingStream(): Promise<MediaStream> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+    lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
     useAppStore
       .getState()
       .actions.setMedia({ stream, status: "granted", error: null });
@@ -111,6 +126,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
       useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
       try {
         const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+        lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
         useAppStore
           .getState()
           .actions.setMedia({ stream, status: "granted", error: null });
@@ -135,6 +151,14 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
 // the camera light goes off) and clears the media slice if this was the
 // currently held stream.
 export function releaseRecordingStream(stream: MediaStream): void {
+  // Detach lifecycle listeners BEFORE stopping the tracks so the intentional
+  // .stop() doesn't accidentally fire the suspended-transition we wired up
+  // for unexpected ends.
+  const handle = lifecycleHandles.get(stream);
+  if (handle) {
+    handle.detach();
+    lifecycleHandles.delete(stream);
+  }
   for (const track of stream.getTracks()) track.stop();
   const current = useAppStore.getState().media.stream;
   if (current === stream) {

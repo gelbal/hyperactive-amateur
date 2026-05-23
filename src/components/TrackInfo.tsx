@@ -141,7 +141,7 @@ function ShowVideoToggle({ trackId }: ShowVideoToggleProps) {
       data-show-video={showVideo}
       onClick={() => useAppStore.getState().actions.setTrackShowVideo(trackId, !showVideo)}
       className={
-        "w-7 h-7 rounded flex items-center justify-center transition-colors " +
+        "w-7 h-7 pointer-coarse:w-11 pointer-coarse:h-11 rounded flex items-center justify-center transition-colors " +
         (showVideo ? "text-orange-500 hover:text-orange-400" : "text-zinc-500 hover:text-zinc-300")
       }
     >
@@ -177,7 +177,7 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
             data-selected={isSelected}
             onClick={() => onClick(tag)}
             className={
-              "px-1.5 py-0.5 rounded-full text-[10px] uppercase tracking-wide leading-none " +
+              "px-1.5 py-0.5 pointer-coarse:py-1.5 pointer-coarse:px-2 rounded-full text-[10px] uppercase tracking-wide leading-none " +
               (isSelected
                 ? "bg-orange-500 text-zinc-950"
                 : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600")
@@ -218,7 +218,7 @@ function ClipThumbnail({ clip, onClear }: ClipThumbnailProps) {
         type="button"
         aria-label="re-record"
         onClick={onClear}
-        className="absolute inset-0 rounded bg-black/60 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute inset-0 rounded bg-black/60 text-xs text-white opacity-0 group-hover:opacity-100 any-pointer-coarse:opacity-40 any-pointer-coarse:group-hover:opacity-100 transition-opacity"
       >
         Re-record
       </button>

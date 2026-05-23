@@ -107,7 +107,7 @@ export interface UiState {
   showExportDialog: boolean;
 }
 
-export type MediaStatus = "idle" | "requesting" | "granted" | "denied";
+export type MediaStatus = "idle" | "requesting" | "granted" | "denied" | "suspended";
 
 export interface MediaSlice {
   stream: MediaStream | null;
@@ -117,6 +117,9 @@ export interface MediaSlice {
   // not part of the saved project). When null, the browser picks the default.
   videoDeviceId: string | null;
   audioDeviceId: string | null;
+  // Preferred camera orientation on phones. Applied only when videoDeviceId
+  // is null — an explicit Sources-picker selection wins.
+  videoFacingMode: "user" | "environment";
 }
 
 export interface SessionSlice {

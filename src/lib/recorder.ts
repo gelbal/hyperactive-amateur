@@ -1,5 +1,7 @@
 // ABOUTME: recordClip — record a fixed-duration WebM clip from a MediaStream and decode its audio.
 // ABOUTME: Returns the blob plus a pre-decoded AudioBuffer for low-latency Tone.Player playback.
+import { onMediaRecorderError } from "./streamLifecycle";
+
 export interface RecordingResult {
   blob: Blob;
   audioBuffer: AudioBuffer;
@@ -45,7 +47,13 @@ export async function recordClip(
     recorder.onstop = () => resolve();
     recorder.onerror = (event) => {
       const err = (event as ErrorEvent).error ?? new Error("MediaRecorder error");
-      reject(err instanceof Error ? err : new Error(String(err)));
+      const normalized = err instanceof Error ? err : new Error(String(err));
+      // Route through streamLifecycle — if the failure was caused by stream
+      // loss, this transitions the store to "suspended" so the reconnect pill
+      // surfaces. If the tracks are still live, it's a genuine encoder error
+      // and the lifecycle module leaves the store alone.
+      onMediaRecorderError(stream, normalized);
+      reject(normalized);
     };
     if (signal) {
       abortListener = () => {

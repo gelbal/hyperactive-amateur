@@ -83,24 +83,38 @@ describe("exportSong", () => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
   });
 
-  it("defaultExportFilename returns the expected YYYYMMDD-HHmm.webm shape", () => {
+  it("defaultExportFilename: default extension is .webm; .mp4 is honored when passed", () => {
     expect(defaultExportFilename()).toMatch(
       /^hyperactive-amateur-\d{4}\d{2}\d{2}-\d{2}\d{2}\.webm$/,
     );
+    expect(defaultExportFilename("mp4")).toMatch(
+      /^hyperactive-amateur-\d{4}\d{2}\d{2}-\d{2}\d{2}\.mp4$/,
+    );
   });
 
-  it("starts/stops the Transport, reports progress, and resolves with a Blob", async () => {
+  it("starts/stops the Transport, reports progress, and resolves with a Blob using the caller's mimeType", async () => {
     const onProgress = vi.fn();
     const blob = await exportSong(makeCanvas(), makeAudioContext(), {
       bars: 1,
       bpm: 240,
+      mimeType: "video/webm; codecs=vp9,opus",
       onProgress,
     });
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.size).toBeGreaterThan(0);
+    expect(blob.type).toContain("video/webm");
     expect(transport.start).toHaveBeenCalled();
     expect(transport.stop).toHaveBeenCalled();
     expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+  });
+
+  it("exportSong honors a video/mp4 mimeType passed by the caller", async () => {
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 240,
+      mimeType: "video/mp4",
+    });
+    expect(blob.type).toBe("video/mp4");
   });
 });
 

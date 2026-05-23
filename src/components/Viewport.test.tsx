@@ -22,6 +22,20 @@ describe("Viewport", () => {
   beforeEach(() => {
     requestMedia.mockReset();
     useAppStore.getState().actions.reset();
+    // jsdom doesn't ship Element#requestFullscreen by default — stub it so
+    // the capability guard (M3-2) treats the platform as supporting fullscreen
+    // for the toggle-visibility assertion below.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (document.documentElement as any).requestFullscreen = () => Promise.resolve();
+  });
+
+  it("keeps canvas backing store at 480x480 even when CSS scales", () => {
+    render(<Viewport />);
+    const canvas = screen.getByLabelText(
+      "hard-cut video viewport",
+    ) as HTMLCanvasElement;
+    expect(canvas.width).toBe(480);
+    expect(canvas.height).toBe(480);
   });
 
   it("idle: shows the gate; click calls requestMedia. Denied: swaps to blocked copy. Granted: gate gone, station mounted.", () => {
@@ -79,6 +93,29 @@ describe("Viewport", () => {
     render(<Viewport />);
     expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /enter fullscreen/i })).toBeInTheDocument();
+  });
+
+  it("suspended: reconnect pill shows; permission gate does NOT show; clicking pill calls resumeMedia", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+    });
+    render(<Viewport />);
+    const pill = screen.getByRole("button", { name: /tap to reconnect/i });
+    expect(pill).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /enable camera & mic/i }),
+    ).not.toBeInTheDocument();
+
+    // resumeMedia is a real action that dynamic-imports media.ts;
+    // we just verify the click handler is wired by spying on it.
+    const spy = vi.spyOn(useAppStore.getState().actions, "resumeMedia");
+    fireEvent.click(pill);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("idle media + some empty tracks + station dismissed: gate hidden, Record more pill is visible", () => {

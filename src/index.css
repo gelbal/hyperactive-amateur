@@ -2,6 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mobile-first touch resets. Mobile users had a 300ms tap delay and
+ * a flashing tap highlight without these. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a,
+[role="button"],
+[role="slider"],
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+/* iOS Safari renders <input type="range">, <select>, and <button> with
+ * platform defaults (blue thumb, native chevron, light background) that
+ * bypass Tailwind classes. Reset and restyle to the zinc/orange theme. */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  height: 1.5rem;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  background: rgb(63 63 70); /* zinc-700 */
+  height: 4px;
+  border-radius: 9999px;
+}
+input[type="range"]::-moz-range-track {
+  background: rgb(63 63 70);
+  height: 4px;
+  border-radius: 9999px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: rgb(251 146 60); /* orange-400 */
+  margin-top: -6px;
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: rgb(251 146 60);
+  border: none;
+  cursor: pointer;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  padding-right: 1.75rem;
+}
+
+button {
+  -webkit-appearance: none;
+  background-color: transparent;
+}
+
+/* Safe-area insets for notched / home-indicator devices. The meta viewport
+ * already has viewport-fit=cover (M1-1). Body padding handles the sticky
+ * header (it sticks at the top of the padded viewport) and any bottom-anchored
+ * content (StepGrid, RecordingStation controls, reconnect pill). */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
 /* Tailwind preflight removes default focus outlines; restore as a brand-colored ring. */
 button:focus-visible,
 a:focus-visible,

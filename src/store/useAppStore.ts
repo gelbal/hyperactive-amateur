@@ -12,6 +12,7 @@ import type {
   Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
+import { acquireRecordingStream } from "../lib/media";
 import {
   AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
@@ -75,6 +76,9 @@ export interface AppActions {
   ) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
+  setVideoFacingMode: (mode: "user" | "environment") => void;
+  toggleVideoFacingMode: () => void;
+  resumeMedia: () => Promise<void>;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
@@ -325,6 +329,7 @@ export const useAppStore = create<AppStore>((set) => ({
           ...next,
           videoDeviceId: state.media.videoDeviceId,
           audioDeviceId: state.media.audioDeviceId,
+          videoFacingMode: state.media.videoFacingMode,
         },
       })),
 
@@ -340,6 +345,31 @@ export const useAppStore = create<AppStore>((set) => ({
           persistDeviceId(AUDIO_DEVICE_STORAGE_KEY, audioDeviceId);
         return { media: { ...state.media, videoDeviceId, audioDeviceId } };
       }),
+
+    setVideoFacingMode: (mode) =>
+      set((state) => ({ media: { ...state.media, videoFacingMode: mode } })),
+
+    toggleVideoFacingMode: () =>
+      set((state) => ({
+        media: {
+          ...state.media,
+          videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
+        },
+      })),
+
+    // Re-acquire after a "suspended" transition (track ended, page resumed,
+    // recorder died). media.ts ↔ useAppStore.ts is a circular import, but ESM
+    // hoists the static binding and we only invoke acquireRecordingStream
+    // lazily inside the action body — by which time both modules are loaded.
+    // On success acquireRecordingStream flips status to "granted"; on failure
+    // it flips to "denied" and we let the gate take over.
+    resumeMedia: async () => {
+      try {
+        await acquireRecordingStream();
+      } catch {
+        // Status already set inside acquireRecordingStream's catch path.
+      }
+    },
 
     setRecordingState: (recordingState, activeTrackId) =>
       set((state) => ({

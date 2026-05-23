@@ -70,7 +70,7 @@ function Pad({ trackId }: PadProps) {
 
 export function PadGrid() {
   return (
-    <div className="grid grid-cols-4 gap-2 w-[480px]" aria-label="trigger pads">
+    <div className="grid grid-cols-4 gap-2 w-full max-w-[480px]" aria-label="trigger pads">
       {Array.from({ length: TRACK_COUNT }, (_, i) => (
         <Pad key={i} trackId={i} />
       ))}

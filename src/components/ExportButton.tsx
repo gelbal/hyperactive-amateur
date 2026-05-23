@@ -1,9 +1,10 @@
-// ABOUTME: ExportButton — top-bar button + popover with bars slider, render progress, and WebM download.
+// ABOUTME: ExportButton — top-bar button + popover with bars slider, format picker, progress, and download.
 // ABOUTME: Mirrors the FeelDisclosure pattern: anchored popover, click-outside + Escape close, no modal scrim.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { exportSong, downloadBlob, defaultExportFilename } from "../lib/export";
+import { detectSupportedFormats } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
@@ -11,6 +12,7 @@ import { usePopoverDismiss } from "../lib/usePopoverDismiss";
 const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
+const FORMAT_STORAGE_KEY = "ha:exportMimeType";
 
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
@@ -23,6 +25,29 @@ export function ExportButton() {
   const close = useCallback(() => setOpen(false), []);
   usePopoverDismiss(rootRef, open, close, { whileBusy: rendering });
 
+  const formats = useMemo(() => detectSupportedFormats(), []);
+  const [mimeType, setMimeType] = useState<string>(() => {
+    const saved =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(FORMAT_STORAGE_KEY)
+        : null;
+    if (saved && formats.some((f) => f.mimeType === saved)) return saved;
+    // First-use default: prefer MP4 (better for sharing to WhatsApp/iMessage/
+    // Twitter/Instagram); fall back to whatever the browser does support.
+    const mp4 = formats.find((f) => f.extension === "mp4");
+    return (mp4 ?? formats[0])?.mimeType ?? "";
+  });
+
+  useEffect(() => {
+    if (!mimeType) return;
+    try {
+      window.localStorage.setItem(FORMAT_STORAGE_KEY, mimeType);
+    } catch {
+      // localStorage may be unavailable (private mode); choice just doesn't
+      // persist this session.
+    }
+  }, [mimeType]);
+
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {
     if (!open) setError(null);
@@ -34,15 +59,21 @@ export function ExportButton() {
       setError("Viewport canvas not ready");
       return;
     }
+    const chosen = formats.find((f) => f.mimeType === mimeType) ?? formats[0];
+    if (!chosen) {
+      setError("This browser does not support video export.");
+      return;
+    }
     setError(null);
     setProgress(0);
     try {
       const blob = await exportSong(canvas, getAudioContext(), {
         bars,
         bpm,
+        mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
       });
-      downloadBlob(blob, defaultExportFilename());
+      downloadBlob(blob, defaultExportFilename(chosen.extension));
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -75,6 +106,36 @@ export function ExportButton() {
           aria-label="Export song"
           className="absolute right-0 top-full mt-2 z-30 min-w-[18rem] rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3"
         >
+          {formats.length > 1 && (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-[11px] uppercase tracking-wide text-zinc-400">
+                Format
+              </legend>
+              <div className="flex gap-2">
+                {formats.map((fmt) => (
+                  <label
+                    key={fmt.mimeType}
+                    className={
+                      "px-3 py-1.5 rounded-full text-xs cursor-pointer border " +
+                      (mimeType === fmt.mimeType
+                        ? "bg-orange-500 text-zinc-950 border-orange-500"
+                        : "bg-zinc-900 text-zinc-300 border-zinc-700 hover:bg-zinc-800")
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="export-format"
+                      value={fmt.mimeType}
+                      checked={mimeType === fmt.mimeType}
+                      onChange={() => setMimeType(fmt.mimeType)}
+                      className="sr-only"
+                    />
+                    {fmt.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
           <label className="flex flex-col gap-2 text-sm">
             <span>
               Length: <span className="text-orange-400 font-mono">{bars}</span> bar

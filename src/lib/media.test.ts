@@ -5,16 +5,30 @@ import {
   tryAutoGrantMedia,
   acquireRecordingStream,
   releaseRecordingStream,
+  buildConstraints,
   __resetMediaForTesting,
 } from "./media";
 import { useAppStore } from "../store/useAppStore";
 
 function makeFakeStream() {
-  const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
+  // Tracks need addEventListener / removeEventListener for streamLifecycle's
+  // track.onended wiring — extend EventTarget rather than build the bare
+  // minimum, so we don't have to keep up with new event sources.
+  const tracks = [makeFakeTrack(), makeFakeTrack()];
   return {
     getTracks: () => tracks,
     _tracks: tracks,
-  } as unknown as MediaStream & { _tracks: { stop: ReturnType<typeof vi.fn> }[] };
+  } as unknown as MediaStream & {
+    _tracks: ReturnType<typeof makeFakeTrack>[];
+  };
+}
+
+function makeFakeTrack() {
+  const target = new EventTarget();
+  return Object.assign(target, {
+    stop: vi.fn(),
+    readyState: "live" as "live" | "ended",
+  });
 }
 
 function stubGetUserMedia(impl: () => Promise<MediaStream>) {
@@ -100,6 +114,32 @@ describe("media", () => {
     __resetMediaForTesting();
     await requestMedia();
     expect(useAppStore.getState().media.status).toBe("granted");
+  });
+
+  it("buildConstraints: with no videoDeviceId, video.facingMode reflects the store; toggle flips user ↔ environment", () => {
+    // Default: user-facing, no device pinned.
+    const a = buildConstraints();
+    const videoA = a.video as MediaTrackConstraints;
+    expect(videoA.facingMode).toBe("user");
+    expect(videoA.deviceId).toBeUndefined();
+
+    useAppStore.getState().actions.toggleVideoFacingMode();
+    expect(useAppStore.getState().media.videoFacingMode).toBe("environment");
+    const b = buildConstraints();
+    const videoB = b.video as MediaTrackConstraints;
+    expect(videoB.facingMode).toBe("environment");
+
+    useAppStore.getState().actions.toggleVideoFacingMode();
+    expect(useAppStore.getState().media.videoFacingMode).toBe("user");
+  });
+
+  it("buildConstraints: an explicit videoDeviceId wins over facingMode (Sources picker > flip hint)", () => {
+    useAppStore.getState().actions.setVideoFacingMode("environment");
+    useAppStore.getState().actions.setPreferredDevices({ video: "cam-id-123" });
+    const c = buildConstraints();
+    const video = c.video as MediaTrackConstraints;
+    expect(video.deviceId).toEqual({ exact: "cam-id-123" });
+    expect(video.facingMode).toBeUndefined();
   });
 
   it("tryAutoGrantMedia flips status to granted WITHOUT touching getUserMedia (no camera-light flicker on page load)", async () => {

@@ -68,6 +68,7 @@ export function createInitialState(): AppState {
       error: null,
       videoDeviceId: readStoredDeviceId(VIDEO_DEVICE_STORAGE_KEY),
       audioDeviceId: readStoredDeviceId(AUDIO_DEVICE_STORAGE_KEY),
+      videoFacingMode: "user",
     },
     session: {
       manuallyToggledShowVideo: [],
