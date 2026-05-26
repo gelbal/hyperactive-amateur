@@ -26,6 +26,10 @@ coverage/
 # misc
 .cache/
 
+# runtime artifacts from the Playwright MCP server (console logs + page
+# snapshots from automated browser sessions)
+.playwright-mcp/
+
 # typescript build info
 *.tsbuildinfo
 
