@@ -3,7 +3,8 @@
 A browser-based step sequencer for making hard-cut sample-from-yourself
 videos. Record eight short clips of yourself making sounds, drop them
 on a 16-step grid, hit play, and watch a hip-hop video of you
-"performing" the song play back in real time. Export to WebM.
+"performing" the song play back in real time. Export to MP4 (default,
+shares cleanly to WhatsApp / iMessage / Twitter) or WebM.
 
 Live at [hyperactive-amateur.fgelbal.com](https://hyperactive-amateur.fgelbal.com/).
 
@@ -17,9 +18,17 @@ npm run dev                       # http://localhost:5173
 ```
 
 You'll be prompted for camera and microphone access on first record.
-**Built for desktop Chrome and Edge ≥120.** Recent Firefox should work
-(the in-app compatibility banner feature-detects what it needs).
-Safari is unsupported until it ships VP9 `MediaRecorder`.
+
+**Supported browsers:** desktop Chrome and Edge ≥120, recent Firefox,
+iOS Safari 18.4+ (March 2025), current Android Chrome, and any
+WebKit-engine iOS browser (Firefox, Chrome, Edge, Brave). The in-app
+compatibility banner feature-detects what the active browser actually
+supports.
+
+**On mobile:** tap Share → Add to Home Screen (iOS Safari) or the
+in-browser install prompt (Android Chrome) to run it like a native
+app. The service worker caches the app shell so subsequent launches
+are instant.
 
 ## API key
 
