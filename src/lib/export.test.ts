@@ -18,7 +18,8 @@ vi.mock("tone", () => ({
   getTransport: vi.fn(() => toneMocks.transport),
 }));
 
-import { buildExportStream, defaultExportFilename, exportSong } from "./export";
+import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
+import { abortActiveExport, __resetExportSessionForTesting } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
 
 function makeCanvas(): HTMLCanvasElement {
@@ -89,10 +90,12 @@ describe("exportSong", () => {
     toneMocks.toneStart.mockClear();
     toneMocks.destinationDisconnect.mockClear();
     useAppStore.getState().actions.reset();
+    __resetExportSessionForTesting();
   });
 
   afterEach(() => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+    __resetExportSessionForTesting();
     vi.useRealTimers();
   });
 
@@ -156,5 +159,73 @@ describe("exportSong", () => {
     expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
     expect(useAppStore.getState().playback.isPlaying).toBe(false);
     expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("rejects and cleans up when the active export session is aborted", async () => {
+    vi.useFakeTimers();
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 8,
+      bpm: 60,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(abortActiveExport("page hidden")).toBe(true);
+
+    await rejection;
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+    expect(toneMocks.transport.stop).toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("rejects overlapping export attempts without aborting the active export", async () => {
+    vi.useFakeTimers();
+    const first = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 8,
+      bpm: 60,
+      mimeType: "video/webm",
+    });
+
+    await expect(
+      exportSong(makeCanvas(), makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+      }),
+    ).rejects.toThrow(/Cannot export|Another export/);
+
+    expect(useAppStore.getState().playback.isExporting).toBe(true);
+    expect(abortActiveExport("page hidden")).toBe(true);
+    await expect(first).rejects.toThrow(/page hidden/);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+});
+
+describe("downloadBlob", () => {
+  it("delays object URL revocation until after the synthetic click has been dispatched", () => {
+    vi.useFakeTimers();
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/download");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    try {
+      downloadBlob(new Blob(["x"], { type: "video/webm" }), "beat.webm");
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+
+      vi.runOnlyPendingTimers();
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/download");
+    } finally {
+      vi.useRealTimers();
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+      click.mockRestore();
+    }
   });
 });

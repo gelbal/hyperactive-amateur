@@ -11,8 +11,6 @@ import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
 
-const TRACK_COUNT = 8;
-
 export function Viewport() {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -47,11 +45,7 @@ export function Viewport() {
     emptyTrackCount > 0 &&
     !stationDismissed;
   const showReconnectPill = mediaStatus === "suspended";
-  const showRecordMore =
-    !isFullscreen &&
-    emptyTrackCount > 0 &&
-    emptyTrackCount < TRACK_COUNT &&
-    stationDismissed;
+  const showRecordMore = !isFullscreen && emptyTrackCount > 0 && stationDismissed;
   const showFullscreenToggle = fullscreenSupported && (mediaStatus === "granted" || hasClips);
 
   useEffect(() => {
@@ -123,7 +117,7 @@ export function Viewport() {
           </button>
         )}
       </div>
-      {showRecordMore && <RecordMoreButton />}
+      {showRecordMore && <RecordMoreButton hasClips={hasClips} />}
     </div>
   );
 }
@@ -142,7 +136,7 @@ function ReconnectPill() {
   );
 }
 
-function RecordMoreButton() {
+function RecordMoreButton({ hasClips }: { hasClips: boolean }) {
   return (
     <button
       type="button"
@@ -150,7 +144,7 @@ function RecordMoreButton() {
       className="flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 rounded-full bg-zinc-900 border border-zinc-700 hover:bg-zinc-800"
     >
       <Mic size={12} />
-      Record more
+      {hasClips ? "Record more" : "Record first sound"}
     </button>
   );
 }

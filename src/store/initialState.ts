@@ -62,6 +62,7 @@ export function createInitialState(): AppState {
     ui: {
       selectedTrackId: null,
       showExportDialog: false,
+      recoveryWarnings: [],
     },
     media: {
       stream: null,
@@ -72,6 +73,7 @@ export function createInitialState(): AppState {
       videoFacingMode: "user",
     },
     session: {
+      projectRevision: 0,
       manuallyToggledShowVideo: [],
       manuallyTagged: [],
       recordingStationDismissed: false,

@@ -46,6 +46,10 @@ function omitKey<V>(obj: Record<number, V>, key: number): Record<number, V> {
   return out;
 }
 
+function bumpProjectRevision(session: AppState["session"]): AppState["session"] {
+  return { ...session, projectRevision: session.projectRevision + 1 };
+}
+
 export interface AppActions {
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
@@ -75,6 +79,7 @@ export interface AppActions {
     showVideo: boolean,
     source?: "user" | "system",
   ) => void;
+  setRecoveryWarnings: (warnings: string[]) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setVideoFacingMode: (mode: "user" | "environment") => void;
@@ -83,6 +88,11 @@ export interface AppActions {
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
+  applyPatternIfCurrent: (
+    grid: boolean[][],
+    expectedProjectRevision: number,
+    expectedStepCount: number,
+  ) => boolean;
   dismissRecordingStation: () => void;
   reopenRecordingStation: () => void;
   scratch: () => void;
@@ -98,46 +108,78 @@ export const useAppStore = create<AppStore>((set) => ({
   ...createInitialState(),
   actions: {
     toggleStep: (trackId, stepIndex) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId
-              ? {
-                  ...track,
-                  steps: track.steps.map((s, i) => (i === stepIndex ? !s : s)),
-                }
-              : track,
-          ),
-        },
-      })),
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId
+                ? {
+                    ...track,
+                    steps: track.steps.map((s, i) => (i === stepIndex ? !s : s)),
+                  }
+                : track,
+            ),
+          },
+          session: bumpProjectRevision(state.session),
+        };
+      }),
 
     setBpm: (bpm) =>
-      set((state) => ({
-        project: { ...state.project, bpm: clamp(bpm, 60, 180) },
-      })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : {
+              project: { ...state.project, bpm: clamp(bpm, 60, 180) },
+              session: bumpProjectRevision(state.session),
+            },
+      ),
 
     setSwing: (swing) =>
-      set((state) => ({
-        project: { ...state.project, swing: clamp(swing, 0, 1) },
-      })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : { project: { ...state.project, swing: clamp(swing, 0, 1) } },
+      ),
 
     setCutSubdivision: (value) =>
-      set((state) => ({ project: { ...state.project, cutSubdivision: value } })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : { project: { ...state.project, cutSubdivision: value } },
+      ),
 
     setSameTierHoldMs: (ms) =>
-      set((state) => ({
-        project: { ...state.project, sameTierHoldMs: clamp(ms, 0, 2000) },
-      })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : { project: { ...state.project, sameTierHoldMs: clamp(ms, 0, 2000) } },
+      ),
 
     setSubgenre: (value) =>
-      set((state) => ({ project: { ...state.project, subgenre: value } })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : {
+              project: { ...state.project, subgenre: value },
+              session: bumpProjectRevision(state.session),
+            },
+      ),
 
     setVibe: (value) =>
-      set((state) => ({ project: { ...state.project, vibe: value } })),
+      set((state) =>
+        state.playback.isExporting
+          ? state
+          : {
+              project: { ...state.project, vibe: value },
+              session: bumpProjectRevision(state.session),
+            },
+      ),
 
     extendSteps: () =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const next = Math.min(MAX_STEP_COUNT, state.project.stepCount + STEP_COUNT_INCREMENT);
         if (next === state.project.stepCount) return state;
         const padding = next - state.project.stepCount;
@@ -150,44 +192,60 @@ export const useAppStore = create<AppStore>((set) => ({
               steps: [...track.steps, ...new Array(padding).fill(false)],
             })),
           },
+          session: bumpProjectRevision(state.session),
         };
       }),
 
     removeStepColumn: (stepIndex) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         if (state.project.stepCount <= MIN_STEP_COUNT) return state;
         if (stepIndex < 0 || stepIndex >= state.project.stepCount) return state;
+        const removeStart = Math.floor(stepIndex / STEP_COUNT_INCREMENT) * STEP_COUNT_INCREMENT;
+        const removeEnd = removeStart + STEP_COUNT_INCREMENT;
+        const nextStepCount = Math.max(
+          MIN_STEP_COUNT,
+          state.project.stepCount - STEP_COUNT_INCREMENT,
+        );
+        if (nextStepCount === state.project.stepCount) return state;
         return {
           project: {
             ...state.project,
-            stepCount: state.project.stepCount - 1,
+            stepCount: nextStepCount,
             tracks: state.project.tracks.map((track) => ({
               ...track,
-              steps: track.steps.filter((_, i) => i !== stepIndex),
+              steps: track.steps.filter((_, i) => i < removeStart || i >= removeEnd),
             })),
           },
+          session: bumpProjectRevision(state.session),
         };
       }),
 
     setTrackVolume: (trackId, volume) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId ? { ...track, volume: clamp(volume, 0, 1) } : track,
-          ),
-        },
-      })),
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId ? { ...track, volume: clamp(volume, 0, 1) } : track,
+            ),
+          },
+        };
+      }),
 
     setTrackMuted: (trackId, muted) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) =>
-            track.id === trackId ? { ...track, muted } : track,
-          ),
-        },
-      })),
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId ? { ...track, muted } : track,
+            ),
+          },
+        };
+      }),
 
     setIsPlaying: (playing) =>
       set((state) => ({ playback: { ...state.playback, isPlaying: playing } })),
@@ -208,6 +266,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setTrackClip: (trackId, clip) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url && previous.url !== clip.url) {
           // Avoid leaking object URLs when a clip is replaced.
@@ -234,11 +293,13 @@ export const useAppStore = create<AppStore>((set) => ({
               track.id === trackId ? { ...track, clip } : track,
             ),
           },
+          session: bumpProjectRevision(state.session),
         };
       }),
 
     clearTrackClip: (trackId) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
         if (previous && previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
@@ -258,12 +319,16 @@ export const useAppStore = create<AppStore>((set) => ({
           // this, "Re-record" on a fully-finished project would clear the clip
           // but leave the empty-slot UI invisible until the user finds the
           // "Record more" pill.
-          session: { ...state.session, recordingStationDismissed: false },
+          session: {
+            ...bumpProjectRevision(state.session),
+            recordingStationDismissed: false,
+          },
         };
       }),
 
     setTrackTag: (trackId, tag, source = "user") =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const prevTrack = state.project.tracks[trackId];
         const tagUnchanged = prevTrack?.tag === tag;
         const wouldClaim =
@@ -293,15 +358,19 @@ export const useAppStore = create<AppStore>((set) => ({
         if (wouldClearReasoning) {
           project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
         }
-        return { project, session };
+        return { project, session: bumpProjectRevision(session) };
       }),
 
     setTrackTagReasoning: (trackId, reasoning) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const current = state.project.tagReasoning;
         if (reasoning === null || reasoning === "") {
           if (!(trackId in current)) return state;
-          return { project: { ...state.project, tagReasoning: omitKey(current, trackId) } };
+          return {
+            project: { ...state.project, tagReasoning: omitKey(current, trackId) },
+            session: bumpProjectRevision(state.session),
+          };
         }
         if (current[trackId] === reasoning) return state;
         return {
@@ -309,11 +378,13 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning: { ...current, [trackId]: reasoning },
           },
+          session: bumpProjectRevision(state.session),
         };
       }),
 
     setTrackShowVideo: (trackId, showVideo, source = "user") =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         const next = state.project.tracks.map((track) =>
           track.id === trackId ? { ...track, showVideo } : track,
         );
@@ -326,6 +397,9 @@ export const useAppStore = create<AppStore>((set) => ({
             : state.session;
         return { project: { ...state.project, tracks: next }, session };
       }),
+
+    setRecoveryWarnings: (warnings) =>
+      set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
 
     setMedia: (next) =>
       set((state) => ({
@@ -391,6 +465,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
     hydrateProject: (project) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         // If the rehydrated project has any recorded clip, the user is past
         // the first-recording walkthrough; suppress the in-viewport station
         // (and its permission gate) on reload until they explicitly opt back
@@ -399,29 +474,66 @@ export const useAppStore = create<AppStore>((set) => ({
         return {
           project,
           session: hasAnyClip
-            ? { ...state.session, recordingStationDismissed: true }
-            : state.session,
+            ? { ...bumpProjectRevision(state.session), recordingStationDismissed: true }
+            : bumpProjectRevision(state.session),
         };
       }),
 
     applyPattern: (grid) =>
       set((state) => {
+        if (state.playback.isExporting) return state;
         if (!Array.isArray(grid) || grid.length !== 8) return state;
         const expectedLen = state.project.stepCount;
+        let changed = false;
         return {
           project: {
             ...state.project,
             tracks: state.project.tracks.map((track, i) => {
               const row = grid[i];
               if (!Array.isArray(row) || row.length !== expectedLen) return track;
+              if (!changed) {
+                changed = row.some((step, j) => Boolean(step) !== track.steps[j]);
+              }
               return { ...track, steps: row.map(Boolean) };
             }),
           },
+          session: changed ? bumpProjectRevision(state.session) : state.session,
         };
       }),
 
+    applyPatternIfCurrent: (grid, expectedProjectRevision, expectedStepCount) => {
+      let applied = false;
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (
+          state.session.projectRevision !== expectedProjectRevision ||
+          state.project.stepCount !== expectedStepCount
+        ) {
+          return state;
+        }
+        if (!Array.isArray(grid) || grid.length !== 8) return state;
+        const expectedLen = state.project.stepCount;
+        if (!grid.every((row) => Array.isArray(row) && row.length === expectedLen)) {
+          return state;
+        }
+        applied = true;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track, i) => ({
+              ...track,
+              steps: grid[i].map(Boolean),
+            })),
+          },
+          session: bumpProjectRevision(state.session),
+        };
+      });
+      return applied;
+    },
+
     scratch: () => {
       const state = useAppStore.getState();
+      if (state.playback.isExporting) return;
       // Revoke object URLs on every existing clip.
       for (const track of state.project.tracks) {
         if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
@@ -431,11 +543,29 @@ export const useAppStore = create<AppStore>((set) => ({
       if (state.media.stream) {
         for (const t of state.media.stream.getTracks()) t.stop();
       }
-      set({ ...createInitialState() });
+      const next = createInitialState();
+      set({
+        ...next,
+        session: {
+          ...next.session,
+          projectRevision: state.session.projectRevision + 1,
+        },
+      });
       // Wipe the persisted record; subsequent edits will write a fresh one.
       void clearProject().catch(() => undefined);
     },
 
-    reset: () => set({ ...createInitialState() }),
+    reset: () =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const next = createInitialState();
+        return {
+          ...next,
+          session: {
+            ...next.session,
+            projectRevision: state.session.projectRevision + 1,
+          },
+        };
+      }),
   },
 }));

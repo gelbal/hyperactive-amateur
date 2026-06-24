@@ -28,11 +28,7 @@ function nextVerb(exclude: string | null): string {
 }
 
 export function SuggestButton() {
-  const tracks = useAppStore((s) => s.project.tracks);
-  const bpm = useAppStore((s) => s.project.bpm);
   const subgenre = useAppStore((s) => s.project.subgenre);
-  const vibe = useAppStore((s) => s.project.vibe);
-  const stepCount = useAppStore((s) => s.project.stepCount);
   const clipCount = useAppStore(selectClipCount);
   const [pending, setPending] = useState(false);
   const [pendingVerb, setPendingVerb] = useState(() => nextVerb(null));
@@ -62,23 +58,32 @@ export function SuggestButton() {
   const handleClick = async () => {
     setError(null);
     setPending(true);
-    const before = tracks.map((t) => [...t.steps]);
+    const state = useAppStore.getState();
+    const { projectRevision } = state.session;
+    const { bpm, subgenre, vibe, stepCount, tagReasoning } = state.project;
+    const requestTracks = state.project.tracks;
+    const before = requestTracks.map((t) => [...t.steps]);
     // Read reasoning fresh at click time — that way changes during a
     // retag pass don't re-render this button on every write.
-    const tagReasoning = useAppStore.getState().project.tagReasoning;
     try {
       const grid = await suggestPattern({
         bpm,
         subgenre,
         vibe,
         stepCount,
-        tracks: tracks.map((t) => ({
+        tracks: requestTracks.map((t) => ({
           id: t.id,
           tag: t.tag,
           reasoning: tagReasoning[t.id] ?? null,
         })),
       });
-      useAppStore.getState().actions.applyPattern(grid);
+      const applied = useAppStore
+        .getState()
+        .actions.applyPatternIfCurrent(grid, projectRevision, stepCount);
+      if (!applied) {
+        setError("Beat changed while Gemini was thinking. Try again.");
+        return;
+      }
       setUndoSnapshot(before);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

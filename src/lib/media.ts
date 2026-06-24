@@ -2,15 +2,11 @@
 // ABOUTME: Streams are held only while the RecordingStation is mounted (preview + record reuse the same stream); otherwise the camera light stays off.
 import { useAppStore } from "../store/useAppStore";
 import {
-  attachStreamEndedListeners,
-  type StreamLifecycleHandle,
+  registerStreamLifecycle,
+  releaseMediaStream,
 } from "./streamLifecycle";
 
 let inFlight: Promise<void> | null = null;
-
-// Map every active stream to its lifecycle handle so we can detach listeners
-// when the stream is intentionally released. WeakMap keeps this GC-safe.
-const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
 
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
@@ -72,25 +68,6 @@ export async function requestMedia(): Promise<void> {
   return inFlight;
 }
 
-// Probe the browser permissions API. If camera + mic are already granted, mark
-// the store granted WITHOUT acquiring a stream — that way page loads don't
-// flash the camera light.
-export async function tryAutoGrantMedia(): Promise<void> {
-  const perms = (navigator as Navigator & { permissions?: Permissions }).permissions;
-  if (!perms || typeof perms.query !== "function") return;
-  try {
-    const cam = await perms.query({ name: "camera" as PermissionName });
-    const mic = await perms.query({ name: "microphone" as PermissionName });
-    if (cam.state === "granted" && mic.state === "granted") {
-      useAppStore
-        .getState()
-        .actions.setMedia({ stream: null, status: "granted", error: null });
-    }
-  } catch {
-    // Some browsers throw on unsupported permission names; safe to ignore.
-  }
-}
-
 // Tracks whether the most recent acquire failure was because of a stale
 // deviceId. If so, callers can clear preferences and retry with defaults.
 export class StaleDeviceError extends Error {
@@ -130,7 +107,9 @@ async function getUserMediaWithDeviceFallback(): Promise<MediaStream> {
 export async function acquireRecordingStream(): Promise<MediaStream> {
   try {
     const stream = await getUserMediaWithDeviceFallback();
-    lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
+    const current = useAppStore.getState().media.stream;
+    if (current && current !== stream) releaseRecordingStream(current);
+    registerStreamLifecycle(stream);
     useAppStore
       .getState()
       .actions.setMedia({ stream, status: "granted", error: null });
@@ -148,21 +127,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
 // the camera light goes off) and clears the media slice if this was the
 // currently held stream.
 export function releaseRecordingStream(stream: MediaStream): void {
-  // Detach lifecycle listeners BEFORE stopping the tracks so the intentional
-  // .stop() doesn't accidentally fire the suspended-transition we wired up
-  // for unexpected ends.
-  const handle = lifecycleHandles.get(stream);
-  if (handle) {
-    handle.detach();
-    lifecycleHandles.delete(stream);
-  }
-  for (const track of stream.getTracks()) track.stop();
-  const current = useAppStore.getState().media.stream;
-  if (current === stream) {
-    useAppStore
-      .getState()
-      .actions.setMedia({ stream: null, status: "granted", error: null });
-  }
+  releaseMediaStream(stream);
 }
 
 // Preview helpers — same shape as the recording acquire/release, kept as

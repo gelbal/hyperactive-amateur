@@ -111,6 +111,7 @@ export interface RecordingSlice {
 export interface UiState {
   selectedTrackId: number | null;
   showExportDialog: boolean;
+  recoveryWarnings: string[];
 }
 
 export type MediaStatus = "idle" | "requesting" | "granted" | "denied" | "suspended";
@@ -129,6 +130,9 @@ export interface MediaSlice {
 }
 
 export interface SessionSlice {
+  // Monotonic in-memory counter for edits that make pending AI pattern
+  // responses stale. Not persisted; reloads start a fresh active project.
+  projectRevision: number;
   // Track ids whose showVideo has been manually toggled in this session.
   // Transient — not persisted, cleared on reset and on page load.
   manuallyToggledShowVideo: number[];

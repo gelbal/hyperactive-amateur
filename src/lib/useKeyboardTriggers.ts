@@ -2,6 +2,8 @@
 // ABOUTME: Suppressed inside text inputs and on key repeat; uses Tone.now for audio-clock alignment.
 import { useEffect } from "react";
 import { triggerTrackNow } from "./audio";
+import { canStartAudibleAction } from "./audibleActionGate";
+import { useAppStore } from "../store/useAppStore";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -31,6 +33,7 @@ export function useKeyboardTriggers(): void {
       if (isEditable(event.target)) return;
       const trackId = trackIdForCode(event.code);
       if (trackId === null) return;
+      if (!canStartAudibleAction(useAppStore.getState())) return;
       event.preventDefault();
       void triggerTrackNow(trackId);
     };

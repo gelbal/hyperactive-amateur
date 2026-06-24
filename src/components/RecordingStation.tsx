@@ -11,12 +11,14 @@ import {
   type InputDeviceList,
 } from "../lib/media";
 import { isStandalone, triggerInstall, useCanInstall } from "../lib/install";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const TRACK_COUNT = 8;
 const EMPTY_DEVICES: InputDeviceList = { videoInputs: [], audioInputs: [] };
 
 export function RecordingStation() {
   const recordingState = useAppStore((s) => s.recording.state);
+  const canStartRecording = useAppStore(canStartAudibleAction);
   const tracks = useAppStore((s) => s.project.tracks);
   const videoDeviceId = useAppStore((s) => s.media.videoDeviceId);
   const audioDeviceId = useAppStore((s) => s.media.audioDeviceId);
@@ -36,6 +38,7 @@ export function RecordingStation() {
     }
     return null;
   }, [tracks, skipped]);
+  const hasTarget = target !== null;
 
   const refreshDevices = useCallback(async () => {
     const list = await enumerateMediaDevices();
@@ -47,6 +50,7 @@ export function RecordingStation() {
   // and we don't churn getUserMedia between countdowns. Re-acquires when the
   // user picks a different device.
   useEffect(() => {
+    if (!hasTarget) return;
     let cancelled = false;
     let stream: MediaStream | null = null;
     (async () => {
@@ -73,7 +77,7 @@ export function RecordingStation() {
       previewStreamRef.current = null;
       setPreviewStream(null);
     };
-  }, [videoDeviceId, audioDeviceId, videoFacingMode, refreshDevices]);
+  }, [hasTarget, videoDeviceId, audioDeviceId, videoFacingMode, refreshDevices]);
 
   useEffect(() => {
     if (videoRef.current && previewStream) {
@@ -91,9 +95,38 @@ export function RecordingStation() {
     return () => mediaDevices.removeEventListener("devicechange", onChange);
   }, [refreshDevices]);
 
-  if (target === null) return null;
+  if (target === null) {
+    return (
+      <div
+        className="absolute inset-0 rounded overflow-hidden bg-zinc-950/95 flex flex-col items-center justify-center gap-4 text-center px-8"
+        aria-label="recording station"
+        role="region"
+      >
+        <p className="max-w-[18rem] text-sm text-zinc-300">
+          All empty tracks were skipped.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSkipped(new Set())}
+            className="flex items-center gap-2 px-3 py-2 rounded-full bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400"
+          >
+            Record first sound
+          </button>
+          <button
+            type="button"
+            onClick={() => useAppStore.getState().actions.dismissRecordingStation()}
+            className="flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-900/80 text-zinc-200 border border-zinc-700 hover:bg-zinc-800"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const isBusy = recordingState !== "idle";
+  const recordDisabled = isBusy || !canStartRecording;
 
   const onRecord = () => {
     setError(null);
@@ -152,7 +185,7 @@ export function RecordingStation() {
             aria-label="Choose camera and microphone"
             aria-expanded={showSources}
             onClick={() => setShowSources((v) => !v)}
-            disabled={isBusy}
+            disabled={recordDisabled}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-950/70 border border-zinc-800 text-[11px] uppercase tracking-wide text-zinc-300 hover:bg-zinc-900/90 disabled:opacity-50"
           >
             <Settings2 size={12} />
@@ -222,7 +255,7 @@ export function RecordingStation() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={isBusy}
+            disabled={recordDisabled}
             onClick={onRecord}
             aria-label={`Record clip for track ${target + 1}`}
             className="flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed"

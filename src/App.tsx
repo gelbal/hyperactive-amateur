@@ -8,6 +8,7 @@ import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
+import { RecoveryBanner } from "./components/RecoveryBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
@@ -18,7 +19,6 @@ import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
 import { startAutoSave, stopAutoSave } from "./lib/autoSave";
-import { tryAutoGrantMedia } from "./lib/media";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, persistStorage } from "./lib/install";
 
@@ -34,16 +34,25 @@ export function App() {
     void persistStorage();
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
+    let allowAutoSave = true;
     rehydrateFromStorage()
-      .catch(() => undefined)
+      .then((result) => {
+        allowAutoSave = !(result.degraded && !result.ok);
+      })
+      .catch(() => {
+        allowAutoSave = false;
+        useAppStore
+          .getState()
+          .actions.setRecoveryWarnings([
+            "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
+          ]);
+      })
       .finally(() => {
         if (!cancelled) {
           setHydrating(false);
-          startAutoSave();
+          if (allowAutoSave) startAutoSave();
         }
       });
-    // If the browser already remembers the camera+mic grant, skip the gate.
-    void tryAutoGrantMedia();
     return () => {
       cancelled = true;
       detachInstallPrompt();
@@ -118,6 +127,7 @@ export function App() {
           <div className="text-zinc-500 text-sm">Loading project…</div>
         ) : (
           <>
+            <RecoveryBanner />
             <Viewport />
             {hasAnyClips ? (
               <PadGrid />

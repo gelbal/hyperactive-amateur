@@ -13,11 +13,15 @@ import {
   installVisibilityListener,
   onMediaRecorderError,
 } from "./streamLifecycle";
+import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
 
 class FakeTrack extends EventTarget {
   kind: "video" | "audio";
   readyState: "live" | "ended" = "live";
+  stop = vi.fn(() => {
+    this.readyState = "ended";
+  });
   constructor(kind: "video" | "audio") {
     super();
     this.kind = kind;
@@ -45,7 +49,10 @@ function setGrantedWithStream(stream: MediaStream) {
 }
 
 describe("streamLifecycle", () => {
-  beforeEach(() => useAppStore.getState().actions.reset());
+  beforeEach(() => {
+    __resetExportSessionForTesting();
+    useAppStore.getState().actions.reset();
+  });
 
   describe("attachStreamEndedListeners (track.onended)", () => {
     it("transitions granted → suspended and clears media.stream when any track ends", () => {
@@ -132,6 +139,29 @@ describe("streamLifecycle", () => {
       expect(useAppStore.getState().media.status).toBe("suspended");
       detach();
     });
+
+    it("on hidden: aborts an active export and still suspends held media", () => {
+      const { stream, tracks } = makeStream();
+      setGrantedWithStream(stream);
+      const abort = vi.fn();
+      const unregister = registerExportSession({ abort });
+      if (!unregister) throw new Error("unexpected active export session");
+      const detach = installVisibilityListener();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      expect(abort).toHaveBeenCalledWith("Export was interrupted because the page was hidden.");
+      expect(useAppStore.getState().media.stream).toBeNull();
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(tracks[0].stop).toHaveBeenCalled();
+      expect(tracks[1].stop).toHaveBeenCalled();
+      detach();
+      unregister();
+    });
   });
 
   describe("onMediaRecorderError", () => {
@@ -150,6 +180,17 @@ describe("streamLifecycle", () => {
       setGrantedWithStream(stream);
 
       onMediaRecorderError(stream, new Error("stream gone"));
+
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+    });
+
+    it("transitions granted → suspended when only one required track has ended", () => {
+      const { stream, tracks } = makeStream();
+      tracks[0].readyState = "ended";
+      setGrantedWithStream(stream);
+
+      onMediaRecorderError(stream, new Error("partial stream loss"));
 
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(useAppStore.getState().media.stream).toBeNull();

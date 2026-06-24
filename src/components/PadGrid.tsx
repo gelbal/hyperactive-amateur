@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 import { triggerTrackNow } from "../lib/audio";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const FLASH_MS = 150;
 const TRACK_COUNT = 8;
@@ -15,6 +16,7 @@ function Pad({ trackId }: PadProps) {
   const seq = useAppStore((s) => s.playback.triggerSeq[trackId]);
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
+  const canStart = useAppStore(canStartAudibleAction);
   const [flashing, setFlashing] = useState(false);
 
   useEffect(() => {
@@ -29,10 +31,13 @@ function Pad({ trackId }: PadProps) {
       type="button"
       aria-label={`pad ${trackId + 1}`}
       data-flashing={flashing}
+      disabled={!canStart}
       onClick={() => void triggerTrackNow(trackId)}
       className={
         "relative aspect-square rounded-lg border overflow-hidden transition-colors " +
-        (flashing
+        (!canStart
+          ? "bg-zinc-900 border-zinc-800 opacity-60 cursor-not-allowed"
+          : flashing
           ? "bg-orange-500 border-orange-300"
           : "bg-zinc-900 border-zinc-700 hover:border-zinc-500")
       }

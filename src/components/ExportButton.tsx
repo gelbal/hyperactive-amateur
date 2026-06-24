@@ -8,6 +8,7 @@ import { detectSupportedFormats } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const MIN_BARS = 1;
 const MAX_BARS = 8;
@@ -25,6 +26,7 @@ function readStoredFormat(): string | null {
 
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
+  const canStart = useAppStore(canStartAudibleAction);
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
   const [progress, setProgress] = useState<number | null>(null);
@@ -57,6 +59,10 @@ export function ExportButton() {
   }, [open]);
 
   const handleRender = async () => {
+    if (!canStartAudibleAction(useAppStore.getState())) {
+      setError("Finish recording or export before rendering.");
+      return;
+    }
     const canvas = getActiveCanvas();
     if (!canvas) {
       setError("Viewport canvas not ready");
@@ -92,10 +98,13 @@ export function ExportButton() {
         aria-label="Export"
         aria-haspopup="dialog"
         aria-expanded={open}
+        disabled={!canStart && !open}
         onClick={() => setOpen((v) => !v)}
         className={
           "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
-          (open
+          (!canStart && !open
+            ? "bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed"
+            : open
             ? "bg-zinc-800 border-zinc-600 text-zinc-200"
             : "bg-zinc-900 border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500")
         }
@@ -181,7 +190,7 @@ export function ExportButton() {
           <button
             type="button"
             onClick={() => void handleRender()}
-            disabled={rendering}
+            disabled={rendering || !canStart}
             className="flex items-center justify-center gap-2 px-4 py-2 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50"
           >
             <Download size={16} />

@@ -3,7 +3,9 @@
 import { get, set, del } from "idb-keyval";
 import type { AppState, CutSubdivision, Subgenre, Tag, Vibe } from "../types";
 
+export const PERSISTED_SCHEMA_VERSION = 1;
 export const PROJECT_KEY = "hyperactive-amateur-project";
+export const PROJECT_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
 
 export interface PersistedTrack {
   id: number;
@@ -26,6 +28,7 @@ export interface PersistedTrack {
 }
 
 export interface PersistedProject {
+  schemaVersion?: number;
   bpm: number;
   swing: number;
   cutSubdivision: CutSubdivision;
@@ -43,6 +46,7 @@ export interface PersistedProject {
 
 export function snapshot(state: AppState): PersistedProject {
   return {
+    schemaVersion: PERSISTED_SCHEMA_VERSION,
     bpm: state.project.bpm,
     swing: state.project.swing,
     cutSubdivision: state.project.cutSubdivision,
@@ -75,12 +79,24 @@ export async function saveProject(state: AppState): Promise<void> {
 
 export async function loadProject(): Promise<PersistedProject | null> {
   const value = await get(PROJECT_KEY);
-  if (!value || typeof value !== "object" || !Array.isArray((value as PersistedProject).tracks)) {
+  if (!value || typeof value !== "object") {
     return null;
   }
   return value as PersistedProject;
 }
 
+export async function saveRecoveryBackup(project: PersistedProject): Promise<void> {
+  await set(PROJECT_BACKUP_KEY, {
+    backedUpAt: Date.now(),
+    project,
+  });
+}
+
+export async function loadRecoveryBackup(): Promise<unknown | null> {
+  return (await get(PROJECT_BACKUP_KEY)) ?? null;
+}
+
 export async function clearProject(): Promise<void> {
   await del(PROJECT_KEY);
+  await del(PROJECT_BACKUP_KEY);
 }

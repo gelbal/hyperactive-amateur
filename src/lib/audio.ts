@@ -2,6 +2,8 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
+import { canStartAudibleAction } from "./audibleActionGate";
+import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
 import type { Clip, Track } from "../types";
 
@@ -113,7 +115,7 @@ export function triggerTrack(trackId: number, when: number): void {
 }
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
-  if (useAppStore.getState().playback.isExporting) return;
+  if (!canStartAudibleAction(useAppStore.getState())) return;
   await ensureAudioStarted();
   triggerTrack(trackId, nowSeconds());
 }
@@ -159,6 +161,7 @@ function syncPlayers(tracks: Track[]): void {
 }
 
 export async function startPlayback(): Promise<void> {
+  if (!canStartAudibleAction(useAppStore.getState())) return;
   await ensureAudioStarted();
   stepCounter = 0;
   Tone.getTransport().position = 0;
@@ -167,7 +170,10 @@ export async function startPlayback(): Promise<void> {
   Tone.getTransport().start();
 }
 
-export function stopPlayback(): void {
+export function stopPlayback(options: { allowExportStop?: boolean } = {}): void {
+  if (!options.allowExportStop) {
+    abortActiveExport("Export was interrupted by a playback stop.");
+  }
   Tone.getTransport().stop();
   Tone.getTransport().position = 0;
   stepCounter = 0;
@@ -177,11 +183,13 @@ export function stopPlayback(): void {
 }
 
 export async function togglePlayback(): Promise<void> {
-  if (useAppStore.getState().playback.isExporting) return;
-  const isPlaying = useAppStore.getState().playback.isPlaying;
+  const state = useAppStore.getState();
+  if (state.playback.isExporting) return;
+  const isPlaying = state.playback.isPlaying;
   if (isPlaying) {
     stopPlayback();
   } else {
+    if (!canStartAudibleAction(state)) return;
     await startPlayback();
     useAppStore.getState().actions.setIsPlaying(true);
   }

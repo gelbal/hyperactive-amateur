@@ -4,6 +4,8 @@ import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import { ensureAudioStarted, stopPlayback } from "./audio";
 import { timeoutAfter, waitMs } from "./async";
+import { canStartAudibleAction } from "./audibleActionGate";
+import { registerExportSession } from "./exportSession";
 
 const FRAMERATE = 30;
 const EXPORT_STOP_TIMEOUT_MS = 5000;
@@ -67,9 +69,26 @@ export async function exportSong(
   let progressTimer: ReturnType<typeof setInterval> | null = null;
   let exportStream: ExportStream | null = null;
   let recorder: MediaRecorder | null = null;
+  let unregisterExportSession: (() => void) | null = null;
+  let ownsExportSession = false;
   const chunks: Blob[] = [];
 
   try {
+    if (!canStartAudibleAction(useAppStore.getState())) {
+      throw new Error("Cannot export while recording or another export is active.");
+    }
+
+    let abortExport: (reason: string) => void = () => undefined;
+    const exportAbort = new Promise<never>((_, reject) => {
+      abortExport = (reason: string) => reject(new Error(reason));
+    });
+    unregisterExportSession = registerExportSession({ abort: abortExport });
+    if (!unregisterExportSession) {
+      throw new Error("Another export render is already active.");
+    }
+    ownsExportSession = true;
+    useAppStore.getState().actions.setIsExporting(true);
+
     await ensureAudioStarted();
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
@@ -96,8 +115,7 @@ export async function exportSong(
       };
     });
 
-    stopPlayback();
-    useAppStore.getState().actions.setIsExporting(true);
+    stopPlayback({ allowExportStop: true });
     useAppStore.getState().actions.setIsPlaying(true);
     const transport = Tone.getTransport();
 
@@ -116,6 +134,7 @@ export async function exportSong(
     const renderResult = await Promise.race([
       waitMs(durationMs).then(() => "duration" as const),
       recorderDone.then(() => "recorder" as const),
+      exportAbort,
     ]);
     if (renderResult === "recorder") {
       if (recorderError) throw recorderError;
@@ -128,6 +147,7 @@ export async function exportSong(
     await Promise.race([
       recorderDone,
       timeoutAfter(EXPORT_STOP_TIMEOUT_MS, "MediaRecorder did not finish export after stop."),
+      exportAbort,
     ]);
     if (recorderError) throw recorderError;
 
@@ -138,16 +158,19 @@ export async function exportSong(
     return new Blob(chunks, { type: mimeType });
   } finally {
     if (progressTimer) clearInterval(progressTimer);
-    if (recorder && recorder.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
-        // Recorder may already be inactive or in the middle of stopping.
+    if (ownsExportSession) {
+      unregisterExportSession?.();
+      if (recorder && recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          // Recorder may already be inactive or in the middle of stopping.
+        }
       }
+      stopPlayback({ allowExportStop: true });
+      useAppStore.getState().actions.setIsExporting(false);
+      exportStream?.cleanup();
     }
-    stopPlayback();
-    useAppStore.getState().actions.setIsExporting(false);
-    exportStream?.cleanup();
   }
 }
 
@@ -159,7 +182,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function defaultExportFilename(extension = "webm"): string {

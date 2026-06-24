@@ -276,7 +276,7 @@ function subdivisionToSeconds(value: CutSubdivision): number {
   }
 }
 
-export function drawCurrentFrame(ctx: CanvasRenderingContext2D, _audioTime: number): void {
+export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
 
@@ -285,7 +285,14 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, _audioTime: numb
 
   if (!currentlyDisplayed) return;
   const video = videos.get(currentlyDisplayed.trackId);
-  if (!video) return;
+  const trim = trims.get(currentlyDisplayed.trackId);
+  if (!video || !trim) return;
+  const trimDurationMs = trim.endMs - trim.startMs;
+  const elapsedMs = (audioTime - currentlyDisplayed.startTime) * 1000;
+  if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
+    video.pause();
+    return;
+  }
   // Cameras typically negotiate 16:9 (e.g. 1280x720) even when we ask for
   // 1:1, so the raw video is wider than tall. Center-crop a square source
   // rect so we draw without horizontal squish on the 1:1 canvas.
