@@ -227,3 +227,14 @@ Date: 2026-06-24
   - `npm run smoke:browser`: passed, 3 Playwright tests.
   - `npm audit --audit-level=moderate`: passed with 0 vulnerabilities.
   - `git diff --check`: passed.
+
+## Vercel Type Surface Fix
+
+- Status: complete.
+- Vercel deploy reported TypeScript errors for Node built-ins (`node:stream`, `node:crypto`, `node:fs`, `node:path`, `node:http`), Node globals (`process`), and fetch-style globals (`Request`, `Response`, `Headers`, `RequestInit`, `fetch`, `DOMException`) in `vite.config.ts` and `api/gemini.ts`.
+- Fix:
+  - Added `@types/node` as a direct dev dependency instead of relying on Vite/Vitest transitive type packages.
+  - Updated `tsconfig.node.json` with `types: ["node"]`.
+  - Added `DOM` and `DOM.Iterable` libs to the Node/API TypeScript project because the Vercel-style API handler and Vite dev middleware intentionally use fetch-standard request/response types.
+- Validation after fix:
+  - `npm run build`: passed.
