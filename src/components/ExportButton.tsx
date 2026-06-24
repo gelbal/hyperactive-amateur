@@ -14,6 +14,15 @@ const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
 
+function readStoredFormat(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(FORMAT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
   const [open, setOpen] = useState(false);
@@ -27,15 +36,9 @@ export function ExportButton() {
 
   const formats = useMemo(() => detectSupportedFormats(), []);
   const [mimeType, setMimeType] = useState<string>(() => {
-    const saved =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(FORMAT_STORAGE_KEY)
-        : null;
+    const saved = readStoredFormat();
     if (saved && formats.some((f) => f.mimeType === saved)) return saved;
-    // First-use default: prefer MP4 (better for sharing to WhatsApp/iMessage/
-    // Twitter/Instagram); fall back to whatever the browser does support.
-    const mp4 = formats.find((f) => f.extension === "mp4");
-    return (mp4 ?? formats[0])?.mimeType ?? "";
+    return formats[0]?.mimeType ?? "";
   });
 
   useEffect(() => {

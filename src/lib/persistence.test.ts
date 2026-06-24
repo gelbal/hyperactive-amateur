@@ -34,10 +34,12 @@ describe("persistence", () => {
 
   it("round-trips posterBlob alongside the clip blob", async () => {
     const posterBlob = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: "image/jpeg" });
+    const audioBlob = new Blob([new Uint8Array([0x52, 0x49, 0x46, 0x46])], { type: "audio/wav" });
     useAppStore.getState().actions.setTrackClip(1, {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioBlob,
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -51,6 +53,9 @@ describe("persistence", () => {
     // confirm it round-trips as non-null where set and stays null elsewhere.
     expect(loaded?.tracks[1].posterBlob).not.toBeNull();
     expect(loaded?.tracks[1].posterBlob).toBeDefined();
+    expect(loaded?.tracks[1].audioBlob).not.toBeNull();
+    expect(loaded?.tracks[1].audioBlob).toBeDefined();
     expect(loaded?.tracks[0].posterBlob).toBeNull();
+    expect(loaded?.tracks[0].audioBlob).toBeNull();
   });
 });

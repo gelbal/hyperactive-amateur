@@ -2,6 +2,7 @@
 // ABOUTME: Dismissible, persisted in localStorage so it doesn't nag returning users.
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { hasSupportedRecordingMimeType } from "../lib/mediaRecorderSupport";
 
 const DISMISS_KEY = "hyperactive-amateur-compat-dismissed";
 
@@ -15,8 +16,8 @@ export function detectSupport(): SupportReport {
   if (typeof MediaRecorder === "undefined") missing.push("MediaRecorder");
   else {
     try {
-      if (!MediaRecorder.isTypeSupported("video/webm; codecs=vp9,opus")) {
-        missing.push("WebM/VP9 recording");
+      if (!hasSupportedRecordingMimeType()) {
+        missing.push("supported recording format");
       }
     } catch {
       missing.push("MediaRecorder");
@@ -25,7 +26,11 @@ export function detectSupport(): SupportReport {
   if (typeof HTMLCanvasElement === "undefined" || typeof HTMLCanvasElement.prototype.captureStream !== "function") {
     missing.push("Canvas captureStream");
   }
-  if (typeof window !== "undefined" && typeof (window as Window & { AudioContext?: unknown }).AudioContext === "undefined") {
+  if (
+    typeof window !== "undefined" &&
+    typeof (window as Window & { AudioContext?: unknown }).AudioContext === "undefined" &&
+    typeof (window as Window & { webkitAudioContext?: unknown }).webkitAudioContext === "undefined"
+  ) {
     missing.push("Web Audio API");
   }
   if (typeof indexedDB === "undefined") missing.push("IndexedDB");
@@ -63,7 +68,7 @@ export function CompatibilityBanner() {
       className="bg-orange-900/80 border-b border-orange-700 text-orange-100 px-4 py-2 flex items-center gap-3"
     >
       <span className="text-sm flex-1">
-        Hyperactive Amateur needs Chrome or Edge. Your browser is missing: {report.missing.join(", ")}.
+        Hyperactive Amateur needs modern browser media APIs. Your browser is missing: {report.missing.join(", ")}.
       </span>
       <button
         type="button"

@@ -40,6 +40,7 @@ interface PlayerMock {
   dispose: ReturnType<typeof vi.fn>;
   toDestination: () => PlayerMock;
   loaded: boolean;
+  volume: { value: number };
 }
 const playerInstances: PlayerMock[] = [];
 function makePlayer(): PlayerMock {
@@ -48,6 +49,7 @@ function makePlayer(): PlayerMock {
     dispose: vi.fn(),
     toDestination: () => p,
     loaded: true,
+    volume: { value: 0 },
   };
   playerInstances.push(p);
   return p;
@@ -63,8 +65,9 @@ vi.mock("tone", () => ({
   now: vi.fn(() => 0),
 }));
 
-import { initTransport, __resetAudioForTesting } from "./audio";
+import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
 import { useAppStore } from "../store/useAppStore";
+import * as Tone from "tone";
 
 function makeClip() {
   return {
@@ -86,6 +89,7 @@ describe("audio: per-step trigger logic", () => {
     synthInstances.length = 0;
     playerInstances.length = 0;
     videoEngineTrigger.mockClear();
+    vi.mocked(Tone.start).mockClear();
   });
 
   it("clipped track: fires player + videoEngine; showVideo=false skips video; muted skips both", () => {
@@ -118,6 +122,36 @@ describe("audio: per-step trigger logic", () => {
     useAppStore.getState().actions.toggleStep(2, 0);
     const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
     cb?.(0);
-    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("manual triggers unlock the audio context before firing", async () => {
+    initTransport();
+    await triggerTrackNow(2);
+    expect(Tone.start).toHaveBeenCalled();
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("ignores manual playback controls while export owns the Transport", async () => {
+    initTransport();
+    useAppStore.getState().actions.setIsExporting(true);
+
+    await triggerTrackNow(2);
+    await togglePlayback();
+
+    expect(Tone.start).not.toHaveBeenCalled();
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(synthInstances[2].triggerAttackRelease).not.toHaveBeenCalled();
+  });
+
+  it("applies persisted linear track volume to Tone players", () => {
+    initTransport();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackVolume(0, 0.5);
+    actions.setTrackClip(0, makeClip());
+    expect(playerInstances[0].volume.value).toBeCloseTo(-6.0206, 4);
+
+    actions.setTrackVolume(0, 0);
+    expect(playerInstances[0].volume.value).toBe(-Infinity);
   });
 });

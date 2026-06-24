@@ -2,7 +2,7 @@
 // ABOUTME: Each pad subscribes to playback.triggerSeq[trackId] and flashes briefly on every fire.
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
-import { triggerTrack, nowSeconds } from "../lib/audio";
+import { triggerTrackNow } from "../lib/audio";
 
 const FLASH_MS = 150;
 const TRACK_COUNT = 8;
@@ -29,7 +29,7 @@ function Pad({ trackId }: PadProps) {
       type="button"
       aria-label={`pad ${trackId + 1}`}
       data-flashing={flashing}
-      onClick={() => triggerTrack(trackId, nowSeconds())}
+      onClick={() => void triggerTrackNow(trackId)}
       className={
         "relative aspect-square rounded-lg border overflow-hidden transition-colors " +
         (flashing

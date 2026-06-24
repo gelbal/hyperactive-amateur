@@ -2,10 +2,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 
-const fakeAudioBuffer = { duration: 1, sampleRate: 48000 } as AudioBuffer;
+const audioMocks = vi.hoisted(() => ({
+  fakeAudioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+  sidecarAudioBuffer: { duration: 0.5, sampleRate: 48000 } as AudioBuffer,
+  decodeAudioData: vi.fn(),
+}));
+
+const fakeAudioBuffer = audioMocks.fakeAudioBuffer;
 vi.mock("./audio", () => ({
   getAudioContext: () => ({
-    decodeAudioData: vi.fn(async () => fakeAudioBuffer),
+    decodeAudioData: audioMocks.decodeAudioData,
   }),
 }));
 // jsdom can't decode video — short-circuit poster regen so legacy-row tests
@@ -24,6 +30,7 @@ function makeClip(): Clip {
     blob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/webm" }),
     url: "blob:test/x",
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioBlob: new Blob([new Uint8Array([4, 5, 6])], { type: "audio/wav" }),
     trimStartMs: 50,
     trimEndMs: 950,
     durationMs: 1000,
@@ -36,6 +43,8 @@ describe("rehydrateFromStorage", () => {
   beforeEach(async () => {
     useAppStore.getState().actions.reset();
     await clearProject();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockResolvedValue(fakeAudioBuffer);
   });
 
   it("returns false when nothing has been saved", async () => {
@@ -63,6 +72,21 @@ describe("rehydrateFromStorage", () => {
     expect(restored.project.tracks[0].clip?.url).toMatch(/^blob:/);
     // Persisted posterBlob is restored as a fresh object URL.
     expect(restored.project.tracks[0].clip?.posterUrl).toMatch(/^blob:/);
+  });
+
+  it("uses a persisted audio sidecar instead of decoding the video blob as audio", async () => {
+    audioMocks.decodeAudioData.mockResolvedValueOnce(audioMocks.sidecarAudioBuffer);
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
+    await saveProject(useAppStore.getState());
+
+    useAppStore.getState().actions.reset();
+    const ok = await rehydrateFromStorage();
+
+    expect(ok).toBe(true);
+    expect(useAppStore.getState().project.tracks[0].clip?.audioBuffer).toBe(
+      audioMocks.sidecarAudioBuffer,
+    );
+    expect(audioMocks.decodeAudioData).toHaveBeenCalledTimes(1);
   });
 
   it("sets recordingStationDismissed=true after rehydrating a project with at least one clip", async () => {

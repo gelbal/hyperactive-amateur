@@ -2,6 +2,7 @@
 // ABOUTME: Three event sources route through here: track.onended, visibilitychange, MediaRecorder.onerror.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
+import { stopPlayback } from "./audio";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
@@ -37,7 +38,7 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
   };
 }
 
-// Listen for page-visibility changes. On hidden: stop the Transport (no saved-
+// Listen for page-visibility changes. On hidden: stop playback (no saved-
 // position bookkeeping — restart is user-initiated) and suspend the held
 // stream so the reconnect pill takes over. On visible: nudge the AudioContext
 // awake (iOS suspends it when the tab hides); the store stays suspended until
@@ -47,7 +48,7 @@ export function installVisibilityListener(): () => void {
   const handler = () => {
     if (document.hidden) {
       try {
-        Tone.getTransport().stop();
+        stopPlayback();
       } catch {
         // Transport may not be initialized yet; safe to ignore.
       }

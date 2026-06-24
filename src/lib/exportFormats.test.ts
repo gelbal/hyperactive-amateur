@@ -1,5 +1,5 @@
 // ABOUTME: exportFormats tests — detectSupportedFormats against a stubbed MediaRecorder.isTypeSupported.
-// ABOUTME: Output is deduped to one entry per container (mp4, webm) in preference order (MP4 first).
+// ABOUTME: Output is deduped to one entry per container (webm, mp4) in preference order.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { detectSupportedFormats } from "./exportFormats";
 
@@ -34,10 +34,10 @@ describe("detectSupportedFormats", () => {
     expect(out[0].label).toBe("WebM (VP9)");
   });
 
-  it("returns MP4 first then WebM when both containers are supported", () => {
+  it("returns WebM first then MP4 when both containers are supported", () => {
     stub(["video/mp4; codecs=avc1.42E01E,mp4a.40.2", "video/webm; codecs=vp9,opus"]);
     const out = detectSupportedFormats();
-    expect(out.map((f) => f.extension)).toEqual(["mp4", "webm"]);
+    expect(out.map((f) => f.extension)).toEqual(["webm", "mp4"]);
   });
 
   it("dedupes to one MP4 + one WebM even when every preference MIME is supported", () => {
@@ -50,9 +50,9 @@ describe("detectSupportedFormats", () => {
     ]);
     const out = detectSupportedFormats();
     expect(out).toHaveLength(2);
-    expect(out[0].extension).toBe("mp4");
-    expect(out[0].label).toBe("MP4 (H.264)"); // first preference wins per container
-    expect(out[1].extension).toBe("webm");
-    expect(out[1].label).toBe("WebM (VP9)");
+    expect(out[0].extension).toBe("webm");
+    expect(out[0].label).toBe("WebM (VP9)"); // first preference wins per container
+    expect(out[1].extension).toBe("mp4");
+    expect(out[1].label).toBe("MP4 (H.264)");
   });
 });

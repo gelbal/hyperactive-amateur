@@ -1,18 +1,25 @@
 // ABOUTME: export tests — buildExportStream wires the audio tap; exportSong runs Transport + MediaRecorder.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const destinationConnect = vi.fn();
-const destinationDisconnect = vi.fn();
-const transport = { start: vi.fn(), stop: vi.fn(), position: 0 };
+const toneMocks = vi.hoisted(() => {
+  const destinationConnect = vi.fn();
+  const destinationDisconnect = vi.fn();
+  const toneStart = vi.fn().mockResolvedValue(undefined);
+  const transport = { start: vi.fn(), stop: vi.fn(), position: 0 };
+  return { destinationConnect, destinationDisconnect, toneStart, transport };
+});
+
 vi.mock("tone", () => ({
+  start: toneMocks.toneStart,
   getDestination: vi.fn(() => ({
-    connect: destinationConnect,
-    disconnect: destinationDisconnect,
+    connect: toneMocks.destinationConnect,
+    disconnect: toneMocks.destinationDisconnect,
   })),
-  getTransport: vi.fn(() => transport),
+  getTransport: vi.fn(() => toneMocks.transport),
 }));
 
 import { buildExportStream, defaultExportFilename, exportSong } from "./export";
+import { useAppStore } from "../store/useAppStore";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -34,17 +41,17 @@ function makeAudioContext() {
 
 describe("buildExportStream", () => {
   beforeEach(() => {
-    destinationConnect.mockClear();
-    destinationDisconnect.mockClear();
+    toneMocks.destinationConnect.mockClear();
+    toneMocks.destinationDisconnect.mockClear();
   });
 
   it("returns a stream with a video + audio track and cleanup disconnects the tap", () => {
     const { stream, cleanup } = buildExportStream(makeCanvas(), makeAudioContext());
     expect(stream.getVideoTracks()).toHaveLength(1);
     expect(stream.getAudioTracks()).toHaveLength(1);
-    expect(destinationConnect).toHaveBeenCalledTimes(1);
+    expect(toneMocks.destinationConnect).toHaveBeenCalledTimes(1);
     cleanup();
-    expect(destinationDisconnect).toHaveBeenCalledTimes(1);
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -61,6 +68,7 @@ describe("exportSong", () => {
     start() {
       this.state = "recording";
     }
+    requestData() {}
     stop() {
       this.state = "inactive";
       queueMicrotask(() => {
@@ -75,12 +83,17 @@ describe("exportSong", () => {
   beforeEach(() => {
     originalRecorder = (globalThis as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
-    transport.start.mockClear();
-    transport.stop.mockClear();
+    toneMocks.transport.start.mockClear();
+    toneMocks.transport.stop.mockClear();
+    toneMocks.transport.position = 0;
+    toneMocks.toneStart.mockClear();
+    toneMocks.destinationDisconnect.mockClear();
+    useAppStore.getState().actions.reset();
   });
 
   afterEach(() => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+    vi.useRealTimers();
   });
 
   it("defaultExportFilename: default extension is .webm; .mp4 is honored when passed", () => {
@@ -96,25 +109,52 @@ describe("exportSong", () => {
     const onProgress = vi.fn();
     const blob = await exportSong(makeCanvas(), makeAudioContext(), {
       bars: 1,
-      bpm: 240,
+      bpm: 24000,
       mimeType: "video/webm; codecs=vp9,opus",
       onProgress,
     });
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.size).toBeGreaterThan(0);
     expect(blob.type).toContain("video/webm");
-    expect(transport.start).toHaveBeenCalled();
-    expect(transport.stop).toHaveBeenCalled();
+    expect(toneMocks.transport.start).toHaveBeenCalled();
+    expect(toneMocks.transport.stop).toHaveBeenCalled();
+    expect(toneMocks.toneStart).toHaveBeenCalled();
     expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
 
   it("exportSong honors a video/mp4 mimeType passed by the caller", async () => {
     const blob = await exportSong(makeCanvas(), makeAudioContext(), {
       bars: 1,
-      bpm: 240,
+      bpm: 24000,
       mimeType: "video/mp4",
     });
     expect(blob.type).toBe("video/mp4");
   });
-});
 
+  it("rejects and cleans up when MediaRecorder never finishes after stop", async () => {
+    class StuckMediaRecorder extends FakeMediaRecorder {
+      stop() {
+        this.state = "inactive";
+      }
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = StuckMediaRecorder;
+
+    vi.useFakeTimers();
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/did not finish export/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    await rejection;
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+});

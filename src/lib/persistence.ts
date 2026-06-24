@@ -8,6 +8,9 @@ export const PROJECT_KEY = "hyperactive-amateur-project";
 export interface PersistedTrack {
   id: number;
   clipBlob: Blob | null;
+  // Audio sidecar for clips recorded after live mic capture was introduced.
+  // Older saves do not have it; rehydrate falls back to clipBlob audio decode.
+  audioBlob?: Blob | null;
   // First-frame poster image persisted alongside the clip so reload doesn't
   // pay the regen cost. Older saves predate this field and read as undefined;
   // rehydrate falls back to regenerating from clipBlob.
@@ -51,6 +54,7 @@ export function snapshot(state: AppState): PersistedProject {
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
       clipBlob: track.clip ? track.clip.blob : null,
+      audioBlob: track.clip ? (track.clip.audioBlob ?? null) : null,
       posterBlob: track.clip ? track.clip.posterBlob : null,
       trimStartMs: track.clip ? track.clip.trimStartMs : 0,
       trimEndMs: track.clip ? track.clip.trimEndMs : 0,

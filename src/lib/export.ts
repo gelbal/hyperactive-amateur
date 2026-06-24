@@ -1,8 +1,12 @@
 // ABOUTME: export — combine the canvas captureStream and a tap of the Tone audio destination.
 // ABOUTME: Also drives the full real-time render: Transport + MediaRecorder + progress + Blob.
 import * as Tone from "tone";
+import { useAppStore } from "../store/useAppStore";
+import { ensureAudioStarted, stopPlayback } from "./audio";
+import { timeoutAfter, waitMs } from "./async";
 
 const FRAMERATE = 30;
+const EXPORT_STOP_TIMEOUT_MS = 5000;
 
 export interface ExportStream {
   stream: MediaStream;
@@ -60,51 +64,91 @@ export async function exportSong(
   const { bars, bpm, mimeType, onProgress } = options;
   const durationMs = (bars * 4 * 60_000) / bpm;
 
-  const { stream, cleanup } = buildExportStream(canvas, audioContext);
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: 4_000_000,
-  });
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event: BlobEvent) => {
-    if (event.data && event.data.size > 0) chunks.push(event.data);
-  };
-
-  const stopped = new Promise<void>((resolve, reject) => {
-    recorder.onstop = () => resolve();
-    recorder.onerror = (event) => {
-      const err = (event as ErrorEvent).error ?? new Error("MediaRecorder error");
-      reject(err instanceof Error ? err : new Error(String(err)));
-    };
-  });
-
-  const transport = Tone.getTransport();
-  transport.stop();
-  transport.position = 0;
-
-  recorder.start();
-  transport.start();
-
-  const startedAt = Date.now();
   let progressTimer: ReturnType<typeof setInterval> | null = null;
-  if (onProgress) {
-    onProgress(0);
-    progressTimer = setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      onProgress(Math.min(1, elapsed / durationMs));
-    }, 100);
+  let exportStream: ExportStream | null = null;
+  let recorder: MediaRecorder | null = null;
+  const chunks: Blob[] = [];
+
+  try {
+    await ensureAudioStarted();
+    exportStream = buildExportStream(canvas, audioContext);
+    recorder = new MediaRecorder(exportStream.stream, {
+      mimeType,
+      videoBitsPerSecond: 4_000_000,
+    });
+
+    recorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data && event.data.size > 0) chunks.push(event.data);
+    };
+
+    let recorderError: Error | null = null;
+    const recorderDone = new Promise<void>((resolve) => {
+      if (!recorder) {
+        recorderError = new Error("MediaRecorder was not initialized");
+        resolve();
+        return;
+      }
+      recorder.onstop = () => resolve();
+      recorder.onerror = (event) => {
+        const err = (event as ErrorEvent).error ?? new Error("MediaRecorder error");
+        recorderError = err instanceof Error ? err : new Error(String(err));
+        resolve();
+      };
+    });
+
+    stopPlayback();
+    useAppStore.getState().actions.setIsExporting(true);
+    useAppStore.getState().actions.setIsPlaying(true);
+    const transport = Tone.getTransport();
+
+    recorder.start(1000);
+    transport.start();
+
+    const startedAt = Date.now();
+    if (onProgress) {
+      onProgress(0);
+      progressTimer = setInterval(() => {
+        const elapsed = Date.now() - startedAt;
+        onProgress(Math.min(1, elapsed / durationMs));
+      }, 100);
+    }
+
+    const renderResult = await Promise.race([
+      waitMs(durationMs).then(() => "duration" as const),
+      recorderDone.then(() => "recorder" as const),
+    ]);
+    if (renderResult === "recorder") {
+      if (recorderError) throw recorderError;
+      throw new Error("MediaRecorder stopped before export finished.");
+    }
+    onProgress?.(1);
+
+    if (typeof recorder.requestData === "function") recorder.requestData();
+    if (recorder.state !== "inactive") recorder.stop();
+    await Promise.race([
+      recorderDone,
+      timeoutAfter(EXPORT_STOP_TIMEOUT_MS, "MediaRecorder did not finish export after stop."),
+    ]);
+    if (recorderError) throw recorderError;
+
+    if (chunks.length === 0) {
+      throw new Error("MediaRecorder finished export without producing data.");
+    }
+
+    return new Blob(chunks, { type: mimeType });
+  } finally {
+    if (progressTimer) clearInterval(progressTimer);
+    if (recorder && recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        // Recorder may already be inactive or in the middle of stopping.
+      }
+    }
+    stopPlayback();
+    useAppStore.getState().actions.setIsExporting(false);
+    exportStream?.cleanup();
   }
-
-  await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
-  if (progressTimer) clearInterval(progressTimer);
-  onProgress?.(1);
-
-  transport.stop();
-  if (recorder.state !== "inactive") recorder.stop();
-  await stopped;
-
-  cleanup();
-  return new Blob(chunks, { type: mimeType });
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

@@ -52,7 +52,7 @@ export async function requestMedia(): Promise<void> {
 
   inFlight = (async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+      const stream = await getUserMediaWithDeviceFallback();
       // Permission confirmed. Release the tracks immediately — the recording
       // flow / preview opens its own stream when it needs one.
       for (const track of stream.getTracks()) track.stop();
@@ -101,10 +101,25 @@ export class StaleDeviceError extends Error {
 }
 
 function isStaleDeviceError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
+  const name =
+    err instanceof Error
+      ? err.name
+      : typeof err === "object" && err !== null && "name" in err
+        ? String((err as { name: unknown }).name)
+        : "";
   // Chrome surfaces NotFoundError / OverconstrainedError when a saved deviceId
   // is no longer present (camera unplugged, mic removed).
-  return err.name === "NotFoundError" || err.name === "OverconstrainedError";
+  return name === "NotFoundError" || name === "OverconstrainedError";
+}
+
+async function getUserMediaWithDeviceFallback(): Promise<MediaStream> {
+  try {
+    return await navigator.mediaDevices.getUserMedia(buildConstraints());
+  } catch (err) {
+    if (!isStaleDeviceError(err)) throw err;
+    useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
+    return navigator.mediaDevices.getUserMedia(buildConstraints());
+  }
 }
 
 // Acquire a fresh MediaStream for either preview or capture (same constraints).
@@ -114,31 +129,13 @@ function isStaleDeviceError(err: unknown): boolean {
 // preference and retry once with the browser default.
 export async function acquireRecordingStream(): Promise<MediaStream> {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+    const stream = await getUserMediaWithDeviceFallback();
     lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
     useAppStore
       .getState()
       .actions.setMedia({ stream, status: "granted", error: null });
     return stream;
   } catch (err) {
-    if (isStaleDeviceError(err)) {
-      // Drop the offending preferences and retry once with defaults.
-      useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
-        lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
-        useAppStore
-          .getState()
-          .actions.setMedia({ stream, status: "granted", error: null });
-        return stream;
-      } catch (retryErr) {
-        const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        useAppStore
-          .getState()
-          .actions.setMedia({ stream: null, status: "denied", error: message });
-        throw retryErr;
-      }
-    }
     const message = err instanceof Error ? err.message : String(err);
     useAppStore
       .getState()

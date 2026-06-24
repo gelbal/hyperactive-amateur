@@ -23,6 +23,10 @@ export function getAudioContext(): AudioContext {
   return Tone.getContext().rawContext as AudioContext;
 }
 
+export async function ensureAudioStarted(): Promise<void> {
+  await Tone.start();
+}
+
 // Wires up Tone.Transport with a 16th-note loop callback. Idempotent — safe to call
 // multiple times (e.g. from React StrictMode-double-invoked effects).
 export function initTransport(): void {
@@ -104,12 +108,28 @@ export function triggerTrack(trackId: number, when: number): void {
   }
 
   const synth = metronomeSynths[trackId];
-  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when);
+  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when, track.volume);
   useAppStore.getState().actions.markTriggered(trackId);
+}
+
+export async function triggerTrackNow(trackId: number): Promise<void> {
+  if (useAppStore.getState().playback.isExporting) return;
+  await ensureAudioStarted();
+  triggerTrack(trackId, nowSeconds());
 }
 
 export function nowSeconds(): number {
   return Tone.now();
+}
+
+function linearVolumeToDb(volume: number): number {
+  const clamped = Math.max(0, Math.min(1, volume));
+  if (clamped === 0) return -Infinity;
+  return 20 * Math.log10(clamped);
+}
+
+function applyPlayerVolume(player: Tone.Player, volume: number): void {
+  player.volume.value = linearVolumeToDb(volume);
 }
 
 // Diff the current track list against the last clip we wired and create / dispose
@@ -117,9 +137,12 @@ export function nowSeconds(): number {
 function syncPlayers(tracks: Track[]): void {
   for (const track of tracks) {
     const previousClip = lastClips.get(track.id) ?? null;
-    if (track.clip === previousClip) continue;
-
     const existing = players.get(track.id);
+    if (track.clip === previousClip) {
+      if (existing) applyPlayerVolume(existing, track.volume);
+      continue;
+    }
+
     if (existing) {
       existing.dispose();
       players.delete(track.id);
@@ -127,6 +150,7 @@ function syncPlayers(tracks: Track[]): void {
 
     if (track.clip) {
       const player = new Tone.Player(track.clip.audioBuffer).toDestination();
+      applyPlayerVolume(player, track.volume);
       players.set(track.id, player);
     }
 
@@ -135,23 +159,28 @@ function syncPlayers(tracks: Track[]): void {
 }
 
 export async function startPlayback(): Promise<void> {
-  await Tone.start();
+  await ensureAudioStarted();
   stepCounter = 0;
+  Tone.getTransport().position = 0;
+  videoEngine.resetPlaybackState();
+  useAppStore.getState().actions.setCurrentStep(0);
   Tone.getTransport().start();
 }
 
 export function stopPlayback(): void {
   Tone.getTransport().stop();
+  Tone.getTransport().position = 0;
   stepCounter = 0;
   videoEngine.resetPlaybackState();
   useAppStore.getState().actions.setCurrentStep(0);
+  useAppStore.getState().actions.setIsPlaying(false);
 }
 
 export async function togglePlayback(): Promise<void> {
+  if (useAppStore.getState().playback.isExporting) return;
   const isPlaying = useAppStore.getState().playback.isPlaying;
   if (isPlaying) {
     stopPlayback();
-    useAppStore.getState().actions.setIsPlaying(false);
   } else {
     await startPlayback();
     useAppStore.getState().actions.setIsPlaying(true);

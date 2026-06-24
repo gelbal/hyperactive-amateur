@@ -55,14 +55,14 @@ describe("ExportButton format picker", () => {
     render(<ExportButton />);
     fireEvent.click(screen.getByRole("button", { name: /export/i }));
     expect(screen.getByText(/^format$/i)).toBeInTheDocument();
-    // MP4 default is preferred (better for sharing) when supported.
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-      "video/mp4; codecs=avc1.42E01E,mp4a.40.2",
-    );
-    // Switch to WebM.
-    fireEvent.click(screen.getByLabelText(/webm/i));
+    // WebM is the first-use default when Chromium-style support is present.
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
       "video/webm; codecs=vp9,opus",
+    );
+    // Switch to MP4.
+    fireEvent.click(screen.getByLabelText(/mp4/i));
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
+      "video/mp4; codecs=avc1.42E01E,mp4a.40.2",
     );
   });
 

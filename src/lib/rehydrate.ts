@@ -19,6 +19,17 @@ async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(buffer.slice(0));
 }
 
+async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise<AudioBuffer> {
+  if (audioBlob) {
+    try {
+      return await decodeBlob(audioBlob);
+    } catch {
+      // Fall through to legacy mixed-container decode below.
+    }
+  }
+  return decodeBlob(clipBlob);
+}
+
 export async function rehydrateFromStorage(): Promise<boolean> {
   const persisted = await loadProject();
   if (!persisted) return false;
@@ -31,7 +42,7 @@ export async function rehydrateFromStorage(): Promise<boolean> {
       let clip: Clip | null = null;
       if (pt.clipBlob) {
         try {
-          const audioBuffer = await decodeBlob(pt.clipBlob);
+          const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
           // Older saves predate posterBlob; regenerate from clipBlob so the
           // <img> thumbnails have something to show. Best-effort — null on fail.
           let posterBlob: Blob | null = pt.posterBlob ?? null;
@@ -46,6 +57,7 @@ export async function rehydrateFromStorage(): Promise<boolean> {
             blob: pt.clipBlob,
             url: URL.createObjectURL(pt.clipBlob),
             audioBuffer,
+            audioBlob: pt.audioBlob ?? null,
             trimStartMs: pt.trimStartMs,
             trimEndMs: pt.trimEndMs,
             durationMs: pt.durationMs,

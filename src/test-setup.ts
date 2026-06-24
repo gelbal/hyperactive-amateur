@@ -25,6 +25,42 @@ if (typeof URL.revokeObjectURL !== "function") {
   (URL as any).revokeObjectURL = () => undefined;
 }
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(String(key)) ?? null,
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key: string) => values.delete(String(key)),
+    setItem: (key: string, value: string) => values.set(String(key), String(value)),
+  } as Storage;
+}
+
+if (typeof window !== "undefined") {
+  let storage: Storage | null = null;
+  try {
+    storage = window.localStorage;
+    const probe = "__ha_storage_probe__";
+    storage.setItem(probe, "1");
+    storage.removeItem(probe);
+  } catch {
+    storage = createMemoryStorage();
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: storage,
+    });
+  }
+  if (typeof globalThis.localStorage === "undefined" && storage) {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: storage,
+    });
+  }
+}
+
 // JSDOM doesn't implement HTMLCanvasElement.getContext. Stub it with a minimal
 // 2D context so our Viewport render loop runs cleanly in tests. The mock is
 // intentionally tiny — it returns no-op functions for the methods we call.

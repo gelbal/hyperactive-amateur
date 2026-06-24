@@ -1,6 +1,9 @@
-// ABOUTME: recordClip — record a fixed-duration WebM clip from a MediaStream and decode its audio.
-// ABOUTME: Returns the blob plus a pre-decoded AudioBuffer for low-latency Tone.Player playback.
+// ABOUTME: recordClip — record a fixed-duration camera clip and capture its mic audio.
+// ABOUTME: Returns the blob plus an AudioBuffer for low-latency Tone.Player playback.
 import { onMediaRecorderError } from "./streamLifecycle";
+import { getSupportedRecordingMimeType } from "./mediaRecorderSupport";
+import { startAudioBufferCapture } from "./audioCapture";
+import { timeoutAfter } from "./async";
 
 export interface RecordingResult {
   blob: Blob;
@@ -8,14 +11,7 @@ export interface RecordingResult {
   durationMs: number;
 }
 
-const PREFERRED_MIME = "video/webm; codecs=vp9,opus";
-const FALLBACK_MIME = "video/webm";
-
-function pickMimeType(): string {
-  if (typeof MediaRecorder === "undefined") return PREFERRED_MIME;
-  if (MediaRecorder.isTypeSupported(PREFERRED_MIME)) return PREFERRED_MIME;
-  return FALLBACK_MIME;
-}
+const RECORDER_STOP_TIMEOUT_MS = 5000;
 
 export interface RecordClipOptions {
   // When this fires, stop the recorder early and reject with AbortError.
@@ -34,8 +30,12 @@ export async function recordClip(
     throw new DOMException("Recording aborted before start", "AbortError");
   }
 
-  const mimeType = pickMimeType();
-  const recorder = new MediaRecorder(stream, { mimeType });
+  const mimeType = getSupportedRecordingMimeType();
+  const recorderOptions = mimeType ? { mimeType } : undefined;
+  const recorder = recorderOptions
+    ? new MediaRecorder(stream, recorderOptions)
+    : new MediaRecorder(stream);
+  const audioCapture = startAudioBufferCapture(stream, audioContext);
   const chunks: Blob[] = [];
 
   recorder.ondataavailable = (event: BlobEvent) => {
@@ -73,6 +73,7 @@ export async function recordClip(
   try {
     recorder.start();
   } catch (err) {
+    audioCapture?.cancel();
     if (signal && abortListener) signal.removeEventListener("abort", abortListener);
     throw err instanceof Error ? err : new Error(String(err));
   }
@@ -82,19 +83,39 @@ export async function recordClip(
   }, durationMs);
 
   try {
-    await stopped;
+    await Promise.race([
+      stopped,
+      timeoutAfter(
+        durationMs + RECORDER_STOP_TIMEOUT_MS,
+        "MediaRecorder did not finish recording after stop.",
+      ),
+    ]);
+  } catch (err) {
+    audioCapture?.cancel();
+    throw err;
   } finally {
     clearTimeout(stopTimer);
     if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+    if (recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        // Recorder may already be transitioning to inactive.
+      }
+    }
   }
 
   const blob = new Blob(chunks, { type: mimeType });
-  const arrayBuffer = await blob.arrayBuffer();
-  // Pass a copy to decodeAudioData — some browsers detach the input buffer.
-  const decodeBuffer = arrayBuffer.slice(0);
+  const capturedAudioBuffer = audioCapture?.stop() ?? null;
+  if (capturedAudioBuffer) {
+    return { blob, audioBuffer: capturedAudioBuffer, durationMs };
+  }
 
   let audioBuffer: AudioBuffer;
   try {
+    const arrayBuffer = await blob.arrayBuffer();
+    // Pass a copy to decodeAudioData — some browsers detach the input buffer.
+    const decodeBuffer = arrayBuffer.slice(0);
     audioBuffer = await audioContext.decodeAudioData(decodeBuffer);
   } catch (err) {
     throw new Error(

@@ -50,6 +50,7 @@ export function createInitialState(): AppState {
     },
     playback: {
       isPlaying: false,
+      isExporting: false,
       currentStep: 0,
       activeTriggers: [],
       triggerSeq: new Array(TRACK_COUNT).fill(0),

@@ -87,7 +87,7 @@ describe("streamLifecycle", () => {
   });
 
   describe("installVisibilityListener", () => {
-    it("on hidden: stops the Transport and suspends a held stream", () => {
+    it("on hidden: stops playback and suspends a held stream", () => {
       const transportStop = vi.fn();
       vi.mocked(Tone.getTransport).mockReturnValue({
         stop: transportStop,
@@ -96,6 +96,7 @@ describe("streamLifecycle", () => {
 
       const { stream } = makeStream();
       setGrantedWithStream(stream);
+      useAppStore.getState().actions.setIsPlaying(true);
       const detach = installVisibilityListener();
 
       Object.defineProperty(document, "hidden", {
@@ -105,6 +106,7 @@ describe("streamLifecycle", () => {
       document.dispatchEvent(new Event("visibilitychange"));
 
       expect(transportStop).toHaveBeenCalled();
+      expect(useAppStore.getState().playback.isPlaying).toBe(false);
       const media = useAppStore.getState().media;
       expect(media.status).toBe("suspended");
       expect(media.stream).toBeNull();

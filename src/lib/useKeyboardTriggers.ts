@@ -1,7 +1,7 @@
 // ABOUTME: useKeyboardTriggers — listens for Digit1-8 / Numpad1-8 and fires the matching track.
 // ABOUTME: Suppressed inside text inputs and on key repeat; uses Tone.now for audio-clock alignment.
 import { useEffect } from "react";
-import { triggerTrack, nowSeconds } from "./audio";
+import { triggerTrackNow } from "./audio";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -32,7 +32,7 @@ export function useKeyboardTriggers(): void {
       const trackId = trackIdForCode(event.code);
       if (trackId === null) return;
       event.preventDefault();
-      triggerTrack(trackId, nowSeconds());
+      void triggerTrackNow(trackId);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

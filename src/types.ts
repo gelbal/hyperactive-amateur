@@ -10,6 +10,9 @@ export interface Clip {
   url: string;
   // Decoded audio side of the clip; reused on every playback to avoid decode latency.
   audioBuffer: AudioBuffer;
+  // Persisted playback sidecar. Present for new recordings so reload does not
+  // depend on decoding a mixed video container as audio.
+  audioBlob?: Blob | null;
   trimStartMs: number;
   trimEndMs: number;
   durationMs: number;
@@ -88,6 +91,9 @@ export interface ProjectState {
 
 export interface PlaybackState {
   isPlaying: boolean;
+  // True while a real-time export render owns the Transport. User playback
+  // controls are ignored so they cannot silently corrupt the captured output.
+  isExporting: boolean;
   // 0..15 — drives the playhead UI.
   currentStep: number;
   // Recent trigger events the renderer consumes.

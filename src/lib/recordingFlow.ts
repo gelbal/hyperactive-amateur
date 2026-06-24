@@ -2,7 +2,7 @@
 // ABOUTME: Drives the countdown → record → trim → store → auto-tag pipeline; module-level controller serializes flows + carries Esc cancellation.
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
-import { getAudioContext } from "./audio";
+import { ensureAudioStarted, getAudioContext } from "./audio";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -11,6 +11,7 @@ import { sliceAudioBuffer } from "./audioBufferSlice";
 import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
+import { audioBufferToWav } from "./wavEncoder";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -100,6 +101,13 @@ async function runFlow(
 ): Promise<boolean> {
   const actions = useAppStore.getState().actions;
 
+  try {
+    await ensureAudioStarted();
+  } catch {
+    // Recording can still proceed; recordClip has a decode fallback if the
+    // live Web Audio tap cannot run.
+  }
+
   const externalStream = options.stream ?? null;
   let stream: MediaStream;
   if (externalStream) {
@@ -136,6 +144,7 @@ async function runFlow(
       blob: result.blob,
       url,
       audioBuffer: result.audioBuffer,
+      audioBlob: audioBufferToWav(result.audioBuffer),
       trimStartMs: trim.trimStartMs,
       trimEndMs: trim.trimEndMs,
       durationMs: result.durationMs,

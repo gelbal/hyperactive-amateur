@@ -80,6 +80,30 @@ describe("media", () => {
     expect(useAppStore.getState().media.error).toMatch(/blocked/);
   });
 
+  it("requestMedia clears stale saved device IDs and retries with defaults", async () => {
+    useAppStore.getState().actions.setPreferredDevices({
+      video: "missing-camera",
+      audio: "missing-mic",
+    });
+    const fake = makeFakeStream();
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException("device disappeared", "NotFoundError"))
+      .mockResolvedValueOnce(fake);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    await requestMedia();
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().media.videoDeviceId).toBeNull();
+    expect(useAppStore.getState().media.audioDeviceId).toBeNull();
+    expect(useAppStore.getState().media.status).toBe("granted");
+    for (const track of fake._tracks) expect(track.stop).toHaveBeenCalled();
+  });
+
   it("acquireRecordingStream + releaseRecordingStream round-trip", async () => {
     const fake = makeFakeStream();
     stubGetUserMedia(async () => fake);
