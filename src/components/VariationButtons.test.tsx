@@ -1,5 +1,5 @@
 // ABOUTME: VariationButtons tests — disabled gating until 4+ clips & a pattern, click → varyPattern with vibe + variation.
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const varyPattern = vi.fn();
@@ -24,6 +24,14 @@ function makeClip(): Clip {
     posterUrl: null,  };
 }
 
+function deferredGrid() {
+  let resolve!: (grid: boolean[][]) => void;
+  const promise = new Promise<boolean[][]>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("VariationButtons", () => {
   beforeEach(() => {
     varyPattern.mockReset();
@@ -37,17 +45,48 @@ describe("VariationButtons", () => {
     const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
     varyPattern.mockResolvedValue(grid);
     const actions = useAppStore.getState().actions;
-    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
-    actions.toggleStep(0, 0);
-    actions.setSubgenre("lo-fi");
-    actions.setVibe("varied");
+    act(() => {
+      for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+      actions.toggleStep(0, 0);
+      actions.setSubgenre("lo-fi");
+      actions.setVibe("varied");
+    });
 
     render(<VariationButtons />);
-    fireEvent.click(screen.getAllByLabelText("Break")[1]);
+    await act(async () => {
+      fireEvent.click(screen.getAllByLabelText("Break")[1]);
+      await Promise.resolve();
+    });
     await waitFor(() => expect(varyPattern).toHaveBeenCalled());
     const arg = varyPattern.mock.calls[0]?.[0] as { variation: string; subgenre: string; vibe: string };
     expect(arg.variation).toBe("break");
     expect(arg.subgenre).toBe("lo-fi");
     expect(arg.vibe).toBe("varied");
+  });
+
+  it("does not overwrite when the grid changes before the variation response resolves", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+    const pending = deferredGrid();
+    varyPattern.mockReturnValue(pending.promise);
+    render(<VariationButtons />);
+
+    fireEvent.click(screen.getByLabelText("Break"));
+    await waitFor(() => expect(varyPattern).toHaveBeenCalled());
+
+    await act(async () => {
+      actions.extendSteps();
+      pending.resolve(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+      await pending.promise;
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Beat changed while Gemini was thinking. Try again.",
+      ),
+    );
+    expect(useAppStore.getState().project.stepCount).toBe(20);
+    expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
   });
 });

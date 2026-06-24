@@ -1,6 +1,60 @@
 // ABOUTME: Vitest setup file — jest-dom matchers + small JSDOM polyfills for browser APIs.
 // ABOUTME: Referenced by vite.config.ts under test.setupFiles.
 import "@testing-library/jest-dom/vitest";
+import { afterEach, beforeEach } from "vitest";
+
+const originalConsoleError = console.error.bind(console);
+const originalConsoleWarn = console.warn.bind(console);
+let unexpectedConsoleMessages: string[] = [];
+
+function formatConsoleArg(arg: unknown): string {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return arg.stack ?? arg.message;
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return String(arg);
+  }
+}
+
+function formatConsoleMessage(args: unknown[]): string {
+  return args.map(formatConsoleArg).join(" ");
+}
+
+function isActWarning(message: string): boolean {
+  return message.includes("not wrapped in act") || message.includes("wrap-tests-with-act");
+}
+
+console.error = ((...args: unknown[]) => {
+  const message = formatConsoleMessage(args);
+  if (isActWarning(message) || !message.startsWith("[HA] ")) {
+    unexpectedConsoleMessages.push(`console.error: ${message}`);
+  }
+  originalConsoleError(...args);
+}) as typeof console.error;
+
+console.warn = ((...args: unknown[]) => {
+  const message = formatConsoleMessage(args);
+  if (isActWarning(message)) {
+    unexpectedConsoleMessages.push(`console.warn: ${message}`);
+  }
+  originalConsoleWarn(...args);
+}) as typeof console.warn;
+
+beforeEach(() => {
+  unexpectedConsoleMessages = [];
+});
+
+afterEach(() => {
+  if (unexpectedConsoleMessages.length === 0) return;
+  throw new Error(
+    [
+      "Unexpected console output during test.",
+      "Wrap React updates in act() or allow intentional app logger output with the [HA] prefix.",
+      ...unexpectedConsoleMessages,
+    ].join("\n\n"),
+  );
+});
 
 // JSDOM's Blob lacks arrayBuffer in some environments — polyfill it.
 if (typeof Blob !== "undefined" && typeof Blob.prototype.arrayBuffer !== "function") {
@@ -14,16 +68,13 @@ if (typeof Blob !== "undefined" && typeof Blob.prototype.arrayBuffer !== "functi
   };
 }
 
-// URL.createObjectURL / revokeObjectURL — JSDOM omits them by default.
-if (typeof URL.createObjectURL !== "function") {
-  let counter = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (URL as any).createObjectURL = () => `blob:test/${counter++}`;
-}
-if (typeof URL.revokeObjectURL !== "function") {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (URL as any).revokeObjectURL = () => undefined;
-}
+// URL.createObjectURL / revokeObjectURL — keep these browser-like and
+// deterministic in JSDOM even when the Node runtime exposes stricter versions.
+let objectUrlCounter = 0;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(URL as any).createObjectURL = () => `blob:test/${objectUrlCounter++}`;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(URL as any).revokeObjectURL = () => undefined;
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();

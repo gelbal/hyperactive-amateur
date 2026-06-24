@@ -46,7 +46,7 @@ export function RecordCountdown() {
       role="status"
       aria-live="assertive"
       aria-label="recording countdown"
-      className="absolute inset-0 z-40 bg-black/70 flex flex-col items-center justify-center gap-3 pointer-events-none"
+      className="absolute inset-0 z-40 bg-black/70 flex flex-col items-center justify-center gap-3 pointer-events-auto"
     >
       {state === "countdown" ? (
         <div

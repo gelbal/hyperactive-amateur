@@ -1,12 +1,12 @@
 /// <reference types="vitest" />
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { handleGeminiRequest } from "./api/gemini";
+import { handleGeminiRequest, handleGeminiTokenRequest } from "./api/gemini";
 
 // Mounts the same handler used by the Vercel function on /api/gemini in
 // the local dev server. process.env.GEMINI_API_KEY comes from .env.local
@@ -15,26 +15,33 @@ function geminiDevProxy(env: Record<string, string>): Plugin {
   return {
     name: "gemini-dev-proxy",
     configureServer(server) {
-      server.middlewares.use("/api/gemini", async (req, res, next) => {
-        if (req.method === undefined) return next();
-        if (req.url && req.url !== "/" && req.url !== "") {
-          // Sub-paths under /api/gemini aren't handled here.
-          return next();
-        }
-        // Ensure the handler sees the key whether Vite's loadEnv or the
-        // shell's environment supplied it.
-        if (env.GEMINI_API_KEY) process.env.GEMINI_API_KEY = env.GEMINI_API_KEY;
-        try {
-          const webRequest = await nodeRequestToWebRequest(req);
-          const webResponse = await handleGeminiRequest(webRequest);
-          await writeWebResponseToNodeResponse(webResponse, res);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          res.statusCode = 500;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ error: "dev-proxy-failed", message }));
-        }
-      });
+      const mountHandler = (
+        path: string,
+        handler: (request: Request) => Promise<Response>,
+      ) => {
+        server.middlewares.use(path, async (req, res, next) => {
+          if (req.method === undefined) return next();
+          if (req.url && req.url !== "/" && req.url !== "") {
+            return next();
+          }
+          // Ensure the handler sees the key whether Vite's loadEnv or the
+          // shell's environment supplied it.
+          if (env.GEMINI_API_KEY) process.env.GEMINI_API_KEY = env.GEMINI_API_KEY;
+          try {
+            const webRequest = await nodeRequestToWebRequest(req);
+            const webResponse = await handler(webRequest);
+            await writeWebResponseToNodeResponse(webResponse, res);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            res.statusCode = 500;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ error: "dev-proxy-failed", message }));
+          }
+        });
+      };
+
+      mountHandler("/api/gemini-token", handleGeminiTokenRequest);
+      mountHandler("/api/gemini", handleGeminiRequest);
     },
   };
 }
@@ -75,10 +82,24 @@ async function writeWebResponseToNodeResponse(
   nodeRes.end();
 }
 
+const PRECACHE_DECLARATION = 'const PRECACHE_URLS = ["/", "/index.html"]; // %PRECACHE_URLS%';
+
+function distAssetUrls(outDir: string): string[] {
+  const assetsDir = resolvePath(outDir, "assets");
+  if (!existsSync(assetsDir)) return [];
+  return readdirSync(assetsDir)
+    .filter((name) => !name.startsWith("."))
+    .map((name) => `/assets/${name}`)
+    .sort();
+}
+
 // Substitute %BUILD_HASH% in dist/sw.js with a per-deploy token so the SW
-// invalidates its caches when the bundle changes. Without this, a deployed
-// SW serves stale assets and users see a "broken in a way you can't explain"
-// state after a release.
+// invalidates its caches when the bundle changes. Also inject the emitted
+// Vite /assets/ files into the install-time precache list so the first
+// production load can be followed by an offline hard reload.
+//
+// Without this, a deployed SW can serve stale or incomplete assets and users
+// see a "broken in a way you can't explain" state after a release.
 //
 // The hash input is dist/index.html, which Vite has already rewritten to
 // embed the content-hashed JS/CSS asset filenames. Any code change → new
@@ -99,7 +120,15 @@ function swBuildHash(): Plugin {
         .digest("hex")
         .slice(0, 8);
       const swText = readFileSync(swPath, "utf8");
-      writeFileSync(swPath, swText.replace(/%BUILD_HASH%/g, hash));
+      const precacheUrls = ["/", "/index.html", ...distAssetUrls(outDir)];
+      const swWithHash = swText.replace(/%BUILD_HASH%/g, hash);
+      writeFileSync(
+        swPath,
+        swWithHash.replace(
+          PRECACHE_DECLARATION,
+          `const PRECACHE_URLS = ${JSON.stringify(precacheUrls)};`,
+        ),
+      );
     },
   };
 }

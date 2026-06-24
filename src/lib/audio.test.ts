@@ -60,8 +60,12 @@ vi.mock("tone", () => ({
   getTransport: vi.fn(() => transportMock),
   getDraw: vi.fn(() => drawMock),
   getContext: vi.fn(() => ({ rawContext: {} })),
-  MembraneSynth: vi.fn(() => makeSynth()),
-  Player: vi.fn(() => makePlayer()),
+  MembraneSynth: vi.fn(function MembraneSynth() {
+    return makeSynth();
+  }),
+  Player: vi.fn(function Player() {
+    return makePlayer();
+  }),
   now: vi.fn(() => 0),
 }));
 
@@ -84,6 +88,7 @@ function makeClip() {
 describe("audio: per-step trigger logic", () => {
   beforeEach(() => {
     __resetAudioForTesting();
+    useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     transportMock.scheduleRepeat.mockClear();
     synthInstances.length = 0;
@@ -135,6 +140,20 @@ describe("audio: per-step trigger logic", () => {
   it("ignores manual playback controls while export owns the Transport", async () => {
     initTransport();
     useAppStore.getState().actions.setIsExporting(true);
+    useAppStore.getState().actions.setIsPlaying(true);
+
+    await triggerTrackNow(2);
+    await togglePlayback();
+
+    expect(Tone.start).not.toHaveBeenCalled();
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(transportMock.stop).not.toHaveBeenCalled();
+    expect(synthInstances[2].triggerAttackRelease).not.toHaveBeenCalled();
+  });
+
+  it("ignores manual playback and pad triggers while recording is active", async () => {
+    initTransport();
+    useAppStore.getState().actions.setRecordingState("recording", 0);
 
     await triggerTrackNow(2);
     await togglePlayback();

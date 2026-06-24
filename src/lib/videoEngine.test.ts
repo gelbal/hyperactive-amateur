@@ -20,6 +20,7 @@ vi.mock("tone", () => ({
 }));
 
 import {
+  drawCurrentFrame,
   setClipForTrack,
   trigger,
   pickActiveEvent,
@@ -45,6 +46,27 @@ function makeClip(seed: number): Clip {
     durationMs: 1000,
     posterBlob: null,
     posterUrl: null,  };
+}
+
+function makeTrimmedClip(): Clip {
+  return {
+    ...makeClip(9),
+    trimStartMs: 100,
+    trimEndMs: 300,
+    durationMs: 1000,
+  };
+}
+
+function makeCanvasContext(): CanvasRenderingContext2D {
+  const canvas = document.createElement("canvas");
+  canvas.width = 480;
+  canvas.height = 480;
+  return {
+    canvas,
+    fillStyle: "",
+    fillRect: vi.fn(),
+    drawImage: vi.fn(),
+  } as unknown as CanvasRenderingContext2D;
 }
 
 describe("pickActiveEvent", () => {
@@ -164,5 +186,24 @@ describe("videoEngine integration", () => {
     trigger(5, 0.05);
     expect(drawSchedule.mock.calls.length).toBe(1);
     expect(drawSchedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
+  });
+
+  it("clears instead of drawing video after the displayed clip reaches trim end", () => {
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "videoWidth", { configurable: true, value: 640 });
+    Object.defineProperty(video, "videoHeight", { configurable: true, value: 480 });
+    const pause = vi.spyOn(video, "pause");
+
+    trigger(0, 1.0);
+    const beforeEnd = makeCanvasContext();
+    drawCurrentFrame(beforeEnd, 1.1);
+    expect(beforeEnd.drawImage).toHaveBeenCalledTimes(1);
+
+    const afterEnd = makeCanvasContext();
+    drawCurrentFrame(afterEnd, 1.21);
+    expect(afterEnd.drawImage).not.toHaveBeenCalled();
+    expect(afterEnd.fillRect).toHaveBeenCalled();
+    expect(pause).toHaveBeenCalled();
   });
 });

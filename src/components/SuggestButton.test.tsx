@@ -1,5 +1,5 @@
 // ABOUTME: SuggestButton tests — disabled gating + click → applyPattern + Undo.
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const suggestPattern = vi.fn();
@@ -25,6 +25,14 @@ function makeClip(): Clip {
     posterUrl: null,  };
 }
 
+function deferredGrid() {
+  let resolve!: (grid: boolean[][]) => void;
+  const promise = new Promise<boolean[][]>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("SuggestButton", () => {
   beforeEach(() => {
     suggestPattern.mockReset();
@@ -36,20 +44,53 @@ describe("SuggestButton", () => {
     expect(screen.getByLabelText("Suggest a beat")).toBeDisabled();
 
     const actions = useAppStore.getState().actions;
-    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
-    actions.toggleStep(0, 7);
+    act(() => {
+      for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+      actions.toggleStep(0, 7);
+    });
     const before = useAppStore.getState().project.tracks[0].steps.slice();
 
     const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
     suggestPattern.mockResolvedValue(grid);
 
     render(<SuggestButton />);
-    fireEvent.click(screen.getAllByLabelText("Suggest a beat")[1]);
+    await act(async () => {
+      fireEvent.click(screen.getAllByLabelText("Suggest a beat")[1]);
+      await Promise.resolve();
+    });
     await waitFor(() => expect(suggestPattern).toHaveBeenCalled());
     await waitFor(() =>
       expect(useAppStore.getState().project.tracks[0].steps.every((s) => s)).toBe(true),
     );
-    fireEvent.click(screen.getByText(/Undo/));
+    act(() => {
+      fireEvent.click(screen.getByText(/Undo/));
+    });
     expect(useAppStore.getState().project.tracks[0].steps).toEqual(before);
+  });
+
+  it("does not overwrite user edits made while the suggestion request is pending", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    const pending = deferredGrid();
+    suggestPattern.mockReturnValue(pending.promise);
+    render(<SuggestButton />);
+
+    fireEvent.click(screen.getByLabelText("Suggest a beat"));
+    await waitFor(() => expect(suggestPattern).toHaveBeenCalled());
+
+    await act(async () => {
+      actions.toggleStep(0, 1);
+      pending.resolve(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+      await pending.promise;
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Beat changed while Gemini was thinking. Try again.",
+      ),
+    );
+    const steps = useAppStore.getState().project.tracks[0].steps;
+    expect(steps[1]).toBe(true);
+    expect(steps.every(Boolean)).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Plus, Minus } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { TrackInfo } from "./TrackInfo";
+import { MAX_STEP_COUNT } from "../store/initialState";
 
 const TRACK_COUNT = 8;
 const STEP_WIDTH = 40;
@@ -12,10 +13,11 @@ const STEP_GAP = 4;
 interface StepCellProps {
   trackId: number;
   stepIndex: number;
+  disabled: boolean;
   onHover: (col: number | null) => void;
 }
 
-function StepCell({ trackId, stepIndex, onHover }: StepCellProps) {
+function StepCell({ trackId, stepIndex, disabled, onHover }: StepCellProps) {
   const active = useAppStore((s) => s.project.tracks[trackId].steps[stepIndex]);
   const isCurrent = useAppStore(
     (s) => s.playback.isPlaying && s.playback.currentStep === stepIndex,
@@ -38,11 +40,12 @@ function StepCell({ trackId, stepIndex, onHover }: StepCellProps) {
       aria-pressed={active}
       data-active={active}
       data-current={isCurrent}
+      disabled={disabled}
       onClick={() => useAppStore.getState().actions.toggleStep(trackId, stepIndex)}
       onMouseEnter={() => onHover(stepIndex)}
       onMouseLeave={() => onHover(null)}
       style={{ width: STEP_WIDTH, height: 40 }}
-      className={className + sizeClass}
+      className={className + sizeClass + " disabled:opacity-50 disabled:cursor-not-allowed"}
     />
   );
 }
@@ -56,6 +59,7 @@ interface ColumnHeaderProps {
 
 function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderProps) {
   const showMinus = hovered && canRemove;
+  const blockStart = Math.floor(stepIndex / 4) * 4;
   return (
     <div
       style={{ width: STEP_WIDTH }}
@@ -65,7 +69,8 @@ function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderPr
     >
       <button
         type="button"
-        aria-label={`Remove step ${stepIndex + 1}`}
+        aria-label={`Remove steps ${blockStart + 1}-${blockStart + 4}`}
+        title={`Remove steps ${blockStart + 1}-${blockStart + 4}`}
         disabled={!canRemove}
         onClick={() => useAppStore.getState().actions.removeStepColumn(stepIndex)}
         className={
@@ -102,7 +107,9 @@ function ExtendButton({ disabled }: { disabled: boolean }) {
 
 export function StepGrid() {
   const stepCount = useAppStore((s) => s.project.stepCount);
-  const canRemove = useAppStore((s) => s.project.stepCount > 4);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const canRemove = stepCount > 4 && !isExporting;
+  const canExtend = stepCount < MAX_STEP_COUNT && !isExporting;
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
 
   return (
@@ -128,7 +135,7 @@ export function StepGrid() {
               />
             ))}
             <div className="ml-2">
-              <ExtendButton disabled={false} />
+              <ExtendButton disabled={!canExtend} />
             </div>
           </div>
           {Array.from({ length: TRACK_COUNT }, (_, trackId) => (
@@ -139,7 +146,13 @@ export function StepGrid() {
               onMouseLeave={() => setHoveredCol(null)}
             >
               {Array.from({ length: stepCount }, (_, j) => (
-                <StepCell key={j} trackId={trackId} stepIndex={j} onHover={setHoveredCol} />
+                <StepCell
+                  key={j}
+                  trackId={trackId}
+                  stepIndex={j}
+                  disabled={isExporting}
+                  onHover={setHoveredCol}
+                />
               ))}
             </div>
           ))}

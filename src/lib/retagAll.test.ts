@@ -1,5 +1,5 @@
 // ABOUTME: retagAll tests — store wiring, holistic-vs-fallback orchestration, hat audio-only respect.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { useAppStore } from "../store/useAppStore";
 import { retagAllClipsWith, type RetagDeps } from "./retagAll";
@@ -46,6 +46,10 @@ describe("retagAllClipsWith", () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("returns no-clips when no tracks have a clip; never calls the batch", async () => {

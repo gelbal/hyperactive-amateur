@@ -1,5 +1,5 @@
 // ABOUTME: StepGrid tests — cell click toggles store; +4 extends; per-column hover-only minus removes.
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("tone", () => ({
@@ -25,20 +25,28 @@ import { StepGrid } from "./StepGrid";
 import { useAppStore } from "../store/useAppStore";
 
 describe("StepGrid", () => {
-  beforeEach(() => useAppStore.getState().actions.reset());
+  beforeEach(() => {
+    useAppStore.setState((state) => ({
+      playback: { ...state.playback, isExporting: false },
+    }));
+    useAppStore.getState().actions.reset();
+  });
 
   it("renders 8 × 16 cells; clicking toggles the store; current step gets highlighted", () => {
     render(<StepGrid />);
     expect(screen.getAllByLabelText(/^track \d+ step \d+$/)).toHaveLength(128);
 
-    fireEvent.click(screen.getByLabelText("track 1 step 1"));
+    act(() => {
+      fireEvent.click(screen.getByLabelText("track 1 step 1"));
+    });
     expect(useAppStore.getState().project.tracks[0].steps[0]).toBe(true);
 
-    useAppStore.setState((s) => ({
-      playback: { ...s.playback, isPlaying: true, currentStep: 5 },
-    }));
-    render(<StepGrid />);
-    expect(screen.getAllByLabelText(/track 1 step 6/)[0]).toHaveAttribute("data-current", "true");
+    act(() => {
+      useAppStore.setState((s) => ({
+        playback: { ...s.playback, isPlaying: true, currentStep: 5 },
+      }));
+    });
+    expect(screen.getByLabelText("track 1 step 6")).toHaveAttribute("data-current", "true");
   });
 
   it("step cells carry the pointer-coarse:!w-11 size override so coarse-pointer devices get 44px taps", () => {
@@ -57,8 +65,9 @@ describe("StepGrid", () => {
     // class is the contract — its presence is what makes the button tappable
     // on touch devices.
     render(<StepGrid />);
-    const removeButtons = screen.getAllByLabelText(/^Remove step \d+$/);
+    const removeButtons = screen.getAllByLabelText(/^Remove steps \d+-\d+$/);
     expect(removeButtons.length).toBeGreaterThan(0);
+    expect(removeButtons[0]).toHaveAttribute("aria-label", "Remove steps 1-4");
     for (const btn of removeButtons) {
       expect(btn.className).toContain("any-pointer-coarse:opacity-40");
       expect(btn.className).toContain("any-pointer-coarse:pointer-events-auto");
@@ -73,5 +82,29 @@ describe("StepGrid", () => {
     const scrollPane = container.querySelector(".flex-1.overflow-x-auto");
     expect(scrollPane).not.toBeNull();
     expect(scrollPane?.className).toContain("min-w-0");
+  });
+
+  it("disables frozen controls while an export owns playback", () => {
+    useAppStore.getState().actions.setIsExporting(true);
+    render(<StepGrid />);
+
+    const firstCell = screen.getByLabelText("track 1 step 1");
+    expect(firstCell).toBeDisabled();
+    fireEvent.click(firstCell);
+    expect(useAppStore.getState().project.tracks[0].steps[0]).toBe(false);
+
+    expect(screen.getByRole("button", { name: /add 4 more steps/i })).toBeDisabled();
+    for (const btn of screen.getAllByLabelText(/^Remove steps \d+-\d+$/)) {
+      expect(btn).toBeDisabled();
+    }
+  });
+
+  it("disables the extend button at the max step count", () => {
+    for (let i = 0; i < 16 && useAppStore.getState().project.stepCount < 64; i += 1) {
+      useAppStore.getState().actions.extendSteps();
+    }
+    expect(useAppStore.getState().project.stepCount).toBe(64);
+    render(<StepGrid />);
+    expect(screen.getByRole("button", { name: /add 4 more steps/i })).toBeDisabled();
   });
 });

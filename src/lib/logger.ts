@@ -26,6 +26,7 @@ export const LOG_EVENTS = {
   SUGGEST_ERROR: "suggest.error",
   SUGGEST_MISS: "suggest.miss",
   SUGGEST_RETRY: "suggest.retry",
+  AUTOSAVE_ERROR: "autosave.error",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
 

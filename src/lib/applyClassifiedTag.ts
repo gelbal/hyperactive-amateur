@@ -22,11 +22,17 @@ export function applyClassifiedTag(
   reasoning?: string | null,
 ): ApplyClassifiedTagOutcome {
   const state = useAppStore.getState();
+  if (state.playback.isExporting || !state.project.tracks[trackId]) {
+    return { applied: false, hatAudioOnly: false };
+  }
   if (state.session.manuallyTagged.includes(trackId)) {
     return { applied: false, hatAudioOnly: false };
   }
   state.actions.setTrackTag(trackId, tag, "system");
   state.actions.setTrackTagReasoning(trackId, reasoning ?? null);
+  if (useAppStore.getState().project.tracks[trackId]?.tag !== tag) {
+    return { applied: false, hatAudioOnly: false };
+  }
   if (state.session.manuallyToggledShowVideo.includes(trackId)) {
     return { applied: true, hatAudioOnly: false };
   }

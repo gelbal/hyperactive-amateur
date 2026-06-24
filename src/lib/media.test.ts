@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   requestMedia,
-  tryAutoGrantMedia,
   acquireRecordingStream,
   releaseRecordingStream,
   buildConstraints,
@@ -116,6 +115,23 @@ describe("media", () => {
     expect(useAppStore.getState().media.status).toBe("granted");
   });
 
+  it("acquireRecordingStream releases a previously held stream before replacing it", async () => {
+    const first = makeFakeStream();
+    const second = makeFakeStream();
+    const getUserMedia = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    await acquireRecordingStream();
+    await acquireRecordingStream();
+
+    for (const track of first._tracks) expect(track.stop).toHaveBeenCalled();
+    for (const track of second._tracks) expect(track.stop).not.toHaveBeenCalled();
+    expect(useAppStore.getState().media.stream).toBe(second);
+  });
+
   it("acquireRecordingStream rolls media status back to 'denied' on failure so requestMedia can re-prompt (regression)", async () => {
     // First: grant permission so the store status is 'granted', stream null.
     const fake = makeFakeStream();
@@ -164,24 +180,5 @@ describe("media", () => {
     const video = c.video as MediaTrackConstraints;
     expect(video.deviceId).toEqual({ exact: "cam-id-123" });
     expect(video.facingMode).toBeUndefined();
-  });
-
-  it("tryAutoGrantMedia flips status to granted WITHOUT touching getUserMedia (no camera-light flicker on page load)", async () => {
-    const getUserMedia = vi.fn();
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: { getUserMedia },
-    });
-    Object.defineProperty(navigator, "permissions", {
-      configurable: true,
-      value: {
-        query: vi.fn(async ({ name }: { name: string }) => ({
-          state: name === "camera" || name === "microphone" ? "granted" : "prompt",
-        })),
-      },
-    });
-    await tryAutoGrantMedia();
-    expect(useAppStore.getState().media.status).toBe("granted");
-    expect(getUserMedia).not.toHaveBeenCalled();
   });
 });

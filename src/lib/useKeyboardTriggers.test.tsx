@@ -8,6 +8,7 @@ vi.mock("./audio", () => ({
 }));
 
 import { useKeyboardTriggers } from "./useKeyboardTriggers";
+import { useAppStore } from "../store/useAppStore";
 
 function Harness({ withInput = false }: { withInput?: boolean }) {
   useKeyboardTriggers();
@@ -15,7 +16,10 @@ function Harness({ withInput = false }: { withInput?: boolean }) {
 }
 
 describe("useKeyboardTriggers", () => {
-  beforeEach(() => triggerTrackNow.mockClear());
+  beforeEach(() => {
+    triggerTrackNow.mockClear();
+    useAppStore.getState().actions.reset();
+  });
 
   it("fires on Digit3 → track 2, ignores held keys (repeat), ignores key-press inside an input", () => {
     const { getByTestId } = render(<Harness withInput />);
@@ -29,6 +33,13 @@ describe("useKeyboardTriggers", () => {
     getByTestId("x").dispatchEvent(
       new KeyboardEvent("keydown", { code: "Digit1", bubbles: true }),
     );
+    expect(triggerTrackNow).not.toHaveBeenCalled();
+  });
+
+  it("does not fire digit triggers while recording is active", () => {
+    render(<Harness />);
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
     expect(triggerTrackNow).not.toHaveBeenCalled();
   });
 });

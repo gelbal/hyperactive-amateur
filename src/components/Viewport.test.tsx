@@ -63,7 +63,7 @@ describe("Viewport", () => {
     expect(screen.getByLabelText("recording station")).toBeInTheDocument();
   });
 
-  it("after the recording station is dismissed and no clips exist, shows the record-prompt copy", () => {
+  it("after the recording station is dismissed and no clips exist, shows an actionable first-record affordance", () => {
     act(() => {
       useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });
       useAppStore.getState().actions.dismissRecordingStation();
@@ -71,6 +71,9 @@ describe("Viewport", () => {
     render(<Viewport />);
     expect(screen.queryByLabelText("recording station")).not.toBeInTheDocument();
     expect(screen.getByText(/record a sound on any track/i)).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: /record first sound/i });
+    fireEvent.click(button);
+    expect(useAppStore.getState().session.recordingStationDismissed).toBe(false);
   });
 
   it("idle media + all tracks have clips + station dismissed: gate stays hidden and fullscreen toggle is visible", () => {
@@ -135,5 +138,17 @@ describe("Viewport", () => {
     render(<Viewport />);
     expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /record more/i })).toBeInTheDocument();
+  });
+
+  it("idle media + no clips + station dismissed: gate hidden until the first-record affordance is clicked", () => {
+    act(() => {
+      useAppStore.getState().actions.dismissRecordingStation();
+    });
+    render(<Viewport />);
+    expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /record first sound/i }));
+
+    expect(screen.getByRole("button", { name: /enable camera & mic/i })).toBeInTheDocument();
   });
 });

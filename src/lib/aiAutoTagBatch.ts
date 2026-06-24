@@ -16,9 +16,9 @@ import {
 
 export const BATCH_TAG_MODEL = "gemini-3.1-flash-lite";
 
-// Soft cap on the total base64-encoded inline payload. The Gemini inline limit
-// is ~20 MB; we leave a wide margin for the JSON-schema overhead and headers.
-const BATCH_INLINE_BYTES_MAX = 12 * 1024 * 1024;
+// Soft cap on the total base64-encoded inline payload. Keep this below the
+// proxy's 4 MB body cap so JSON-schema overhead and prompts still fit.
+export const BATCH_INLINE_BYTES_MAX = 3 * 1024 * 1024;
 
 // base64 inflates raw bytes by ~4/3. Used for the pre-encode size check.
 const BASE64_INFLATION = 4 / 3;

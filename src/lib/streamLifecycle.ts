@@ -3,9 +3,25 @@
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import { stopPlayback } from "./audio";
+import { abortActiveExport } from "./exportSession";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
+}
+
+const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
+
+function detachLifecycle(stream: MediaStream): void {
+  const handle = lifecycleHandles.get(stream);
+  if (!handle) return;
+  handle.detach();
+  lifecycleHandles.delete(stream);
+}
+
+function stopTracks(stream: MediaStream): void {
+  for (const track of stream.getTracks()) {
+    if (typeof track.stop === "function") track.stop();
+  }
 }
 
 // Mark the store as suspended IF and only IF it currently holds `stream` in a
@@ -13,10 +29,7 @@ export interface StreamLifecycleHandle {
 // user re-flipped the camera) means the listener fired on a stale handle and
 // should not touch the store.
 function transitionToSuspended(stream: MediaStream): void {
-  const state = useAppStore.getState();
-  if (state.media.status === "granted" && state.media.stream === stream) {
-    state.actions.setMedia({ stream: null, status: "suspended", error: null });
-  }
+  suspendMediaStream(stream);
 }
 
 // Attach an `ended` listener to every track on `stream`. iOS suspends camera/
@@ -38,6 +51,29 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
   };
 }
 
+export function registerStreamLifecycle(stream: MediaStream): void {
+  detachLifecycle(stream);
+  lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
+}
+
+export function releaseMediaStream(stream: MediaStream): void {
+  detachLifecycle(stream);
+  stopTracks(stream);
+  const state = useAppStore.getState();
+  if (state.media.stream === stream) {
+    state.actions.setMedia({ stream: null, status: "granted", error: null });
+  }
+}
+
+export function suspendMediaStream(stream: MediaStream): void {
+  detachLifecycle(stream);
+  stopTracks(stream);
+  const state = useAppStore.getState();
+  if (state.media.status === "granted" && state.media.stream === stream) {
+    state.actions.setMedia({ stream: null, status: "suspended", error: null });
+  }
+}
+
 // Listen for page-visibility changes. On hidden: stop playback (no saved-
 // position bookkeeping — restart is user-initiated) and suspend the held
 // stream so the reconnect pill takes over. On visible: nudge the AudioContext
@@ -47,18 +83,19 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
 export function installVisibilityListener(): () => void {
   const handler = () => {
     if (document.hidden) {
-      try {
-        stopPlayback();
-      } catch {
-        // Transport may not be initialized yet; safe to ignore.
+      const abortedExport = abortActiveExport(
+        "Export was interrupted because the page was hidden.",
+      );
+      if (!abortedExport) {
+        try {
+          stopPlayback();
+        } catch {
+          // Transport may not be initialized yet; safe to ignore.
+        }
       }
       const state = useAppStore.getState();
       if (state.media.status === "granted" && state.media.stream) {
-        state.actions.setMedia({
-          stream: null,
-          status: "suspended",
-          error: null,
-        });
+        suspendMediaStream(state.media.stream);
       }
     } else {
       // Tone.start() is idempotent. Resumes the AudioContext on iOS without
@@ -76,7 +113,8 @@ export function installVisibilityListener(): () => void {
 // hit a genuine encoding error and we leave the store alone — the caller's
 // onError handler surfaces the message.
 export function onMediaRecorderError(stream: MediaStream, _err: Error): void {
-  const anyLive = stream.getTracks().some((t) => t.readyState === "live");
-  if (anyLive) return;
+  const tracks = stream.getTracks();
+  const allTracksLive = tracks.length > 0 && tracks.every((t) => t.readyState === "live");
+  if (allTracksLive) return;
   transitionToSuspended(stream);
 }

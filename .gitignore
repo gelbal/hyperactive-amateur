@@ -29,6 +29,11 @@ coverage/
 # runtime artifacts from the Playwright MCP server (console logs + page
 # snapshots from automated browser sessions)
 .playwright-mcp/
+playwright-report/
+test-results/
+.serena/
+.agent-relay/
+.mcp.json
 
 # typescript build info
 *.tsbuildinfo

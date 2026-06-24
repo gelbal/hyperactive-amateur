@@ -8,6 +8,7 @@ const get = () => useAppStore.getState();
 
 describe("useAppStore", () => {
   beforeEach(() => {
+    get().actions.setIsExporting(false);
     get().actions.reset();
   });
 
@@ -66,12 +67,22 @@ describe("useAppStore", () => {
     expect(get().project.stepCount).toBe(64);
   });
 
-  it("removeStepColumn drops the column from every track and clamps at the floor", () => {
-    get().actions.toggleStep(0, 5);
-    get().actions.removeStepColumn(2);
-    expect(get().project.stepCount).toBe(15);
-    // Step 5 shifted down to index 4.
-    expect(get().project.tracks[0].steps[4]).toBe(true);
+  it("removeStepColumn drops a 4-step block from every track and clamps at the floor", () => {
+    get().actions.toggleStep(0, 1);
+    get().actions.toggleStep(0, 6);
+    get().actions.toggleStep(0, 10);
+
+    get().actions.removeStepColumn(5);
+
+    expect(get().project.stepCount).toBe(12);
+    // The block containing step 6 is removed; later steps shift down by 4.
+    expect(get().project.tracks[0].steps[1]).toBe(true);
+    expect(get().project.tracks[0].steps[6]).toBe(true);
+    expect(get().project.tracks[0].steps.filter(Boolean)).toHaveLength(2);
+    for (const track of get().project.tracks) {
+      expect(track.steps).toHaveLength(get().project.stepCount);
+    }
+
     // Squeeze down to the 4-step floor; further removes are no-ops.
     while (get().project.stepCount > 4) get().actions.removeStepColumn(0);
     get().actions.removeStepColumn(0);
@@ -117,6 +128,39 @@ describe("useAppStore", () => {
     const before = get().project.tracks[0].steps.slice();
     get().actions.applyPattern(wrong);
     expect(get().project.tracks[0].steps).toEqual(before);
+  });
+
+  it("ignores output-affecting project mutations while export is active", () => {
+    const before = get().project;
+    const sessionBefore = get().session;
+    const clip = {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/export-clip",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob: null,
+      posterUrl: null,
+    };
+    get().actions.setIsExporting(true);
+
+    get().actions.setBpm(140);
+    get().actions.setSubgenre("lo-fi");
+    get().actions.setVibe("breaky");
+    get().actions.toggleStep(0, 0);
+    get().actions.setTrackVolume(0, 0.25);
+    get().actions.setTrackMuted(0, true);
+    get().actions.setTrackClip(0, clip);
+    get().actions.setTrackTag(0, "kick");
+    get().actions.setTrackTagReasoning(0, "would change rendered priority");
+    get().actions.setTrackShowVideo(0, false);
+    get().actions.extendSteps();
+    get().actions.applyPattern(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+
+    expect(get().project).toBe(before);
+    expect(get().session).toBe(sessionBefore);
+    get().actions.setIsExporting(false);
   });
 
   it("clearTrackClip revokes both blob URL and poster URL and re-opens the recording station", () => {
@@ -191,5 +235,22 @@ describe("useAppStore", () => {
     const baseline = get().project;
     get().actions.hydrateProject({ ...baseline });
     expect(get().session.recordingStationDismissed).toBe(false);
+  });
+
+  it("stores recovery warnings in the UI slice", () => {
+    get().actions.setRecoveryWarnings(["bpm clamped", "track reset"]);
+    expect(get().ui.recoveryWarnings).toEqual(["bpm clamped", "track reset"]);
+  });
+
+  it("uses projectRevision to reject stale AI pattern applies", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+    get().actions.toggleStep(0, 0);
+
+    const applied = get().actions.applyPatternIfCurrent(grid, revision, 16);
+
+    expect(applied).toBe(false);
+    expect(get().project.tracks[0].steps.every(Boolean)).toBe(false);
+    expect(get().session.projectRevision).toBeGreaterThan(revision);
   });
 });

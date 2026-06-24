@@ -12,6 +12,7 @@ import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
+import { canStartAudibleAction } from "./audibleActionGate";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -81,6 +82,9 @@ export async function recordIntoTrack(
   options: RecordIntoTrackOptions = {},
 ): Promise<boolean> {
   if (currentFlow) return false;
+  const actions = useAppStore.getState().actions;
+  if (!canStartAudibleAction(useAppStore.getState())) return false;
+  actions.setRecordingState("countdown", trackId);
 
   const controller = new AbortController();
   currentController = controller;
@@ -100,32 +104,35 @@ async function runFlow(
   signal: AbortSignal,
 ): Promise<boolean> {
   const actions = useAppStore.getState().actions;
-
-  try {
-    await ensureAudioStarted();
-  } catch {
-    // Recording can still proceed; recordClip has a decode fallback if the
-    // live Web Audio tap cannot run.
-  }
-
   const externalStream = options.stream ?? null;
-  let stream: MediaStream;
-  if (externalStream) {
-    stream = externalStream;
-  } else {
-    try {
-      stream = await acquireRecordingStream();
-    } catch (e) {
-      // Permission may have been revoked since the last grant — surface the
-      // viewport gate so the user can re-allow.
-      void requestMedia();
-      options.onError?.(e instanceof Error ? e.message : String(e));
-      return false;
-    }
-  }
+  let stream: MediaStream | null = null;
 
-  actions.setRecordingState("countdown", trackId);
   try {
+    try {
+      await ensureAudioStarted();
+    } catch {
+      // Recording can still proceed; recordClip has a decode fallback if the
+      // live Web Audio tap cannot run.
+    }
+    if (signal.aborted) {
+      throw new DOMException("Aborted before media acquisition", "AbortError");
+    }
+
+    if (externalStream) {
+      stream = externalStream;
+    } else {
+      try {
+        stream = await acquireRecordingStream();
+      } catch (e) {
+        // Permission may have been revoked since the last grant — surface the
+        // viewport gate so the user can re-allow.
+        void requestMedia();
+        options.onError?.(e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    }
+    if (!stream) return false;
+
     await waitMs(COUNTDOWN_MS, signal);
     actions.setRecordingState("recording", trackId);
     const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext(), { signal });
@@ -169,7 +176,7 @@ async function runFlow(
     options.onError?.(e instanceof Error ? e.message : String(e));
     return false;
   } finally {
-    if (!externalStream) releaseRecordingStream(stream);
+    if (!externalStream && stream) releaseRecordingStream(stream);
     actions.setRecordingState("idle", null);
   }
 }

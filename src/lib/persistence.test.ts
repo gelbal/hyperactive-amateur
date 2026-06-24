@@ -1,7 +1,14 @@
 // ABOUTME: persistence tests — round-trip + clear via fake-indexeddb.
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
-import { saveProject, loadProject, clearProject } from "./persistence";
+import {
+  PERSISTED_SCHEMA_VERSION,
+  clearProject,
+  loadProject,
+  loadRecoveryBackup,
+  saveProject,
+  saveRecoveryBackup,
+} from "./persistence";
 import { useAppStore } from "../store/useAppStore";
 
 describe("persistence", () => {
@@ -19,6 +26,7 @@ describe("persistence", () => {
     await saveProject(useAppStore.getState());
 
     const loaded = await loadProject();
+    expect(loaded?.schemaVersion).toBe(PERSISTED_SCHEMA_VERSION);
     expect(loaded?.bpm).toBe(110);
     expect(loaded?.cutSubdivision).toBe("4n");
     expect(loaded?.sameTierHoldMs).toBe(750);
@@ -30,6 +38,18 @@ describe("persistence", () => {
     await saveProject(useAppStore.getState());
     await clearProject();
     expect(await loadProject()).toBeNull();
+  });
+
+  it("clearProject also removes the degraded recovery backup", async () => {
+    await saveProject(useAppStore.getState());
+    const saved = await loadProject();
+    expect(saved).not.toBeNull();
+    await saveRecoveryBackup(saved!);
+    expect(await loadRecoveryBackup()).not.toBeNull();
+
+    await clearProject();
+
+    expect(await loadRecoveryBackup()).toBeNull();
   });
 
   it("round-trips posterBlob alongside the clip blob", async () => {

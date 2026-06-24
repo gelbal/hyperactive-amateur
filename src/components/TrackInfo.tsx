@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 import type { Clip, Tag } from "../types";
 
 const AUTO_TAG_TOAST_MS = 3000;
@@ -24,6 +25,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
+  const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);
   const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
   const toastTimerRef = useRef<number | null>(null);
@@ -84,7 +86,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
         ) : (
           <button
             type="button"
-            disabled={isRecordingThis}
+            disabled={!canStartRecording}
             aria-label={`record clip for track ${trackId + 1}`}
             onClick={() => void startRecording()}
             className="w-12 h-12 rounded bg-zinc-800 border border-zinc-700 hover:bg-red-900 hover:border-red-700 disabled:opacity-50 flex items-center justify-center"

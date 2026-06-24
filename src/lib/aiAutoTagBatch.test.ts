@@ -5,6 +5,7 @@ import {
   autoTagBatch,
   validateBatchAutoTag,
   BATCH_TAG_MODEL,
+  BATCH_INLINE_BYTES_MAX,
   type GeminiClient,
 } from "./aiAutoTagBatch";
 import { clearLogs, getLogs } from "./logger";
@@ -94,6 +95,20 @@ describe("autoTagBatch", () => {
     expect(captured.config?.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
     const parts = (captured.contents ?? [])[0]?.parts ?? [];
     expect(parts.filter((p) => "inlineData" in p)).toHaveLength(2);
+  });
+
+  it("fails open before transport when the estimated inline payload exceeds the proxy cap", async () => {
+    expect(BATCH_INLINE_BYTES_MAX).toBeLessThanOrEqual(3 * 1024 * 1024);
+    const generateContent = vi.fn(async () => ({ text: "[]" }));
+
+    const result = await autoTagBatch([{ trackId: 0, audioBuffer: fakeBuffer(30) }], {
+      models: { generateContent },
+    });
+
+    expect(result).toBeNull();
+    expect(generateContent).not.toHaveBeenCalled();
+    const miss = getLogs().find((l) => l.event === "batchtag.miss");
+    expect((miss?.payload as { reason?: string })?.reason).toBe("payload-too-large");
   });
 
   it("fails open across error branches: schema-invalid response, SDK throw, no key, empty input", async () => {
