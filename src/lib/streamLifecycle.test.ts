@@ -9,6 +9,10 @@ const audioLifecycleMocks = vi.hoisted(() => ({
 const toneMocks = vi.hoisted(() => ({
   rawContext: { state: "suspended" as AudioContextState },
 }));
+const recordingFlowMocks = vi.hoisted(() => ({
+  cancelCurrentRecording: vi.fn(),
+  isRecordingInFlight: vi.fn(() => false),
+}));
 
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
@@ -19,6 +23,11 @@ vi.mock("tone", () => ({
 vi.mock("./audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
+}));
+
+vi.mock("./recordingFlow", () => ({
+  cancelCurrentRecording: recordingFlowMocks.cancelCurrentRecording,
+  isRecordingInFlight: recordingFlowMocks.isRecordingInFlight,
 }));
 
 import * as Tone from "tone";
@@ -37,6 +46,7 @@ import { useAppStore } from "../store/useAppStore";
 class FakeTrack extends EventTarget {
   kind: "video" | "audio";
   readyState: "live" | "ended" = "live";
+  muted = false;
   stop = vi.fn(() => {
     this.readyState = "ended";
   });
@@ -47,6 +57,14 @@ class FakeTrack extends EventTarget {
   fireEnded() {
     this.readyState = "ended";
     this.dispatchEvent(new Event("ended"));
+  }
+  fireMute() {
+    this.muted = true;
+    this.dispatchEvent(new Event("mute"));
+  }
+  fireUnmute() {
+    this.muted = false;
+    this.dispatchEvent(new Event("unmute"));
   }
 }
 
@@ -73,6 +91,9 @@ describe("streamLifecycle", () => {
     audioLifecycleMocks.noteMicReleased.mockClear();
     toneMocks.rawContext.state = "suspended";
     vi.mocked(Tone.start).mockClear();
+    recordingFlowMocks.cancelCurrentRecording.mockReset();
+    recordingFlowMocks.isRecordingInFlight.mockReset();
+    recordingFlowMocks.isRecordingInFlight.mockReturnValue(false);
     useAppStore.getState().actions.reset();
   });
 
@@ -141,6 +162,116 @@ describe("streamLifecycle", () => {
       tracks[0].fireEnded();
 
       expect(useAppStore.getState().media.status).toBe("granted");
+    });
+
+    it("cancels an in-flight recording before stopping tracks when a required track mutes", () => {
+      const { stream, tracks } = makeStream();
+      const order: string[] = [];
+      recordingFlowMocks.isRecordingInFlight.mockReturnValue(true);
+      recordingFlowMocks.cancelCurrentRecording.mockImplementation(() => {
+        order.push("cancel");
+      });
+      for (const track of tracks) {
+        track.stop.mockImplementation(() => {
+          order.push(`stop:${track.kind}`);
+          track.readyState = "ended";
+        });
+      }
+      setGrantedWithStream(stream);
+      attachStreamEndedListeners(stream);
+
+      tracks[1].fireMute();
+
+      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledWith("interrupted");
+      expect(order[0]).toBe("cancel");
+      expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+    });
+
+    it("debounces idle preview mute before transitioning to suspended", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        tracks[0].fireMute();
+        vi.advanceTimersByTime(249);
+        expect(useAppStore.getState().media.status).toBe("granted");
+
+        vi.advanceTimersByTime(1);
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("suspended");
+        expect(media.stream).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("cancels and restarts pending idle mute suspension on unmute or repeated mute", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        tracks[0].fireMute();
+        vi.advanceTimersByTime(200);
+        tracks[0].fireUnmute();
+        vi.advanceTimersByTime(50);
+        expect(useAppStore.getState().media.status).toBe("granted");
+
+        tracks[0].fireMute();
+        vi.advanceTimersByTime(200);
+        tracks[0].fireMute();
+        vi.advanceTimersByTime(249);
+        expect(useAppStore.getState().media.status).toBe("granted");
+
+        vi.advanceTimersByTime(1);
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears pending mute suspension when the stream is released", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        tracks[0].fireMute();
+        releaseMediaStream(stream);
+        vi.advanceTimersByTime(250);
+
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("granted");
+        expect(media.stream).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not clear an established suspended state on unmute", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        tracks[0].fireMute();
+        vi.advanceTimersByTime(250);
+        tracks[0].fireUnmute();
+
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("suspended");
+        expect(media.stream).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -247,6 +378,17 @@ describe("streamLifecycle", () => {
       setGrantedWithStream(stream);
 
       onMediaRecorderError(stream, new Error("partial stream loss"));
+
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+    });
+
+    it("transitions granted → suspended when a required track is live but muted", () => {
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+      setGrantedWithStream(stream);
+
+      onMediaRecorderError(stream, new Error("muted stream"));
 
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(useAppStore.getState().media.stream).toBeNull();
