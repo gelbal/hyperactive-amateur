@@ -2,7 +2,7 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { canStartAudibleAction } from "./audibleActionGate";
+import { claimPendingAudible } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
@@ -112,9 +112,16 @@ export function triggerTrack(trackId: number, when: number): void {
 }
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
-  if (!canStartAudibleAction(useAppStore.getState())) return;
-  await ensureAudioRunning();
-  triggerTrack(trackId, nowSeconds());
+  const release = claimPendingAudible();
+  if (!release) return;
+
+  try {
+    await ensureAudioRunning();
+    if (!canStartAfterPendingAudible()) return;
+    triggerTrack(trackId, nowSeconds());
+  } finally {
+    release();
+  }
 }
 
 export function nowSeconds(): number {
@@ -158,13 +165,35 @@ function syncPlayers(tracks: Track[]): void {
 }
 
 export async function startPlayback(): Promise<void> {
-  if (!canStartAudibleAction(useAppStore.getState())) return;
+  const release = claimPendingAudible();
+  if (!release) return;
+
+  try {
+    await startPlaybackAfterAudioRunning();
+  } finally {
+    release();
+  }
+}
+
+function canStartAfterPendingAudible(): boolean {
+  const { playback, recording } = useAppStore.getState();
+  return (
+    !playback.isPlaying &&
+    !playback.isExporting &&
+    recording.state === "idle"
+  );
+}
+
+async function startPlaybackAfterAudioRunning(): Promise<boolean> {
   await ensureAudioRunning();
+  if (!canStartAfterPendingAudible()) return false;
+
   stepCounter = 0;
   Tone.getTransport().position = 0;
   videoEngine.resetPlaybackState();
   useAppStore.getState().actions.setCurrentStep(0);
   Tone.getTransport().start();
+  return true;
 }
 
 export function stopPlayback(options: { allowExportStop?: boolean } = {}): void {
@@ -186,9 +215,15 @@ export async function togglePlayback(): Promise<void> {
   if (isPlaying) {
     stopPlayback();
   } else {
-    if (!canStartAudibleAction(state)) return;
-    await startPlayback();
-    useAppStore.getState().actions.setIsPlaying(true);
+    const release = claimPendingAudible();
+    if (!release) return;
+
+    try {
+      const started = await startPlaybackAfterAudioRunning();
+      if (started) useAppStore.getState().actions.setIsPlaying(true);
+    } finally {
+      release();
+    }
   }
 }
 
