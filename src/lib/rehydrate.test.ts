@@ -23,6 +23,7 @@ vi.mock("./posterFrame", () => ({
 
 import { rehydrateFromStorage } from "./rehydrate";
 import {
+  PERSISTED_SCHEMA_VERSION,
   PROJECT_KEY,
   clearProject,
   loadProject,
@@ -207,7 +208,9 @@ describe("rehydrateFromStorage", () => {
 
     expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings).toContain("Schema version 0 was migrated to 1.");
+    expect(result.warnings).toContain(
+      `Schema version 0 was migrated to ${PERSISTED_SCHEMA_VERSION}.`,
+    );
     expect(useAppStore.getState().project.bpm).toBe(111);
     expect(useAppStore.getState().project.tracks[0].steps[3]).toBe(true);
     expect(await loadRecoveryBackup()).not.toBeNull();
