@@ -22,6 +22,16 @@ export interface MissingBlobReference {
   ref: string;
 }
 
+// Thrown when ha:meta exists but is not valid schema-2 metadata. Only the
+// legacy monolith key may enter the migration path; an invalid current record
+// must surface as its own failure so the backup and metadata stay untouched.
+export class InvalidMetadataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidMetadataError";
+  }
+}
+
 export interface PersistedTrack {
   id: number;
   blobRevision?: number;
@@ -491,7 +501,9 @@ export async function loadProject(): Promise<PersistedProject | null> {
     if (isSchema2Metadata(metadata)) {
       return resolveMetadataRecord(metadata);
     }
-    return tagLegacyProject(metadata, PROJECT_KEY);
+    throw new InvalidMetadataError(
+      `${PROJECT_KEY} exists but is not valid schema-${PERSISTED_SCHEMA_VERSION} metadata`,
+    );
   }
 
   const legacy = await get(LEGACY_PROJECT_KEY);

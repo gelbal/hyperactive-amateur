@@ -179,7 +179,7 @@ describe("rehydrateFromStorage", () => {
   });
 
   it("migrates corrupt v1 legacy saves through validation and records degraded recovery warnings", async () => {
-    await set(PROJECT_KEY, corruptV1MonolithProject());
+    await set(LEGACY_PROJECT_KEY, corruptV1MonolithProject());
 
     const result = await rehydrateFromStorage();
 
@@ -214,7 +214,7 @@ describe("rehydrateFromStorage", () => {
   });
 
   it("migrates a realistic legacy save with no schema version instead of discarding it", async () => {
-    await set(PROJECT_KEY, v0MonolithProject());
+    await set(LEGACY_PROJECT_KEY, v0MonolithProject());
 
     const result = await rehydrateFromStorage();
 
@@ -258,6 +258,35 @@ describe("rehydrateFromStorage", () => {
     expect(blobPaths(backup)).toEqual([]);
     expect((backup as any).tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
     expect((backup as any).tracks[0]).not.toHaveProperty("clipBlob");
+  });
+
+  it("treats invalid ha:meta as degraded without touching the backup or migrating", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    await persistence.saveRecoveryBackup((await loadProject())!);
+    const backupBefore = await get(PROJECT_BACKUP_KEY);
+    expect(backupBefore).toBeTruthy();
+    const blobsBefore = await storedBlobKeys();
+    const invalidMeta = { schemaVersion: 2, tracks: "corrupted" };
+    await set(PROJECT_KEY, invalidMeta);
+    useAppStore.getState().actions.reset();
+    vi.mocked(idbKeyval.set).mockClear();
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("Autosave was paused"))).toBe(
+      true,
+    );
+    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
+    expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
+    // The last good backup is preserved, the invalid metadata is left in
+    // place for recovery, and no legacy-migration write happens.
+    expect(await get(PROJECT_BACKUP_KEY)).toEqual(backupBefore);
+    expect(await get(PROJECT_KEY)).toEqual(invalidMeta);
+    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+    expect(await storedBlobKeys()).toEqual(blobsBefore);
   });
 
   it("migration GC keeps blob records that only the pre-repair backup references", async () => {
@@ -363,7 +392,7 @@ describe("rehydrateFromStorage", () => {
     const saveRecoveryBackupSpy = vi
       .spyOn(persistence, "saveRecoveryBackup")
       .mockRejectedValueOnce(new Error("quota exceeded"));
-    await set(PROJECT_KEY, {
+    await set(LEGACY_PROJECT_KEY, {
       schemaVersion: 0,
       bpm: 123,
       swing: 0,
@@ -391,7 +420,7 @@ describe("rehydrateFromStorage", () => {
 
   it("repairs clips that fail audio decode without dropping their video or tag", async () => {
     audioMocks.decodeAudioData.mockRejectedValueOnce(new Error("decode failed"));
-    await set(PROJECT_KEY, {
+    await set(LEGACY_PROJECT_KEY, {
       bpm: 100,
       swing: 0,
       cutSubdivision: "8n",

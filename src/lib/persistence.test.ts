@@ -319,6 +319,19 @@ describe("persistence", () => {
     expect(await get(META_KEY)).toBeUndefined();
   });
 
+  it("rejects an existing-but-invalid ha:meta instead of treating it as legacy", async () => {
+    const invalidMeta = { schemaVersion: 2, tracks: "not-an-array" };
+    await set(META_KEY, invalidMeta);
+    await set(LEGACY_PROJECT_KEY, { schemaVersion: 1, tracks: [] });
+
+    await expect(loadProject()).rejects.toMatchObject({ name: "InvalidMetadataError" });
+
+    // The invalid record is preserved for recovery, never rewritten, and the
+    // legacy record cannot be reached while ha:meta exists.
+    expect(await get(META_KEY)).toEqual(invalidMeta);
+    expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
+  });
+
   it("omits transient playback and recording fields from persistence snapshots", () => {
     useAppStore.getState().actions.setAudioState("resume-required");
     useAppStore.getState().actions.setCountdownEndsAt(123.25);

@@ -1,6 +1,7 @@
 // ABOUTME: rehydrate — load, validate, decode, and dispatch persisted project state.
 // ABOUTME: Object URLs are recreated on every load (not persisted); degraded loads keep one backup.
 import {
+  InvalidMetadataError,
   loadProject,
   migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
@@ -434,9 +435,13 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   let persisted: Awaited<ReturnType<typeof loadProject>>;
   try {
     persisted = await loadProject();
-  } catch {
+  } catch (err) {
+    // Invalid current metadata is its own failure, not a legacy migration
+    // candidate: the record and the last good backup stay untouched.
     const warnings = [
-      "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
+      err instanceof InvalidMetadataError
+        ? "Saved project metadata was invalid. Autosave was paused to avoid overwriting it."
+        : "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
     ];
     useAppStore.getState().actions.setRecoveryWarnings(warnings);
     return { ok: false, degraded: true, warnings };
