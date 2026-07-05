@@ -5,6 +5,7 @@ import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
 import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
+import { flushPending } from "./autoSave";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
@@ -142,6 +143,7 @@ export function suspendMediaStream(stream: MediaStream): void {
 export function installVisibilityListener(): () => void {
   const handler = () => {
     if (document.hidden) {
+      flushPending();
       const abortedExport = abortActiveExport(
         "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
       );

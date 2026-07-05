@@ -9,6 +9,8 @@ const DEBOUNCE_MS = 500;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
 let dirtyWhileRecording = false;
+let saveInProgress: Promise<void> | null = null;
+let saveQueued = false;
 
 function reportSaveError(err: unknown): void {
   logger.error(LOG_EVENTS.AUTOSAVE_ERROR, {
@@ -23,6 +25,29 @@ function persistLatest(): Promise<void> {
   });
 }
 
+async function drainSaveQueue(): Promise<void> {
+  let firstError: unknown = null;
+  do {
+    saveQueued = false;
+    try {
+      await persistLatest();
+    } catch (err) {
+      if (!firstError) firstError = err;
+    }
+  } while (saveQueued);
+  if (firstError) throw firstError;
+}
+
+function requestSave(): Promise<void> {
+  saveQueued = true;
+  if (!saveInProgress) {
+    saveInProgress = drainSaveQueue().finally(() => {
+      saveInProgress = null;
+    });
+  }
+  return saveInProgress;
+}
+
 function clearPendingTimer(): void {
   if (!timer) return;
   clearTimeout(timer);
@@ -35,7 +60,7 @@ function flushAfterRecordingIfNeeded(): void {
   if (state.recording.state !== "idle") return;
   dirtyWhileRecording = false;
   clearPendingTimer();
-  void persistLatest().catch(() => undefined);
+  void requestSave().catch(() => undefined);
 }
 
 function scheduleSave(): void {
@@ -47,8 +72,24 @@ function scheduleSave(): void {
       dirtyWhileRecording = true;
       return;
     }
-    void persistLatest().catch(() => undefined);
+    void requestSave().catch(() => undefined);
   }, DEBOUNCE_MS);
+}
+
+export function saveNow(): Promise<void> {
+  clearPendingTimer();
+  dirtyWhileRecording = false;
+  return requestSave();
+}
+
+export function flushPending(): boolean {
+  const hasPendingSave = timer !== null || dirtyWhileRecording;
+  if (!hasPendingSave) return false;
+  clearPendingTimer();
+  dirtyWhileRecording = false;
+  logger.info(LOG_EVENTS.AUTOSAVE_FLUSH);
+  void requestSave().catch(() => undefined);
+  return true;
 }
 
 export function startAutoSave(): void {
@@ -79,5 +120,5 @@ export async function __flushAutoSaveForTesting(): Promise<void> {
     return;
   }
   dirtyWhileRecording = false;
-  await persistLatest();
+  await requestSave();
 }

@@ -15,6 +15,7 @@ import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
+import { saveNow } from "./autoSave";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -292,6 +293,12 @@ async function runFlow(
       posterUrl: null,
     };
     actions.setTrackClip(trackId, newClip);
+    try {
+      await saveNow();
+    } catch {
+      // saveNow logs autosave.error; durability failure is not a recording failure.
+    }
+    throwIfFlowAborted(signal, "Aborted after clip durability save");
     // Poster generation is best-effort and intentionally not awaited: the clip
     // save is the durability boundary, and the poster can attach later.
     attachPosterWhenReady(trackId, newClip, result.blob, signal);

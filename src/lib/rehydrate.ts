@@ -488,6 +488,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
       return {
         id: pt.id,
         clip,
+        blobRevision: 0,
         steps: [...pt.steps],
         volume: pt.volume,
         muted: clip?.audioStatus === "unavailable" ? true : pt.muted,

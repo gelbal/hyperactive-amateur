@@ -30,6 +30,10 @@ const posterMocks = vi.hoisted(() => ({
   captureFirstFrame: vi.fn(),
 }));
 
+const autoSaveMocks = vi.hoisted(() => ({
+  saveNow: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
@@ -77,11 +81,16 @@ vi.mock("./audioBufferSlice", () => ({
   sliceAudioBuffer: vi.fn((buffer) => buffer),
 }));
 
+vi.mock("./autoSave", () => ({
+  saveNow: autoSaveMocks.saveNow,
+}));
+
 import { COUNTDOWN_MS, cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { registerStreamLifecycle } from "./streamLifecycle";
+import { clearLogs } from "./logger";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
@@ -219,6 +228,9 @@ describe("recordingFlow", () => {
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     posterMocks.captureFirstFrame.mockReset();
     posterMocks.captureFirstFrame.mockResolvedValue(null);
+    autoSaveMocks.saveNow.mockReset();
+    autoSaveMocks.saveNow.mockResolvedValue(undefined);
+    clearLogs();
   });
 
   afterEach(() => {
@@ -560,6 +572,41 @@ describe("recordingFlow", () => {
       await promise.catch(() => false);
       setTrackPoster.mockRestore();
     }
+  });
+
+  it("awaits saveNow after storing the clip before returning idle", async () => {
+    vi.useFakeTimers();
+    const save = makeDeferred();
+    autoSaveMocks.saveNow.mockReturnValue(save.promise);
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await flushMicrotasks();
+
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    await expect(observeResolution(promise)).resolves.toEqual({ status: "pending" });
+    expect(posterMocks.captureFirstFrame).not.toHaveBeenCalled();
+
+    save.resolve();
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the clip and returns idle when saveNow rejects", async () => {
+    vi.useFakeTimers();
+    autoSaveMocks.saveNow.mockRejectedValue(new Error("quota exceeded"));
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
   });
 
   it("discards a late poster when the clip was replaced before it resolves", async () => {

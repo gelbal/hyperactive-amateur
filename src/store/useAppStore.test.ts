@@ -317,20 +317,33 @@ describe("useAppStore", () => {
     create.mockReturnValueOnce("blob:test/poster-a").mockReturnValueOnce("blob:test/poster-b");
     get().actions.setTrackClip(0, makeClip());
     const revision = get().session.projectRevision;
+    const blobRevision = get().project.tracks[0].blobRevision ?? 0;
     const firstPoster = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
     const secondPoster = new Blob([new Uint8Array([10])], { type: "image/jpeg" });
 
     get().actions.setTrackPoster(0, firstPoster);
     expect(get().project.tracks[0].clip?.posterBlob).toBe(firstPoster);
     expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-a");
+    expect(get().project.tracks[0].blobRevision).toBe(blobRevision + 1);
 
     get().actions.setTrackPoster(0, secondPoster);
     expect(get().project.tracks[0].clip?.posterBlob).toBe(secondPoster);
     expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-b");
     expect(revoke).toHaveBeenCalledWith("blob:test/poster-a");
+    expect(get().project.tracks[0].blobRevision).toBe(blobRevision + 2);
     expect(get().session.projectRevision).toBe(revision);
     create.mockRestore();
     revoke.mockRestore();
+  });
+
+  it("setTrackClip and clearTrackClip bump the track blobRevision", () => {
+    const start = get().project.tracks[0].blobRevision ?? 0;
+
+    get().actions.setTrackClip(0, makeClip());
+    expect(get().project.tracks[0].blobRevision).toBe(start + 1);
+
+    get().actions.clearTrackClip(0);
+    expect(get().project.tracks[0].blobRevision).toBe(start + 2);
   });
 
   it("setTrackPoster no-ops while exporting or when the track has no clip", () => {

@@ -175,6 +175,29 @@ describe("persistence", () => {
     ).toHaveLength(0);
   });
 
+  it("writes only metadata and the poster blob when an async poster attaches", async () => {
+    const initialClip = clip(9, { withMedia: false });
+    useAppStore.getState().actions.setTrackClip(0, initialClip);
+    await saveProject(useAppStore.getState());
+    const before = await storedMeta();
+    const clipRef = before.tracks[0].clipBlobRef;
+    const setSpy = vi.mocked(idbKeyval.set);
+    setSpy.mockClear();
+
+    const posterBlob = makeBlob([0xff, 0xd8, 0x09], "image/jpeg");
+    useAppStore.getState().actions.setTrackPoster(0, posterBlob, initialClip);
+    await saveProject(useAppStore.getState());
+
+    const after = await storedMeta();
+    expect(after.tracks[0].clipBlobRef).toBe(clipRef);
+    expect(after.tracks[0].posterBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
+    expect(after.tracks[0].posterBlobRef).not.toBe(clipRef);
+    expect(setSpy.mock.calls.some(([key]) => key === META_KEY)).toBe(true);
+    expect(
+      setSpy.mock.calls.filter(([key]) => typeof key === "string" && key.startsWith(BLOB_PREFIX)),
+    ).toHaveLength(1);
+  });
+
   it("garbage-collects orphaned blob records after a successful metadata save", async () => {
     useAppStore.getState().actions.setTrackClip(0, clip(4));
     useAppStore.getState().actions.setTrackClip(1, clip(40));

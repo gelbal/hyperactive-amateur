@@ -298,7 +298,9 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip } : track,
+              track.id === trackId
+                ? { ...track, clip, blobRevision: (track.blobRevision ?? 0) + 1 }
+                : track,
             ),
           },
           session: bumpProjectRevision(state.session),
@@ -322,7 +324,11 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId
-                ? { ...track, clip: { ...current, posterBlob, posterUrl } }
+                ? {
+                    ...track,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                    clip: { ...current, posterBlob, posterUrl },
+                  }
                 : track,
             ),
           },
@@ -344,7 +350,9 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip: null } : track,
+              track.id === trackId
+                ? { ...track, clip: null, blobRevision: (track.blobRevision ?? 0) + 1 }
+                : track,
             ),
           },
           // Re-recording a track means the user wants the station back. Without
@@ -521,8 +529,15 @@ export const useAppStore = create<AppStore>((set) => ({
         // (and its permission gate) on reload until they explicitly opt back
         // in via "Record more" or "Re-record".
         const hasAnyClip = project.tracks.some((t) => t.clip);
+        const normalizedProject = {
+          ...project,
+          tracks: project.tracks.map((track) => ({
+            ...track,
+            blobRevision: track.blobRevision ?? 0,
+          })),
+        };
         return {
-          project,
+          project: normalizedProject,
           session: hasAnyClip
             ? { ...bumpProjectRevision(state.session), recordingStationDismissed: true }
             : bumpProjectRevision(state.session),

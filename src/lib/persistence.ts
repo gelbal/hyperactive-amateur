@@ -24,6 +24,7 @@ export interface MissingBlobReference {
 
 export interface PersistedTrack {
   id: number;
+  blobRevision?: number;
   clipBlob: Blob | null;
   // Audio sidecar for clips recorded after live mic capture was introduced.
   // Older saves do not have it; rehydrate falls back to clipBlob audio decode.
@@ -100,7 +101,19 @@ interface PersistedProjectV2 {
 interface MetadataBuildResult {
   metadata: PersistedProjectV2;
   referencedBlobKeys: Set<string>;
+  blobReferences: Map<number, TrackBlobReferenceCache>;
 }
+
+interface CachedBlobReference {
+  blob: Blob;
+  ref: string;
+}
+
+type TrackBlobReferenceCache = { blobRevision: number } & Partial<
+  Record<BlobField, CachedBlobReference>
+>;
+
+const blobReferenceCache = new Map<number, TrackBlobReferenceCache>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -140,17 +153,51 @@ async function storableBlob(blob: Blob): Promise<Blob> {
   return new Response(new Uint8Array(await blob.arrayBuffer()), { headers }).blob();
 }
 
+function cachedBlobReference(
+  track: PersistedTrack,
+  field: BlobField,
+  blob: Blob,
+): string | undefined {
+  const cachedTrack = blobReferenceCache.get(track.id);
+  const cached = cachedTrack?.[field];
+  if (!cached) return undefined;
+  const blobRevision = track.blobRevision ?? 0;
+  if (cachedTrack.blobRevision === blobRevision || cached.blob === blob) return cached.ref;
+  return undefined;
+}
+
+function hasBlobReferences(cache: TrackBlobReferenceCache): boolean {
+  return Boolean(cache.clipBlob || cache.audioBlob || cache.posterBlob);
+}
+
+function commitBlobReferenceCache(nextCache: Map<number, TrackBlobReferenceCache>): void {
+  blobReferenceCache.clear();
+  for (const [trackId, cache] of nextCache) {
+    blobReferenceCache.set(trackId, cache);
+  }
+}
+
 async function blobReference(
-  blob: unknown,
+  track: PersistedTrack,
+  field: BlobField,
   referencedBlobKeys: Set<string>,
   writeMissingBlob: boolean,
+  nextTrackCache: TrackBlobReferenceCache,
 ): Promise<string | undefined> {
+  const blob = track[field];
   if (!isBlob(blob)) return undefined;
+  const cached = cachedBlobReference(track, field, blob);
+  if (cached) {
+    referencedBlobKeys.add(cached);
+    nextTrackCache[field] = { blob, ref: cached };
+    return cached;
+  }
   const key = await blobKey(blob);
   referencedBlobKeys.add(key);
   if (writeMissingBlob && (await get(key)) === undefined) {
     await set(key, await storableBlob(blob));
   }
+  nextTrackCache[field] = { blob, ref: key };
   return key;
 }
 
@@ -173,6 +220,7 @@ export function snapshot(state: AppState): PersistedProject {
     tagReasoning: { ...state.project.tagReasoning },
     tracks: state.project.tracks.map((track) => ({
       id: track.id,
+      blobRevision: track.blobRevision ?? 0,
       clipBlob: track.clip ? track.clip.blob : null,
       audioBlob: track.clip ? (track.clip.audioBlob ?? null) : null,
       posterBlob: track.clip ? track.clip.posterBlob : null,
@@ -201,23 +249,36 @@ async function buildMetadataRecord(
     ? (project.tagReasoning as Record<number, string>)
     : {};
   const rawTracks = Array.isArray(project.tracks) ? project.tracks : [];
+  const blobReferences = new Map<number, TrackBlobReferenceCache>();
   const tracks = await Promise.all(
     rawTracks.map(async (track): Promise<PersistedTrackV2> => {
+      const nextTrackCache: TrackBlobReferenceCache = {
+        blobRevision: track.blobRevision ?? 0,
+      };
       const clipBlobRef = await blobReference(
-        track.clipBlob,
+        track,
+        "clipBlob",
         referencedBlobKeys,
         writeMissingBlobs,
+        nextTrackCache,
       );
       const audioBlobRef = await blobReference(
-        track.audioBlob,
+        track,
+        "audioBlob",
         referencedBlobKeys,
         writeMissingBlobs,
+        nextTrackCache,
       );
       const posterBlobRef = await blobReference(
-        track.posterBlob,
+        track,
+        "posterBlob",
         referencedBlobKeys,
         writeMissingBlobs,
+        nextTrackCache,
       );
+      if (hasBlobReferences(nextTrackCache)) {
+        blobReferences.set(track.id, nextTrackCache);
+      }
       const tagReasoning = track.tagReasoning ?? projectTagReasoning[track.id];
 
       return {
@@ -255,6 +316,7 @@ async function buildMetadataRecord(
       updatedAt: project.updatedAt,
     },
     referencedBlobKeys,
+    blobReferences,
   };
 }
 
@@ -274,14 +336,19 @@ async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promi
 
 export async function saveProject(state: AppState): Promise<void> {
   const persisted = snapshot(state);
-  const { metadata, referencedBlobKeys } = await buildMetadataRecord(persisted, true);
+  const { metadata, referencedBlobKeys, blobReferences } = await buildMetadataRecord(
+    persisted,
+    true,
+  );
   await set(PROJECT_KEY, metadata);
+  commitBlobReferenceCache(blobReferences);
   await deleteOrphanedBlobRecords(referencedBlobKeys);
 }
 
 export async function migrateLegacyProject(project: PersistedProject): Promise<void> {
-  const { metadata, referencedBlobKeys } = await buildMetadataRecord(project, true);
+  const { metadata, referencedBlobKeys, blobReferences } = await buildMetadataRecord(project, true);
   await set(PROJECT_KEY, metadata);
+  commitBlobReferenceCache(blobReferences);
   const legacyKeys = new Set<string>([LEGACY_PROJECT_KEY, LEGACY_PROJECT_BACKUP_KEY]);
   if (project.legacyKey && project.legacyKey !== PROJECT_KEY) {
     legacyKeys.add(project.legacyKey);
@@ -321,40 +388,62 @@ function tagReasoningFromTracks(tracks: PersistedTrackV2[]): Record<number, stri
 
 async function resolveMetadataRecord(metadata: PersistedProjectV2): Promise<PersistedProject> {
   const missingBlobs: MissingBlobReference[] = [];
+  const blobReferences = new Map<number, TrackBlobReferenceCache>();
   const tracks = await Promise.all(
-    metadata.tracks.map(async (track): Promise<PersistedTrack> => ({
-      id: track.id,
-      clipBlob: await resolveBlobReference(
+    metadata.tracks.map(async (track): Promise<PersistedTrack> => {
+      const clipBlob = await resolveBlobReference(
         track.clipBlobRef,
         track.id,
         "clipBlob",
         missingBlobs,
-      ),
-      audioBlob: await resolveBlobReference(
+      );
+      const audioBlob = await resolveBlobReference(
         track.audioBlobRef,
         track.id,
         "audioBlob",
         missingBlobs,
-      ),
-      posterBlob: await resolveBlobReference(
+      );
+      const posterBlob = await resolveBlobReference(
         track.posterBlobRef,
         track.id,
         "posterBlob",
         missingBlobs,
-      ),
-      trimStartMs: track.trimStartMs,
-      trimEndMs: track.trimEndMs,
-      durationMs: track.durationMs,
-      audioStatus: track.audioStatus,
-      tag: track.tag,
-      tagSource: track.tagSource,
-      tagReasoning: track.tagReasoning,
-      steps: [...track.steps],
-      volume: track.volume,
-      muted: track.muted,
-      showVideo: track.showVideo,
-    })),
+      );
+      const nextTrackCache: TrackBlobReferenceCache = { blobRevision: 0 };
+      const refs: Record<BlobField, string | undefined> = {
+        clipBlob: track.clipBlobRef,
+        audioBlob: track.audioBlobRef,
+        posterBlob: track.posterBlobRef,
+      };
+      for (const field of ["clipBlob", "audioBlob", "posterBlob"] as const) {
+        const blob = { clipBlob, audioBlob, posterBlob }[field];
+        const ref = refs[field];
+        if (blob && ref) nextTrackCache[field] = { blob, ref };
+      }
+      if (hasBlobReferences(nextTrackCache)) {
+        blobReferences.set(track.id, nextTrackCache);
+      }
+      return {
+        id: track.id,
+        blobRevision: 0,
+        clipBlob,
+        audioBlob,
+        posterBlob,
+        trimStartMs: track.trimStartMs,
+        trimEndMs: track.trimEndMs,
+        durationMs: track.durationMs,
+        audioStatus: track.audioStatus,
+        tag: track.tag,
+        tagSource: track.tagSource,
+        tagReasoning: track.tagReasoning,
+        steps: [...track.steps],
+        volume: track.volume,
+        muted: track.muted,
+        showVideo: track.showVideo,
+      };
+    }),
   );
+  commitBlobReferenceCache(blobReferences);
 
   return {
     schemaVersion: PERSISTED_SCHEMA_VERSION,
@@ -408,6 +497,7 @@ export async function loadRecoveryBackup(): Promise<unknown | null> {
 }
 
 export async function clearProject(): Promise<void> {
+  blobReferenceCache.clear();
   await Promise.all([
     del(PROJECT_KEY),
     del(PROJECT_BACKUP_KEY),

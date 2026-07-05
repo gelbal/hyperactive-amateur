@@ -31,6 +31,8 @@ export interface Track {
   // 0-7 — track index in the sequencer.
   id: number;
   clip: Clip | null;
+  // In-memory media revision. Bumped when clip/poster blob references change.
+  blobRevision?: number;
   // Length-16 array of step toggles (one bar of 16th notes).
   steps: boolean[];
   // 0..1 linear volume.
