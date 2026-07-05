@@ -1,12 +1,13 @@
 // ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
 // ABOUTME: Owns the empty state plus the fullscreen toggle for presentation mode.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { requestMedia } from "../lib/media";
+import { ensureAudioRunning } from "../lib/audioLifecycle";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -21,6 +22,7 @@ export function Viewport() {
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
+  const audioState = useAppStore((s) => s.playback.audioState);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
   // The overlays (gate, station, record-prompt, countdown) stay visible in
@@ -45,6 +47,7 @@ export function Viewport() {
     emptyTrackCount > 0 &&
     !stationDismissed;
   const showReconnectPill = mediaStatus === "suspended";
+  const showAudioResumePill = audioState === "resume-required";
   const showRecordMore = !isFullscreen && emptyTrackCount > 0 && stationDismissed;
   const showFullscreenToggle = fullscreenSupported && (mediaStatus === "granted" || hasClips);
 
@@ -101,7 +104,12 @@ export function Viewport() {
           <PermissionGate status={mediaStatus} error={mediaError} />
         )}
         {showStation && <RecordingStation />}
-        {showReconnectPill && <ReconnectPill />}
+        {(showAudioResumePill || showReconnectPill) && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
+            {showAudioResumePill && <AudioResumePill />}
+            {showReconnectPill && <ReconnectPill />}
+          </div>
+        )}
         {mediaStatus === "granted" && !hasClips && stationDismissed && (
           <RecordPrompt />
         )}
@@ -124,14 +132,42 @@ export function Viewport() {
 
 function ReconnectPill() {
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+    <button
+      type="button"
+      onClick={() => void useAppStore.getState().actions.resumeMedia()}
+      className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
+    >
+      Camera disconnected — tap to reconnect
+    </button>
+  );
+}
+
+function AudioResumePill() {
+  const [stillBlocked, setStillBlocked] = useState(false);
+
+  const handleResume = async () => {
+    setStillBlocked(false);
+    try {
+      await ensureAudioRunning();
+    } catch {
+      setStillBlocked(true);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
       <button
         type="button"
-        onClick={() => void useAppStore.getState().actions.resumeMedia()}
+        onClick={() => void handleResume()}
         className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
       >
-        Camera disconnected — tap to reconnect
+        Audio interrupted — tap to resume.
       </button>
+      {stillBlocked && (
+        <div className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs text-orange-200">
+          Still blocked — try the volume keys or reopen the app.
+        </div>
+      )}
     </div>
   );
 }

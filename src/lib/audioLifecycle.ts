@@ -12,6 +12,8 @@ const EXPORT_AUDIO_INTERRUPTED_REASON =
   "Audio was interrupted — rendering stopped. Tap Render to try again.";
 let hasStartedAudibleAction = false;
 let micHeld = false;
+let silentSwitchHintReady = false;
+let silentSwitchHintDismissed = false;
 
 export class AudioUnavailableError extends Error {
   constructor(message = "AudioContext did not reach running state.") {
@@ -31,6 +33,14 @@ function setSessionType(type: AudioSessionLike["type"]): void {
   } catch (err) {
     logger.error(LOG_EVENTS.AUDIO_SESSION_ERROR, { message: errMessage(err), type });
   }
+}
+
+function canOfferSilentSwitchHint(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    navigator.maxTouchPoints > 0 &&
+    !("audioSession" in navigator)
+  );
 }
 
 export function noteMicHeld(): void {
@@ -95,6 +105,9 @@ export async function ensureAudioRunning(): Promise<void> {
       await waitForRunning(context);
     }
     hasStartedAudibleAction = true;
+    if (canOfferSilentSwitchHint() && !silentSwitchHintDismissed) {
+      silentSwitchHintReady = true;
+    }
     useAppStore.getState().actions.setAudioState("running");
   } catch (err) {
     useAppStore.getState().actions.setAudioState("resume-required");
@@ -131,7 +144,18 @@ export function initAudioLifecycle(): () => void {
   };
 }
 
+export function shouldShowSilentSwitchHint(): boolean {
+  return silentSwitchHintReady && !silentSwitchHintDismissed && canOfferSilentSwitchHint();
+}
+
+export function markSilentSwitchHintDismissed(): void {
+  silentSwitchHintDismissed = true;
+  silentSwitchHintReady = false;
+}
+
 export function __resetAudioLifecycleForTesting(): void {
   hasStartedAudibleAction = false;
   micHeld = false;
+  silentSwitchHintReady = false;
+  silentSwitchHintDismissed = false;
 }

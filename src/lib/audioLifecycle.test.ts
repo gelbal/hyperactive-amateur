@@ -36,19 +36,23 @@ import {
   AudioUnavailableError,
   ensureAudioRunning,
   initAudioLifecycle,
+  markSilentSwitchHintDismissed,
   noteMicHeld,
   noteMicReleased,
+  shouldShowSilentSwitchHint,
 } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
 
 describe("ensureAudioRunning", () => {
   let audioSession: ReturnType<typeof installNavigatorAudioSession> | null;
   let detachAudioLifecycle: (() => void) | null;
+  let previousMaxTouchPoints: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     audioContextStub = createAudioContextStub();
     audioSession = null;
     detachAudioLifecycle = null;
+    previousMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
     __resetAudioLifecycleForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
@@ -65,6 +69,11 @@ describe("ensureAudioRunning", () => {
   afterEach(() => {
     detachAudioLifecycle?.();
     audioSession?.uninstall();
+    if (previousMaxTouchPoints) {
+      Object.defineProperty(navigator, "maxTouchPoints", previousMaxTouchPoints);
+    } else {
+      Reflect.deleteProperty(navigator, "maxTouchPoints");
+    }
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -123,6 +132,41 @@ describe("ensureAudioRunning", () => {
 
     expect(Tone.start).toHaveBeenCalledTimes(1);
     expect(audioSession.types).toEqual(["playback"]);
+  });
+
+  it("shows the silent-switch hint after the first successful audible start on touch devices without audioSession", async () => {
+    Object.defineProperty(navigator, "maxTouchPoints", {
+      configurable: true,
+      value: 1,
+    });
+    audioContextStub.setState("running");
+
+    expect(shouldShowSilentSwitchHint()).toBe(false);
+
+    await ensureAudioRunning();
+
+    expect(shouldShowSilentSwitchHint()).toBe(true);
+
+    markSilentSwitchHintDismissed();
+
+    expect(shouldShowSilentSwitchHint()).toBe(false);
+
+    await ensureAudioRunning();
+
+    expect(shouldShowSilentSwitchHint()).toBe(false);
+  });
+
+  it("does not show the silent-switch hint when audioSession exists", async () => {
+    Object.defineProperty(navigator, "maxTouchPoints", {
+      configurable: true,
+      value: 1,
+    });
+    audioSession = installNavigatorAudioSession();
+    audioContextStub.setState("running");
+
+    await ensureAudioRunning();
+
+    expect(shouldShowSilentSwitchHint()).toBe(false);
   });
 
   it("switches to play-and-record while the mic is held and returns to playback after audible start", async () => {
