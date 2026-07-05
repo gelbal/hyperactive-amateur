@@ -537,6 +537,9 @@ describe("rehydrateFromStorage", () => {
     expect(isBlobLike(repairedTrack.clip?.blob)).toBe(true);
     expect(repairedTrack.clip?.url).toMatch(/^blob:/);
     expect(repairedTrack.muted).toBe(true);
+    // The repair applied this mute, and it is marked as such so a re-record
+    // can clear it without touching mutes the user owns.
+    expect(repairedTrack.mutedByRepair).toBe(true);
     expect(repairedTrack.tag).toBe("kick");
     expect(useAppStore.getState().project.tagReasoning).toEqual({
       0: "good before corruption",
@@ -557,9 +560,48 @@ describe("rehydrateFromStorage", () => {
     expect(roundTrippedTrack.clip?.audioBuffer).toBeNull();
     expect(roundTrippedTrack.clip?.audioStatus).toBe("unavailable");
     expect(roundTrippedTrack.clip?.url).toMatch(/^blob:/);
+    expect(roundTrippedTrack.mutedByRepair).toBe(true);
     expect(roundTrippedTrack.tag).toBe("kick");
     expect(roundTrippedTrack.steps[3]).toBe(true);
     expect(audioMocks.decodeAudioData).not.toHaveBeenCalled();
+  });
+
+  it("keeps a user-owned mute on a repaired track user-owned across reload", async () => {
+    // A repaired track the user re-muted: muted persists true with no repair
+    // marker, so a later re-record must not clear their mute.
+    useAppStore
+      .getState()
+      .actions.setTrackClip(0, { ...(await makeClip()), audioBuffer: null, audioStatus: "unavailable" });
+    useAppStore.getState().actions.setTrackMuted(0, true);
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("unavailable");
+    expect(track.muted).toBe(true);
+    expect(track.mutedByRepair).toBe(false);
+  });
+
+  it("does not claim a pre-existing user mute when repair mutes the track", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    useAppStore.getState().actions.setTrackMuted(0, true);
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    await del(meta.tracks[0].audioBlobRef);
+    useAppStore.getState().actions.reset();
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("unavailable");
+    // The mute predates the repair — it stays user-owned.
+    expect(track.muted).toBe(true);
+    expect(track.mutedByRepair).toBe(false);
   });
 
   it("routes a missing audio sidecar reference through the audio repair state", async () => {
@@ -585,6 +627,7 @@ describe("rehydrateFromStorage", () => {
     expect(repairedTrack.clip?.url).toMatch(/^blob:/);
     expect(repairedTrack.clip?.posterUrl).toMatch(/^blob:/);
     expect(repairedTrack.muted).toBe(true);
+    expect(repairedTrack.mutedByRepair).toBe(true);
     expect(repairedTrack.tag).toBe("kick");
     expect(await loadRecoveryBackup()).not.toBeNull();
   });

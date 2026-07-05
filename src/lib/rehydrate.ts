@@ -153,6 +153,7 @@ function emptyPersistedTrack(id: number, stepCount: number): PersistedTrack {
     steps: new Array(stepCount).fill(false),
     volume: 1,
     muted: false,
+    mutedByRepair: false,
     showVideo: true,
   };
 }
@@ -262,6 +263,7 @@ function normalizeTrack(
     steps: normalizeSteps(warnings, trackId, rawTrack.steps, stepCount),
     volume: normalizeNumber(warnings, `Track ${trackId + 1} volume`, rawTrack.volume, 0, 1, 1),
     muted: typeof rawTrack.muted === "boolean" ? rawTrack.muted : false,
+    mutedByRepair: typeof rawTrack.mutedByRepair === "boolean" ? rawTrack.mutedByRepair : false,
     showVideo: typeof rawTrack.showVideo === "boolean" ? rawTrack.showVideo : true,
   };
 }
@@ -490,13 +492,20 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
           }
         }
       }
+      const audioUnavailable = clip?.audioStatus === "unavailable";
+      const wasMutedByRepair = pt.mutedByRepair ?? false;
       return {
         id: pt.id,
         clip,
         blobRevision: 0,
         steps: [...pt.steps],
         volume: pt.volume,
-        muted: clip?.audioStatus === "unavailable" ? true : pt.muted,
+        muted: audioUnavailable ? true : pt.muted,
+        // The repair owns the mute when it flipped it on; a mute the user
+        // already held (or re-applied after a repair) stays user-owned.
+        mutedByRepair: audioUnavailable
+          ? (pt.muted ? wasMutedByRepair : true)
+          : wasMutedByRepair,
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
       };

@@ -53,6 +53,9 @@ export interface PersistedTrack {
   steps: boolean[];
   volume: number;
   muted: boolean;
+  // True when `muted` was applied by the audio-repair path rather than the
+  // user. Older saves predate this field and read as undefined (false).
+  mutedByRepair?: boolean;
   showVideo: boolean;
 }
 
@@ -81,6 +84,9 @@ interface PersistedTrackV2 {
   steps: boolean[];
   volume: number;
   muted: boolean;
+  // Optional because schema-2 records written before repair-mute marking
+  // lack it; new writes always include it.
+  mutedByRepair?: boolean;
   showVideo: boolean;
   tag: Tag | null;
   tagSource: TagSource | null;
@@ -244,6 +250,7 @@ export function snapshot(state: AppState): PersistedProject {
       steps: [...track.steps],
       volume: track.volume,
       muted: track.muted,
+      mutedByRepair: track.mutedByRepair ?? false,
       showVideo: track.showVideo,
     })),
     updatedAt: Date.now(),
@@ -296,6 +303,7 @@ async function buildMetadataRecord(
         steps: Array.isArray(track.steps) ? [...track.steps] : [],
         volume: track.volume,
         muted: track.muted,
+        mutedByRepair: track.mutedByRepair ?? false,
         showVideo: track.showVideo,
         tag: track.tag,
         tagSource: track.tagSource ?? (track.tag ? "system" : null),
@@ -464,6 +472,7 @@ async function resolveMetadataRecord(metadata: PersistedProjectV2): Promise<Pers
         steps: [...track.steps],
         volume: track.volume,
         muted: track.muted,
+        mutedByRepair: track.mutedByRepair ?? false,
         showVideo: track.showVideo,
       };
     }),

@@ -131,12 +131,14 @@ describe("persistence", () => {
       sameTierHoldMs: 750,
       storageFormat: "schema2",
     });
+    expect(meta.tracks[0].mutedByRepair).toBe(false);
     expect(loaded?.tracks[0]).toMatchObject({
       id: 0,
       trimStartMs: 25,
       trimEndMs: 925,
       durationMs: 1000,
       tag: "snare",
+      mutedByRepair: false,
       showVideo: false,
     });
     expect(isBlobLike(loaded?.tracks[0].clipBlob)).toBe(true);

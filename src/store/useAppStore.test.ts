@@ -346,18 +346,51 @@ describe("useAppStore", () => {
     revoke.mockRestore();
   });
 
-  it("re-recording over an audio-unavailable clip clears the repair mute", () => {
+  // Mirrors how repair state reaches the store in production: rehydrate
+  // constructs the repaired track (auto-muted, marked) and hydrates it.
+  function hydrateRepairMutedTrack(trackId: number) {
     get().actions.setTrackClip(
-      0,
+      trackId,
       makeClip({ audioBuffer: null, audioStatus: "unavailable" }),
     );
-    get().actions.setTrackMuted(0, true);
-    expect(get().project.tracks[0].muted).toBe(true);
+    get().actions.hydrateProject({
+      ...get().project,
+      tracks: get().project.tracks.map((track) =>
+        track.id === trackId ? { ...track, muted: true, mutedByRepair: true } : track,
+      ),
+    });
+    expect(get().project.tracks[trackId].muted).toBe(true);
+  }
+
+  it("re-recording over a repair-muted clip clears the repair mute", () => {
+    hydrateRepairMutedTrack(0);
 
     get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
 
     expect(get().project.tracks[0].clip?.audioStatus).toBe("ok");
     expect(get().project.tracks[0].muted).toBe(false);
+    expect(get().project.tracks[0].mutedByRepair).toBe(false);
+  });
+
+  it("clears a repair mute when re-recording after the repaired clip was cleared", () => {
+    hydrateRepairMutedTrack(0);
+
+    get().actions.clearTrackClip(0);
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].muted).toBe(false);
+  });
+
+  it("keeps a user's re-mute on a repaired track when re-recording", () => {
+    hydrateRepairMutedTrack(0);
+    // The user toggles the mute themselves — their intent now owns the state.
+    get().actions.setTrackMuted(0, false);
+    get().actions.setTrackMuted(0, true);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].clip?.audioStatus).toBe("ok");
+    expect(get().project.tracks[0].muted).toBe(true);
   });
 
   it("keeps a user's own mute when replacing a healthy clip", () => {

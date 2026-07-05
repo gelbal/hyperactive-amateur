@@ -248,7 +248,9 @@ export const useAppStore = create<AppStore>((set) => ({
           project: {
             ...state.project,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, muted } : track,
+              // A user mute toggle owns the state from then on: it clears any
+              // repair-applied marker so re-record won't override the intent.
+              track.id === trackId ? { ...track, muted, mutedByRepair: false } : track,
             ),
           },
         };
@@ -277,7 +279,8 @@ export const useAppStore = create<AppStore>((set) => ({
     setTrackClip: (trackId, clip) =>
       set((state) => {
         if (state.playback.isExporting) return state;
-        const previous = state.project.tracks[trackId]?.clip;
+        const previousTrack = state.project.tracks[trackId];
+        const previous = previousTrack?.clip;
         if (previous && previous.url && previous.url !== clip.url) {
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
@@ -295,10 +298,11 @@ export const useAppStore = create<AppStore>((set) => ({
           trackId in state.project.tagReasoning
             ? omitKey(state.project.tagReasoning, trackId)
             : state.project.tagReasoning;
-        // Replacing a repair-state clip (audio unavailable) clears the mute
-        // the repair applied; a user's mute on a healthy track is kept.
+        // Re-recording clears a mute only when the repair applied it (marked
+        // mutedByRepair). A mute the user owns — on a healthy track or
+        // re-applied after a repair — is kept.
         const clearRepairMute =
-          previous?.audioStatus === "unavailable" && clip.audioStatus === "ok";
+          previousTrack?.mutedByRepair === true && clip.audioStatus === "ok";
         return {
           project: {
             ...state.project,
@@ -309,6 +313,7 @@ export const useAppStore = create<AppStore>((set) => ({
                     ...track,
                     clip,
                     muted: clearRepairMute ? false : track.muted,
+                    mutedByRepair: false,
                     blobRevision: (track.blobRevision ?? 0) + 1,
                   }
                 : track,

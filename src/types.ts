@@ -38,6 +38,10 @@ export interface Track {
   // 0..1 linear volume.
   volume: number;
   muted: boolean;
+  // True when `muted` was applied by the audio-repair path rather than the
+  // user. Re-recording clears the mute only while this is set; any user mute
+  // toggle claims ownership of the state and clears it. Defaults to false.
+  mutedByRepair?: boolean;
   tag: Tag | null;
   // When false, the track fires audio but does not cause a viewport cut.
   // Hats/ghost notes typically benefit from this. Default true.
