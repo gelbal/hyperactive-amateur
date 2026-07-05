@@ -89,6 +89,24 @@ describe("startAudioBufferCapture", () => {
     expect(buffer?.getChannelData(0)[959]).toBe(-0.5);
   });
 
+  it("crops with exact frame math at a 44100Hz context", () => {
+    const { context, fireAudioProcess } = makeAudioContext(44_100);
+    const capture = startAudioBufferCapture(makeStream(), context, { maxDurationMs: 20 });
+    expect(capture).not.toBeNull();
+
+    fireAudioProcess(new Float32Array(600).fill(0.25));
+    fireAudioProcess(new Float32Array(600).fill(-0.5));
+
+    const buffer = capture?.stop();
+    expect(buffer).not.toBeNull();
+    // floor(0.020 * 44100) = 882 frames exactly.
+    expect(buffer?.length).toBe(882);
+    expect(buffer?.sampleRate).toBe(44_100);
+    expect(buffer?.getChannelData(0)[599]).toBe(0.25);
+    expect(buffer?.getChannelData(0)[600]).toBe(-0.5);
+    expect(buffer?.getChannelData(0)[881]).toBe(-0.5);
+  });
+
   it("keeps an under-collected capture at its actual length", () => {
     const { context, fireAudioProcess } = makeAudioContext();
     const capture = startAudioBufferCapture(makeStream(), context, { maxDurationMs: 20 });

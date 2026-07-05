@@ -516,6 +516,7 @@ describe("recordingFlow", () => {
     await expect(promise).resolves.toBe(false);
     expect(useAppStore.getState().recording.state).toBe("idle");
     expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
     expect(onError).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
   });
