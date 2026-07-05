@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import {
   isManualInstallHintContext,
+  requestPersistence,
   useCanInstall,
 } from "../lib/install";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
@@ -33,6 +34,20 @@ export function StorageDurabilityChip() {
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-300" aria-hidden />
         <p className="min-w-0 flex-1 text-xs leading-5 text-orange-100/85">{copy}</p>
+        <button
+          type="button"
+          aria-label="Request persistent storage"
+          // Called synchronously in the click handler so the browser treats
+          // the persistence request as user-gesture anchored.
+          onClick={() => {
+            void requestPersistence().then((storageDurability) => {
+              useAppStore.getState().actions.setStorageDurability(storageDurability);
+            });
+          }}
+          className="h-7 shrink-0 whitespace-nowrap rounded border border-orange-300/30 px-2 text-xs text-orange-100 hover:bg-orange-900/50"
+        >
+          Protect project
+        </button>
         <button
           type="button"
           aria-label="Dismiss storage durability notice"

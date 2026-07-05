@@ -1,6 +1,6 @@
 // ABOUTME: StorageDurabilityChip tests — warns when recorded clips live in best-effort browser storage.
 // ABOUTME: Pins local dismissal and iOS-class separate-storage caveat behavior.
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetInstallForTesting } from "../lib/install";
 import { useAppStore } from "../store/useAppStore";
@@ -102,6 +102,31 @@ describe("StorageDurabilityChip", () => {
     unmount();
     render(<StorageDurabilityChip />);
     expect(screen.getByText(BASE_COPY)).toBeInTheDocument();
+  });
+
+  it("requests persistent storage directly from the chip action", async () => {
+    const persistFn = vi.fn(async () => true);
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: { persist: persistFn },
+    });
+    try {
+      useAppStore.getState().actions.setTrackClip(0, makeClip());
+      useAppStore.getState().actions.setStorageDurability("best-effort");
+      render(<StorageDurabilityChip />);
+
+      fireEvent.click(screen.getByLabelText("Request persistent storage"));
+
+      // The request fires synchronously inside the click handler, so the
+      // browser sees it as gesture-anchored.
+      expect(persistFn).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+      });
+      expect(screen.queryByText(BASE_COPY)).toBeNull();
+    } finally {
+      Reflect.deleteProperty(navigator, "storage");
+    }
   });
 
   it("appends the separate-storage caveat in iOS-class browser mode", () => {

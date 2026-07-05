@@ -1,6 +1,6 @@
 // ABOUTME: recordingFlow — shared "record into a track" sequence used by TrackRow and the in-viewport RecordingStation.
 // ABOUTME: Drives the countdown → record → trim → store → auto-tag pipeline; module-level controller serializes flows + carries Esc cancellation.
-import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
 import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
@@ -49,6 +49,28 @@ export interface RecordIntoTrackOptions {
 // cancelCurrentRecording() to abort the active flow.
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
+
+// Durable-storage request state. The request anchors to the first SUCCESSFUL
+// clip save and retries on later successful saves until the browser answers
+// (granted or definitively denied); an "unknown" outcome stays retryable.
+let persistenceRequestSettled = false;
+
+function requestPersistenceAfterClipSave(): void {
+  if (persistenceRequestSettled) return;
+  if (useAppStore.getState().session.storageDurability === "persistent") {
+    persistenceRequestSettled = true;
+    return;
+  }
+  void requestPersistence().then((storageDurability) => {
+    if (storageDurability !== "unknown") persistenceRequestSettled = true;
+    useAppStore.getState().actions.setStorageDurability(storageDurability);
+  });
+}
+
+// Test-only — clears the settled persistence-request state between cases.
+export function __resetPersistenceRequestForTesting(): void {
+  persistenceRequestSettled = false;
+}
 
 export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
   currentController?.abort(reason);
@@ -281,7 +303,6 @@ async function runFlow(
     const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
     const trimEndMs = Math.max(trimStartMs, Math.min(trim.trimEndMs, bufferDurationMs));
     const url = URL.createObjectURL(result.blob);
-    const wasFirstClip = selectClipCount(useAppStore.getState()) === 0;
     const newClip: Clip = {
       blob: result.blob,
       url,
@@ -297,11 +318,7 @@ async function runFlow(
     actions.setTrackClip(trackId, newClip);
     try {
       await saveNow();
-      if (wasFirstClip) {
-        void requestPersistence().then((storageDurability) => {
-          useAppStore.getState().actions.setStorageDurability(storageDurability);
-        });
-      }
+      requestPersistenceAfterClipSave();
     } catch {
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }
