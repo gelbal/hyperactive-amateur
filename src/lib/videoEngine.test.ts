@@ -281,6 +281,32 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
   });
 
+  it("ducks the next fast boundary against the pending committed clip", () => {
+    useAppStore.getState().actions.setBpm(250);
+    initVideoEngine();
+    setVideoCutSubdivision("16n");
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    setClipForTrack(2, makeClip(2));
+    useAppStore.getState().actions.setTrackTag(0, "vocal");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    useAppStore.getState().actions.setTrackTag(2, "vocal");
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    trigger(2, 1.06);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.transport.fireRepeat(0, 1.06);
+    toneHarness.draw.advanceTo(1.06);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
   it("ignores a stale Draw-scheduled boundary commit after reset", () => {
     initVideoEngine();
     setClipForTrack(0, makeClip(0));

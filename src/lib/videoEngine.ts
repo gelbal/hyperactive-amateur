@@ -48,6 +48,7 @@ const metadataReady = new Map<number, boolean>();
 const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
+let pendingCommit: TriggerEvent | null = null;
 let lastDrawn: TriggerEvent | null = null;
 let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
@@ -342,10 +343,15 @@ function onCutBoundary(boundaryTime: number): void {
   pendingTriggers = result.remaining;
 
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
-  const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
+  const effectiveCurrent = pendingCommit ?? currentlyDisplayed;
+  const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
   const epoch = playbackEpoch;
+  pendingCommit = next;
   Tone.getDraw().schedule(() => {
-    if (epoch !== playbackEpoch) return;
+    if (epoch !== playbackEpoch) {
+      if (isSameEvent(pendingCommit, next)) pendingCommit = null;
+      return;
+    }
     if (
       preparedBoundary &&
       isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)
@@ -356,6 +362,7 @@ function onCutBoundary(boundaryTime: number): void {
       preparedBoundary = null;
     }
     currentlyDisplayed = next;
+    if (isSameEvent(pendingCommit, next)) pendingCommit = null;
   }, boundaryTime);
 }
 
@@ -500,6 +507,7 @@ function schedulePrepareForBoundary(boundaryTime: number): void {
 
 function scheduleBoundaryEvent(): void {
   playbackEpoch += 1;
+  pendingCommit = null;
   disposeBoundaryEvent();
   disposePrepareEvent();
   clearPreparedState();
@@ -522,6 +530,7 @@ export function resetPlaybackState(): void {
   playbackEpoch += 1;
   disposePrepareEvent();
   pendingTriggers = [];
+  pendingCommit = null;
   currentlyDisplayed = null;
   lastDrawn = null;
   clearPreparedState();
@@ -598,6 +607,7 @@ export function __resetVideoEngineForTesting(): void {
   metadataReady.clear();
   pendingFirstTrigger.clear();
   pendingTriggers = [];
+  pendingCommit = null;
   currentlyDisplayed = null;
   lastDrawn = null;
   clearPreparedState();
