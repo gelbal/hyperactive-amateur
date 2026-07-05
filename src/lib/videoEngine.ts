@@ -54,8 +54,6 @@ let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
 let boundaryEventId: number | null = null;
-let prepareEventId: unknown | null = null;
-let prepareEventBoundaryTime: number | null = null;
 let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = null;
 let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
@@ -199,14 +197,17 @@ function resolveBoundaryWinner(boundaryTime: number): TriggerEvent | null {
   return isSameEvent(winner, currentlyDisplayed) ? null : winner;
 }
 
-export function prepareUpcoming(boundaryTime: number): void {
+export function prepareUpcoming(
+  boundaryTime: number,
+  winner: TriggerEvent | null = resolveBoundaryWinner(boundaryTime),
+  current: TriggerEvent | null = currentlyDisplayed,
+): void {
+  if (!winner || isSameEvent(winner, current)) return;
   if (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)) {
-    return;
+    if (isSameEvent(preparedBoundary.event, winner)) return;
   }
   clearPreparedState();
 
-  const winner = resolveBoundaryWinner(boundaryTime);
-  if (!winner) return;
   if (!seekToTrimStart(winner.trackId)) return;
 
   playTrack(winner.trackId);
@@ -347,6 +348,7 @@ function onCutBoundary(boundaryTime: number): void {
   const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
   const epoch = playbackEpoch;
   pendingCommit = next;
+  prepareUpcoming(boundaryTime, next, effectiveCurrent);
   Tone.getDraw().schedule(() => {
     if (epoch !== playbackEpoch) {
       if (isSameEvent(pendingCommit, next)) pendingCommit = null;
@@ -478,43 +480,13 @@ function disposeBoundaryEvent(): void {
   }
 }
 
-function disposePrepareEvent(): void {
-  if (prepareEventId !== null) {
-    prepareEventId = null;
-    prepareEventBoundaryTime = null;
-  }
-}
-
-function schedulePrepareForBoundary(boundaryTime: number): void {
-  if (
-    (prepareEventBoundaryTime !== null &&
-      isSameBoundary(prepareEventBoundaryTime, boundaryTime)) ||
-    (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime))
-  ) {
-    return;
-  }
-
-  disposePrepareEvent();
-  prepareEventBoundaryTime = boundaryTime;
-  const epoch = playbackEpoch;
-  prepareEventId = Tone.getDraw().schedule(() => {
-    if (epoch !== playbackEpoch) return;
-    prepareEventId = null;
-    prepareEventBoundaryTime = null;
-    prepareUpcoming(boundaryTime);
-  }, boundaryTime - LOOKAHEAD_S);
-}
-
 function scheduleBoundaryEvent(): void {
   playbackEpoch += 1;
   pendingCommit = null;
   disposeBoundaryEvent();
-  disposePrepareEvent();
   clearPreparedState();
   boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
-    const interval = subdivisionToSeconds(cutSubdivision);
     onCutBoundary(time);
-    schedulePrepareForBoundary(time + interval);
   }, cutSubdivision);
 }
 
@@ -528,7 +500,6 @@ export function setVideoCutSubdivision(value: CutSubdivision): void {
 // triggers into the next playback session.
 export function resetPlaybackState(): void {
   playbackEpoch += 1;
-  disposePrepareEvent();
   pendingTriggers = [];
   pendingCommit = null;
   currentlyDisplayed = null;
@@ -600,7 +571,6 @@ export function __resetVideoEngineForTesting(): void {
     cutSubdivisionUnsubscribe = null;
   }
   disposeBoundaryEvent();
-  disposePrepareEvent();
   for (const video of videos.values()) video.remove();
   videos.clear();
   trims.clear();

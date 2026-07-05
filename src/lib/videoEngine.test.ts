@@ -327,23 +327,29 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()).toBeNull();
   });
 
-  it("ignores stale Draw-scheduled prepares after subdivision reschedules", () => {
-    useAppStore.getState().actions.setBpm(120);
+  it("clears a Transport-prepared winner and ignores its commit after reset", () => {
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
     __markMetadataReadyForTesting(0);
     useAppStore.getState().actions.setIsPlaying(true);
-    trigger(0, 30.25);
+    trigger(0, 1.0);
     toneHarness.draw.reset();
 
     const video = document.querySelector("video") as HTMLVideoElement;
     const playback = spyVideoPlayback(video);
 
-    toneHarness.transport.fireRepeat(0, 30.0);
-    setVideoCutSubdivision("16n");
+    toneHarness.setImmediate(0.9);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
 
-    toneHarness.draw.advanceTo(30.17);
-    expect(playback.seek).not.toHaveBeenCalled();
+    resetPlaybackState();
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
   it("pre-seeks and plays the prepared boundary winner without changing the display", () => {
@@ -462,30 +468,37 @@ describe("videoEngine integration", () => {
     expect(loserPlayback.pause).toHaveBeenCalled();
   });
 
-  it("schedules next-boundary preparation on the audio-clock Draw timeline", () => {
+  it("pre-seeks the boundary winner in the Transport callback before Draw commits", () => {
     useAppStore.getState().actions.setBpm(120);
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
     __markMetadataReadyForTesting(0);
     useAppStore.getState().actions.setIsPlaying(true);
-    trigger(0, 30.25);
+    const target = 30.25;
+    trigger(0, target);
     toneHarness.draw.reset();
     toneHarness.transport.scheduleOnce.mockClear();
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(target - 0.1);
 
     const video = document.querySelector("video") as HTMLVideoElement;
     const playback = spyVideoPlayback(video);
 
-    toneHarness.transport.fireRepeat(0, 30.0);
+    toneHarness.transport.fireRepeat(0, target);
 
     expect(toneHarness.transport.scheduleOnce).not.toHaveBeenCalled();
-    expect(toneHarness.draw.pendingTimes()).toEqual([30, 30.17]);
-    toneHarness.draw.advanceTo(30.16);
-    expect(playback.seek).not.toHaveBeenCalled();
-
-    toneHarness.draw.advanceTo(30.17);
-    prepareUpcoming(30.25);
-
+    expect(__getPendingTriggerCountForTesting()).toBe(0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
     expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.seek).toHaveBeenCalledWith(0);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(toneHarness.draw.pendingTimes()).toEqual([target]);
+
+    toneHarness.draw.advanceTo(target);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the previous frame while video has only metadata", () => {
