@@ -9,6 +9,13 @@ export function RecoveryBanner() {
 
   const visibleWarnings = warnings.slice(0, 3);
   const hiddenCount = warnings.length - visibleWarnings.length;
+  const audioRepairCount = warnings.filter((warning) =>
+    warning.includes("audio unavailable"),
+  ).length;
+  const audioRepairSummary =
+    audioRepairCount === 1
+      ? "1 track has audio unavailable and needs re-recording."
+      : `${audioRepairCount} tracks have audio unavailable and need re-recording.`;
 
   return (
     <section
@@ -20,6 +27,7 @@ export function RecoveryBanner() {
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-amber-100">Recovered saved project</h2>
           <ul className="mt-1 space-y-1 text-xs text-amber-100/80">
+            {audioRepairCount > 0 && <li>{audioRepairSummary}</li>}
             {visibleWarnings.map((warning) => (
               <li key={warning}>{warning}</li>
             ))}

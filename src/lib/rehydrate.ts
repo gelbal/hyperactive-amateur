@@ -147,6 +147,7 @@ function emptyPersistedTrack(id: number, stepCount: number): PersistedTrack {
     trimStartMs: 0,
     trimEndMs: 0,
     durationMs: 0,
+    audioStatus: "ok",
     tag: null,
     steps: new Array(stepCount).fill(false),
     volume: 1,
@@ -159,19 +160,53 @@ function normalizeClipFields(
   warnings: string[],
   trackId: number,
   raw: Record<string, unknown>,
-): Pick<PersistedTrack, "clipBlob" | "audioBlob" | "posterBlob" | "trimStartMs" | "trimEndMs" | "durationMs"> {
+): Pick<
+  PersistedTrack,
+  | "clipBlob"
+  | "audioBlob"
+  | "posterBlob"
+  | "trimStartMs"
+  | "trimEndMs"
+  | "durationMs"
+  | "audioStatus"
+> {
+  const audioStatus = raw.audioStatus === "unavailable" ? "unavailable" : "ok";
   if (raw.clipBlob === null || raw.clipBlob === undefined) {
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
   if (!isBlob(raw.clipBlob)) {
     warn(warnings, `Track ${trackId + 1} clip blob was invalid and dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   const durationMs = finiteNumber(raw.durationMs);
   if (durationMs === null || durationMs <= 0) {
     warn(warnings, `Track ${trackId + 1} duration was invalid and its clip was dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   const startRaw = finiteNumber(raw.trimStartMs) ?? 0;
@@ -183,7 +218,15 @@ function normalizeClipFields(
   }
   if (trimEndMs <= trimStartMs) {
     warn(warnings, `Track ${trackId + 1} trim window was invalid and its clip was dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   return {
@@ -193,6 +236,7 @@ function normalizeClipFields(
     trimStartMs,
     trimEndMs,
     durationMs,
+    audioStatus,
   };
 }
 
@@ -279,18 +323,33 @@ function normalizeProject(persisted: PersistedProject, warnings: string[]): Pers
   };
 }
 
-function collectMissingBlobTrackIds(
+function audioUnavailableWarning(trackId: number): string {
+  return `Track ${trackId + 1} audio unavailable — re-record to restore sound.`;
+}
+
+function warnAudioUnavailable(warnings: string[], trackId: number): void {
+  const message = audioUnavailableWarning(trackId);
+  if (!warnings.includes(message)) warn(warnings, message);
+}
+
+function collectAudioRepairTrackIds(
   persisted: PersistedProject,
   warnings: string[],
 ): Set<number> {
   const trackIds = new Set<number>();
   for (const missing of persisted.missingBlobs ?? []) {
     if (Number.isInteger(missing.trackId) && missing.trackId >= 0) {
-      trackIds.add(missing.trackId);
+      if (missing.field === "audioBlob") {
+        trackIds.add(missing.trackId);
+      } else if (missing.field === "clipBlob") {
+        warn(warnings, `Track ${missing.trackId + 1} clip video was missing and was dropped.`);
+      } else if (missing.field === "posterBlob") {
+        warn(warnings, `Track ${missing.trackId + 1} poster was missing and regenerated.`);
+      }
     }
   }
   for (const trackId of Array.from(trackIds).sort((a, b) => a - b)) {
-    warn(warnings, `Track ${trackId + 1} clip could not be decoded and was dropped.`);
+    warnAudioUnavailable(warnings, trackId);
   }
   return trackIds;
 }
@@ -316,6 +375,36 @@ async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise
     }
   }
   return decodeBlob(clipBlob);
+}
+
+async function restorePosterBlob(clipBlob: Blob, posterBlob: Blob | null): Promise<Blob | null> {
+  if (posterBlob) return posterBlob;
+  try {
+    return await captureFirstFrame(clipBlob);
+  } catch {
+    return null;
+  }
+}
+
+async function rehydrateClip(
+  track: PersistedTrack,
+  clipBlob: Blob,
+  audioBuffer: AudioBuffer | null,
+  audioStatus: Clip["audioStatus"],
+): Promise<Clip> {
+  const posterBlob = await restorePosterBlob(clipBlob, track.posterBlob ?? null);
+  return {
+    blob: clipBlob,
+    url: URL.createObjectURL(clipBlob),
+    audioBuffer,
+    audioStatus,
+    audioBlob: audioStatus === "ok" ? (track.audioBlob ?? null) : null,
+    trimStartMs: track.trimStartMs,
+    trimEndMs: track.trimEndMs,
+    durationMs: track.durationMs,
+    posterBlob,
+    posterUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
+  };
 }
 
 async function trySaveRecoveryBackup(
@@ -357,7 +446,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const empty = createInitialState();
   const warnings: string[] = [];
   const normalized = normalizeProject(persisted, warnings);
-  const missingBlobTrackIds = collectMissingBlobTrackIds(persisted, warnings);
+  const audioRepairTrackIds = collectAudioRepairTrackIds(persisted, warnings);
   let recoveryBackupWritten = false;
   if (warnings.length > 0 || persisted.storageFormat === "legacy") {
     recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
@@ -382,35 +471,18 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const tracks: Track[] = await Promise.all(
     normalized.tracks.map(async (pt): Promise<Track> => {
       let clip: Clip | null = null;
-      if (pt.clipBlob && !missingBlobTrackIds.has(pt.id)) {
-        try {
-          const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
-          // Older saves predate posterBlob; regenerate from clipBlob so the
-          // <img> thumbnails have something to show. Best-effort — null on fail.
-          let posterBlob: Blob | null = pt.posterBlob ?? null;
-          if (!posterBlob) {
-            try {
-              posterBlob = await captureFirstFrame(pt.clipBlob);
-            } catch {
-              posterBlob = null;
-            }
+      if (pt.clipBlob) {
+        if (pt.audioStatus === "unavailable" || audioRepairTrackIds.has(pt.id)) {
+          warnAudioUnavailable(warnings, pt.id);
+          clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
+        } else {
+          try {
+            const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
+            clip = await rehydrateClip(pt, pt.clipBlob, audioBuffer, "ok");
+          } catch {
+            warnAudioUnavailable(warnings, pt.id);
+            clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
           }
-          clip = {
-            blob: pt.clipBlob,
-            url: URL.createObjectURL(pt.clipBlob),
-            audioBuffer,
-            audioStatus: "ok",
-            audioBlob: pt.audioBlob ?? null,
-            trimStartMs: pt.trimStartMs,
-            trimEndMs: pt.trimEndMs,
-            durationMs: pt.durationMs,
-            posterBlob,
-            posterUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
-          };
-        } catch (err) {
-          // Decode failed — drop the clip rather than stranding the track.
-          warn(warnings, `Track ${pt.id + 1} clip could not be decoded and was dropped.`);
-          clip = null;
         }
       }
       return {
@@ -418,7 +490,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
         clip,
         steps: [...pt.steps],
         volume: pt.volume,
-        muted: pt.muted,
+        muted: clip?.audioStatus === "unavailable" ? true : pt.muted,
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
       };

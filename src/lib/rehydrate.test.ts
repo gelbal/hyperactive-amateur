@@ -313,7 +313,7 @@ describe("rehydrateFromStorage", () => {
     saveRecoveryBackupSpy.mockRestore();
   });
 
-  it("drops clips that fail audio decode and removes their stale tag reasoning", async () => {
+  it("repairs clips that fail audio decode without dropping their video or tag", async () => {
     audioMocks.decodeAudioData.mockRejectedValueOnce(new Error("decode failed"));
     await set(PROJECT_KEY, {
       bpm: 100,
@@ -361,19 +361,53 @@ describe("rehydrateFromStorage", () => {
 
     expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("could not be decoded"))).toBe(true);
-    expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
-    expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
-    expect(useAppStore.getState().project.tagReasoning).toEqual({});
+    expect(result.warnings).toContain(
+      "Track 1 audio unavailable — re-record to restore sound.",
+    );
+    const repairedTrack = useAppStore.getState().project.tracks[0];
+    expect(repairedTrack.clip).toMatchObject({
+      audioBuffer: null,
+      audioStatus: "unavailable",
+      trimStartMs: 0,
+      trimEndMs: 500,
+      durationMs: 500,
+      posterBlob: null,
+      posterUrl: null,
+    });
+    expect(isBlobLike(repairedTrack.clip?.blob)).toBe(true);
+    expect(repairedTrack.clip?.url).toMatch(/^blob:/);
+    expect(repairedTrack.muted).toBe(true);
+    expect(repairedTrack.tag).toBe("kick");
+    expect(useAppStore.getState().project.tagReasoning).toEqual({
+      0: "good before corruption",
+    });
     expect(await loadRecoveryBackup()).not.toBeNull();
+
+    useAppStore.getState().actions.toggleStep(0, 3);
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockResolvedValue(fakeAudioBuffer);
+
+    const roundTripResult = await rehydrateFromStorage();
+
+    expect(roundTripResult.ok).toBe(true);
+    expect(roundTripResult.degraded).toBe(true);
+    const roundTrippedTrack = useAppStore.getState().project.tracks[0];
+    expect(roundTrippedTrack.clip?.audioBuffer).toBeNull();
+    expect(roundTrippedTrack.clip?.audioStatus).toBe("unavailable");
+    expect(roundTrippedTrack.clip?.url).toMatch(/^blob:/);
+    expect(roundTrippedTrack.tag).toBe("kick");
+    expect(roundTrippedTrack.steps[3]).toBe(true);
+    expect(audioMocks.decodeAudioData).not.toHaveBeenCalled();
   });
 
-  it("routes missing blob references through the pre-H4 decode-failure recovery path", async () => {
+  it("routes a missing audio sidecar reference through the audio repair state", async () => {
     useAppStore.getState().actions.setTrackClip(0, await makeClip());
     useAppStore.getState().actions.setTrackTag(0, "kick");
     await saveProject(useAppStore.getState());
     const meta = await storedMeta();
-    const missingRef = meta.tracks[0].clipBlobRef;
+    const missingRef = meta.tracks[0].audioBlobRef;
     await del(missingRef);
     useAppStore.getState().actions.reset();
 
@@ -381,10 +415,17 @@ describe("rehydrateFromStorage", () => {
 
     expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("could not be decoded"))).toBe(true);
-    expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
-    expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
-    expect(useAppStore.getState().project.tagReasoning).toEqual({});
+    expect(result.warnings).toContain(
+      "Track 1 audio unavailable — re-record to restore sound.",
+    );
+    const repairedTrack = useAppStore.getState().project.tracks[0];
+    expect(repairedTrack.clip?.audioBuffer).toBeNull();
+    expect(repairedTrack.clip?.audioStatus).toBe("unavailable");
+    expect(isBlobLike(repairedTrack.clip?.blob)).toBe(true);
+    expect(repairedTrack.clip?.url).toMatch(/^blob:/);
+    expect(repairedTrack.clip?.posterUrl).toMatch(/^blob:/);
+    expect(repairedTrack.muted).toBe(true);
+    expect(repairedTrack.tag).toBe("kick");
     expect(await loadRecoveryBackup()).not.toBeNull();
   });
 });

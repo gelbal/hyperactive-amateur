@@ -128,7 +128,13 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       </div>
       <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-24 shrink-0" />}
-      <AutoTagStatus state={autoTagState} />
+      {clip?.audioStatus === "unavailable" ? (
+        <span className="w-40 shrink-0 text-[10px] text-amber-300">
+          audio unavailable — re-record
+        </span>
+      ) : (
+        <AutoTagStatus state={autoTagState} />
+      )}
       {visibleError && <span className="text-xs text-red-400">{visibleError}</span>}
     </div>
   );
