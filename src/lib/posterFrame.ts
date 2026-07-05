@@ -5,6 +5,10 @@ const DEFAULT_SEEK_TIME_SEC = 0.1;
 const DEFAULT_TIMEOUT_MS = 1500;
 const JPEG_QUALITY = 0.7;
 
+type VideoWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: HTMLVideoElement["requestVideoFrameCallback"];
+};
+
 // Capture a single frame near the start of the video and return it as a JPEG
 // Blob. On any decode error, missing track, seek failure, or timeout, resolve
 // with null — the caller must treat null as "no poster available" and fall
@@ -35,9 +39,20 @@ export async function captureFirstFrame(
 
   return new Promise<Blob | null>((resolve) => {
     let settled = false;
+    let captureStarted = false;
+
+    const cleanupListeners = () => {
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+    };
+
     const finish = (result: Blob | null) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      cleanupListeners();
       try {
         video.removeAttribute("src");
         video.load();
@@ -73,13 +88,18 @@ export async function captureFirstFrame(
       });
     };
 
-    const onSeeked = async () => {
+    const drawAndFinish = async () => {
       const result = await drawCurrentFrame();
-      clearTimeout(timer);
       finish(result);
     };
 
-    const onLoadedData = () => {
+    const onSeeked = async () => {
+      await drawAndFinish();
+    };
+
+    const seekToFrame = () => {
+      if (settled || captureStarted) return;
+      captureStarted = true;
       // Seek a hair past 0 to coerce WebKit into decoding a real frame.
       // If the seek fails to fire (some blobs / containers), the timeout
       // catches us and we still resolve null.
@@ -88,19 +108,31 @@ export async function captureFirstFrame(
       } catch {
         // Seeking can throw if the video hasn't loaded enough; fall back to
         // drawing whatever's there now.
-        void (async () => {
-          const result = await drawCurrentFrame();
-          clearTimeout(timer);
-          finish(result);
-        })();
+        void drawAndFinish();
       }
     };
 
+    const onLoadedMetadata = () => seekToFrame();
+    const onLoadedData = () => seekToFrame();
+
     const onError = () => {
-      clearTimeout(timer);
       finish(null);
     };
 
+    const requestVideoFrameCallback = (video as VideoWithFrameCallback).requestVideoFrameCallback;
+    if (typeof requestVideoFrameCallback === "function") {
+      try {
+        requestVideoFrameCallback.call(video, () => {
+          if (settled || captureStarted) return;
+          captureStarted = true;
+          void drawAndFinish();
+        });
+      } catch {
+        // Ignore and let the metadata/data/timeout paths settle the poster.
+      }
+    }
+
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
     video.addEventListener("loadeddata", onLoadedData);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("error", onError);
