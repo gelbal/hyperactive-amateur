@@ -20,6 +20,21 @@ npm run dev                       # http://localhost:5173
 
 You'll be prompted for camera and microphone access on first record.
 
+## Documentation
+
+Contributors and AI agents: start with [`AGENTS.md`](AGENTS.md), then
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — subsystem map,
+  invariants, and a "where would I look if..." symptom index
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — setup, testing,
+  debugging, deploy + production env contract, post-deploy probes
+- [`docs/PLATFORM-QUIRKS.md`](docs/PLATFORM-QUIRKS.md) — the
+  browser/OS gotcha register (read before touching media code)
+- [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md) — current priorities and
+  roadmap
+- [`docs/audits/`](docs/audits/) — verified audit findings and
+  incident reports
+
 ## Validation
 
 ```bash

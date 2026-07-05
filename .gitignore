@@ -33,6 +33,7 @@ playwright-report/
 test-results/
 .serena/
 .agent-relay/
+.agentworkforce/
 .mcp.json
 
 # typescript build info
