@@ -214,6 +214,33 @@ describe("persistence", () => {
     expect(afterKeys.some((key) => removedRefs.includes(key))).toBe(false);
   });
 
+  it("keeps blob records referenced only by the recovery backup across a later save", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(4));
+    await saveProject(useAppStore.getState());
+    const loaded = await loadProject();
+    expect(loaded).not.toBeNull();
+    await saveRecoveryBackup(loaded!);
+    const backup = (await get(BACKUP_KEY)) as Record<string, any>;
+    const backupRefs = mediaRefs(backup.tracks[0]);
+    expect(backupRefs).toHaveLength(3);
+    // A stray blob referenced by neither the live metadata nor the backup
+    // must still be collected.
+    const orphanKey = `${BLOB_PREFIX}0000000000000000`;
+    await set(orphanKey, makeBlob([0xde, 0xad], "video/webm"));
+
+    useAppStore.getState().actions.clearTrackClip(0);
+    await saveProject(useAppStore.getState());
+
+    const meta = await storedMeta();
+    expect(mediaRefs(meta.tracks[0])).toEqual([]);
+    const remaining = await storedBlobKeys();
+    expect(remaining).toEqual([...backupRefs].sort());
+    expect(remaining).not.toContain(orphanKey);
+    for (const ref of backupRefs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
+  });
+
   it("stores recovery backups as metadata references without blob copies", async () => {
     useAppStore.getState().actions.setTrackClip(0, clip(5));
     await saveProject(useAppStore.getState());

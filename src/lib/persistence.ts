@@ -320,7 +320,22 @@ async function buildMetadataRecord(
   };
 }
 
+function collectBackupBlobRefs(backup: unknown, refs: Set<string>): void {
+  if (!isRecord(backup) || !Array.isArray(backup.tracks)) return;
+  for (const track of backup.tracks) {
+    if (!isRecord(track)) continue;
+    for (const field of ["clipBlobRef", "audioBlobRef", "posterBlobRef"] as const) {
+      const ref = track[field];
+      if (typeof ref === "string" && ref.startsWith(BLOB_KEY_PREFIX)) refs.add(ref);
+    }
+  }
+}
+
 async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promise<void> {
+  // The recovery backup is a GC root too: after a repair drops media from the
+  // live metadata, the backup's references may be the only preserved copy.
+  const rootedBlobKeys = new Set(referencedBlobKeys);
+  collectBackupBlobRefs(await get(PROJECT_BACKUP_KEY), rootedBlobKeys);
   const allKeys = await keys();
   await Promise.all(
     allKeys
@@ -328,7 +343,7 @@ async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promi
         (key): key is string =>
           typeof key === "string" &&
           key.startsWith(BLOB_KEY_PREFIX) &&
-          !referencedBlobKeys.has(key),
+          !rootedBlobKeys.has(key),
       )
       .map((key) => del(key)),
   );

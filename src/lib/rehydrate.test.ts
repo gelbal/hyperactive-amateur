@@ -97,6 +97,16 @@ async function storedBlobKeys(): Promise<string[]> {
     .sort();
 }
 
+// Mirrors the production content-addressing scheme so tests can predict the
+// blob record key a given byte payload will live under.
+async function contentAddressedBlobKey(bytes: number[]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+  return `ha:blob:${hex}`;
+}
+
 async function storedMeta(): Promise<Record<string, any>> {
   const meta = await get(PROJECT_KEY);
   expect(meta).toMatchObject({ schemaVersion: PERSISTED_SCHEMA_VERSION });
@@ -248,6 +258,72 @@ describe("rehydrateFromStorage", () => {
     expect(blobPaths(backup)).toEqual([]);
     expect((backup as any).tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
     expect((backup as any).tracks[0]).not.toHaveProperty("clipBlob");
+  });
+
+  it("migration GC keeps blob records that only the pre-repair backup references", async () => {
+    const droppedBytes = [7, 8, 9];
+    const emptyTrack = (id: number) => ({
+      id,
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      tag: null,
+      steps: new Array(16).fill(false),
+      volume: 1,
+      muted: false,
+      showVideo: true,
+    });
+    await set(LEGACY_PROJECT_KEY, {
+      schemaVersion: 1,
+      bpm: 104,
+      swing: 0,
+      cutSubdivision: "8n",
+      sameTierHoldMs: 400,
+      subgenre: "trap",
+      vibe: "tight",
+      stepCount: 16,
+      tagReasoning: {},
+      tracks: [
+        {
+          ...emptyTrack(0),
+          clipBlob: await persistedBlob([1, 2, 3], "video/webm"),
+          trimStartMs: 0,
+          trimEndMs: 500,
+          durationMs: 500,
+          tag: "kick",
+        },
+        {
+          // Invalid trim window — normalization drops this clip during repair,
+          // so the pre-repair backup becomes its only remaining reference.
+          ...emptyTrack(1),
+          clipBlob: await persistedBlob(droppedBytes, "video/webm"),
+          trimStartMs: 600,
+          trimEndMs: 400,
+          durationMs: 1000,
+          tag: "snare",
+        },
+        ...Array.from({ length: 6 }, (_, id) => emptyTrack(id + 2)),
+      ],
+      updatedAt: 1_000,
+    });
+    // A prior interrupted migration already wrote the dropped clip's blob record.
+    const droppedRef = await contentAddressedBlobKey(droppedBytes);
+    await set(droppedRef, await persistedBlob(droppedBytes, "video/webm"));
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    const backup = (await get(PROJECT_BACKUP_KEY)) as Record<string, any>;
+    expect(backup.tracks[1].clipBlobRef).toBe(droppedRef);
+    const meta = await storedMeta();
+    expect(meta.tracks[1].clipBlobRef).toBeUndefined();
+    // The backup is the only root left for the dropped clip — its bytes must
+    // survive the migration GC and stay loadable for recovery.
+    expect(isBlobLike(await get(droppedRef))).toBe(true);
   });
 
   it("keeps legacy keys and pauses hydration when the schema-2 metadata write fails", async () => {
