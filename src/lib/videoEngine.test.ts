@@ -1,23 +1,12 @@
-// ABOUTME: videoEngine tests — the pure decision helpers plus one integration check.
-// ABOUTME: Tone is mocked deterministically; the canvas-draw path isn't exercised (jsdom can't render video frames).
+// ABOUTME: videoEngine tests — the pure decision helpers plus integration checks.
+// ABOUTME: Tone is mocked through a controllable audio clock and Draw scheduler.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// `Tone.Draw.schedule` is the audio-aligned playback scheduler. Inside
-// the videoEngine each trigger lands two scheduled callbacks (seek, play)
-// which we run immediately so the integration tests still observe the
-// post-trigger displayed state deterministically.
-const drawSchedule = vi.fn((cb: () => void, _time: number) => {
-  cb();
-  return 1;
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return { toneHarness: createToneHarness() };
 });
-vi.mock("tone", () => ({
-  now: vi.fn(() => 0),
-  getTransport: vi.fn(() => ({
-    clear: vi.fn(),
-    scheduleRepeat: vi.fn(() => 1),
-  })),
-  getDraw: vi.fn(() => ({ schedule: drawSchedule })),
-}));
+vi.mock("tone", () => toneHarness.createToneModule());
 
 import {
   drawCurrentFrame,
@@ -147,7 +136,10 @@ describe("videoEngine integration", () => {
   beforeEach(() => {
     __resetVideoEngineForTesting();
     useAppStore.getState().actions.reset();
-    drawSchedule.mockClear();
+    toneHarness.setNow(0);
+    toneHarness.setLookahead(0);
+    toneHarness.draw.reset();
+    toneHarness.transport.reset();
   });
 
   it("live trigger while not playing immediately becomes the displayed event (so pad clicks show video)", () => {
@@ -172,20 +164,22 @@ describe("videoEngine integration", () => {
   it("far-future triggers split seek+play across the lookahead; near-now triggers collapse to one", () => {
     setClipForTrack(4, makeClip(4));
     __markMetadataReadyForTesting(4);
-    drawSchedule.mockClear();
+    toneHarness.draw.reset();
     // Far-future: seek at 0.92, play at 1.0.
     trigger(4, 1.0);
-    const farTimes = drawSchedule.mock.calls.map((c) => c[1] as number).sort((a, b) => a - b);
+    const farTimes = toneHarness.draw.schedule.mock.calls
+      .map((c) => c[1] as number)
+      .sort((a, b) => a - b);
     expect(farTimes.length).toBe(2);
     expect(farTimes[0]).toBeCloseTo(0.92, 6);
     expect(farTimes[1]).toBeCloseTo(1.0, 6);
     // Near-now: single combined task at when.
     setClipForTrack(5, makeClip(5));
     __markMetadataReadyForTesting(5);
-    drawSchedule.mockClear();
+    toneHarness.draw.reset();
     trigger(5, 0.05);
-    expect(drawSchedule.mock.calls.length).toBe(1);
-    expect(drawSchedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
+    expect(toneHarness.draw.schedule.mock.calls.length).toBe(1);
+    expect(toneHarness.draw.schedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
   });
 
   it("clears instead of drawing video after the displayed clip reaches trim end", () => {
