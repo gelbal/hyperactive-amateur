@@ -411,6 +411,25 @@ describe("streamLifecycle", () => {
       detach();
     });
 
+    it("on pagehide: flushes a pending autosave and suspends held media like hidden", async () => {
+      startAutoSave();
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+      useAppStore.getState().actions.setBpm(137);
+      const detach = installVisibilityListener();
+
+      window.dispatchEvent(new Event("pagehide"));
+
+      await vi.waitFor(async () => {
+        expect((await loadProject())?.bpm).toBe(137);
+      });
+      expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(true);
+      // Suspend-path parity: R5.2 names pagehide alongside visibilitychange.
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+      detach();
+    });
+
     it("on hidden: does not log or save when autosave is clean", async () => {
       const saveSpy = vi.spyOn(await import("./persistence"), "saveProject");
       const detach = installVisibilityListener();

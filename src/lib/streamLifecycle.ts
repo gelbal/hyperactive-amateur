@@ -135,29 +135,35 @@ export function suspendMediaStream(stream: MediaStream): void {
   }
 }
 
-// Listen for page-visibility changes. On hidden: stop playback (no saved-
-// position bookkeeping — restart is user-initiated) and suspend the held
-// stream so the reconnect pill takes over. On visible: surface any blocked
-// AudioContext through the resume pill; user activation owns the actual unlock.
+// Listen for page-visibility changes and pagehide. On hidden: stop playback
+// (no saved-position bookkeeping — restart is user-initiated) and suspend the
+// held stream so the reconnect pill takes over. On visible: surface any
+// blocked AudioContext through the resume pill; user activation owns the
+// actual unlock. pagehide shares the hidden branch because it can fire
+// without a preceding visibilitychange → hidden (bfcache eviction, some iOS
+// tab-close/navigation paths) and must still flush pending saves.
 // Returns a detach function for cleanup on unmount.
 export function installVisibilityListener(): () => void {
-  const handler = () => {
+  const handleHidden = () => {
+    flushPending();
+    const abortedExport = abortActiveExport(
+      "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
+    );
+    if (!abortedExport) {
+      try {
+        stopPlayback();
+      } catch {
+        // Transport may not be initialized yet; safe to ignore.
+      }
+    }
+    const state = useAppStore.getState();
+    if (state.media.status === "granted" && state.media.stream) {
+      suspendMediaStream(state.media.stream);
+    }
+  };
+  const handleVisibilityChange = () => {
     if (document.hidden) {
-      flushPending();
-      const abortedExport = abortActiveExport(
-        "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
-      );
-      if (!abortedExport) {
-        try {
-          stopPlayback();
-        } catch {
-          // Transport may not be initialized yet; safe to ignore.
-        }
-      }
-      const state = useAppStore.getState();
-      if (state.media.status === "granted" && state.media.stream) {
-        suspendMediaStream(state.media.stream);
-      }
+      handleHidden();
     } else {
       const context = getAudioContext();
       if (context.state !== "running") {
@@ -166,8 +172,12 @@ export function installVisibilityListener(): () => void {
       }
     }
   };
-  document.addEventListener("visibilitychange", handler);
-  return () => document.removeEventListener("visibilitychange", handler);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pagehide", handleHidden);
+  return () => {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("pagehide", handleHidden);
+  };
 }
 
 // Called from MediaRecorder.onerror after a recording dies. If the failure was
