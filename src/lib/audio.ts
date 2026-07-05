@@ -26,8 +26,6 @@ export function getAudioContext(): AudioContext {
   return Tone.getContext().rawContext as AudioContext;
 }
 
-export const ensureAudioStarted = ensureAudioRunning; // temporary delegate, removed in B3
-
 // Wires up Tone.Transport with a 16th-note loop callback. Idempotent — safe to call
 // multiple times (e.g. from React StrictMode-double-invoked effects).
 export function initTransport(): void {

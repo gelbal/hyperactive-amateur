@@ -3,9 +3,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({
-  ensureAudioStarted: vi.fn(),
   getAudioContext: vi.fn(() => ({})),
 }));
+
+const audioLifecycleMocks = vi.hoisted(() => {
+  class TestAudioUnavailableError extends Error {
+    constructor(message = "Audio unavailable") {
+      super(message);
+      this.name = "AudioUnavailableError";
+    }
+  }
+
+  return {
+    ensureAudioRunning: vi.fn(),
+    AudioUnavailableError: TestAudioUnavailableError,
+  };
+});
 
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
@@ -18,8 +31,12 @@ const recorderMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./audio", () => ({
-  ensureAudioStarted: audioMocks.ensureAudioStarted,
   getAudioContext: audioMocks.getAudioContext,
+}));
+
+vi.mock("./audioLifecycle", () => ({
+  ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
+  AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
 vi.mock("./media", () => ({
@@ -63,6 +80,7 @@ vi.mock("./audioBufferSlice", () => ({
 
 import { cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
+import { AudioUnavailableError } from "./audioLifecycle";
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -80,8 +98,8 @@ describe("recordingFlow", () => {
   beforeEach(() => {
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
-    audioMocks.ensureAudioStarted.mockReset();
-    audioMocks.ensureAudioStarted.mockResolvedValue(undefined);
+    audioLifecycleMocks.ensureAudioRunning.mockReset();
+    audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
@@ -95,7 +113,7 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
@@ -106,14 +124,27 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
 
+  it("surfaces audio startup failure and resets recording state", async () => {
+    const onError = vi.fn();
+    audioLifecycleMocks.ensureAudioRunning.mockRejectedValue(new AudioUnavailableError());
+    mediaMocks.acquireRecordingStream.mockRejectedValue(new Error("media should not start"));
+
+    await expect(recordIntoTrack(3, { onError })).resolves.toBe(false);
+
+    expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
+    expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
   it("claims countdown state before awaiting audio or media startup", async () => {
     const audioStarted = makeDeferred();
-    audioMocks.ensureAudioStarted.mockReturnValue(audioStarted.promise);
+    audioLifecycleMocks.ensureAudioRunning.mockReturnValue(audioStarted.promise);
 
     const promise = recordIntoTrack(2);
 

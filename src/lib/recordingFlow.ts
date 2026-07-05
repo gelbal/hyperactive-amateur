@@ -2,7 +2,8 @@
 // ABOUTME: Drives the countdown → record → trim → store → auto-tag pipeline; module-level controller serializes flows + carries Esc cancellation.
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
-import { ensureAudioStarted, getAudioContext } from "./audio";
+import { getAudioContext } from "./audio";
+import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -17,6 +18,7 @@ import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
+const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
 
 export type AutoTagEvent =
   | { kind: "tagging" }
@@ -109,8 +111,12 @@ async function runFlow(
 
   try {
     try {
-      await ensureAudioStarted();
-    } catch {
+      await ensureAudioRunning();
+    } catch (e) {
+      if (e instanceof AudioUnavailableError) {
+        options.onError?.(AUDIO_UNAVAILABLE_COPY);
+        return false;
+      }
       // Recording can still proceed; recordClip has a decode fallback if the
       // live Web Audio tap cannot run.
     }

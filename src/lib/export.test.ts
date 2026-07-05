@@ -14,6 +14,20 @@ const toneMocks = vi.hoisted(() => {
   return { destinationConnect, destinationDisconnect, toneStart, transport, rawContext };
 });
 
+const audioLifecycleMocks = vi.hoisted(() => {
+  class TestAudioUnavailableError extends Error {
+    constructor(message = "Audio unavailable") {
+      super(message);
+      this.name = "AudioUnavailableError";
+    }
+  }
+
+  return {
+    ensureAudioRunning: vi.fn(),
+    AudioUnavailableError: TestAudioUnavailableError,
+  };
+});
+
 vi.mock("tone", () => ({
   start: toneMocks.toneStart,
   getDestination: vi.fn(() => ({
@@ -24,9 +38,15 @@ vi.mock("tone", () => ({
   getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
 }));
 
+vi.mock("./audioLifecycle", () => ({
+  ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
+  AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
+}));
+
 import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
 import { abortActiveExport, __resetExportSessionForTesting } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
+import { AudioUnavailableError } from "./audioLifecycle";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -95,6 +115,8 @@ describe("exportSong", () => {
     toneMocks.transport.position = 0;
     toneMocks.toneStart.mockClear();
     toneMocks.destinationDisconnect.mockClear();
+    audioLifecycleMocks.ensureAudioRunning.mockReset();
+    audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
     useAppStore.getState().actions.reset();
     __resetExportSessionForTesting();
   });
@@ -127,7 +149,7 @@ describe("exportSong", () => {
     expect(blob.type).toContain("video/webm");
     expect(toneMocks.transport.start).toHaveBeenCalled();
     expect(toneMocks.transport.stop).toHaveBeenCalled();
-    expect(toneMocks.toneStart).toHaveBeenCalled();
+    expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalled();
     expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
     expect(useAppStore.getState().playback.isPlaying).toBe(false);
     expect(useAppStore.getState().playback.isExporting).toBe(false);
@@ -140,6 +162,23 @@ describe("exportSong", () => {
       mimeType: "video/mp4",
     });
     expect(blob.type).toBe("video/mp4");
+  });
+
+  it("rejects and clears export session when audio startup is unavailable", async () => {
+    const audioError = new AudioUnavailableError("Audio blocked");
+    audioLifecycleMocks.ensureAudioRunning.mockRejectedValue(audioError);
+
+    await expect(
+      exportSong(makeCanvas(), makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+      }),
+    ).rejects.toBe(audioError);
+
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+    expect(abortActiveExport("after failure")).toBe(false);
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
   });
 
   it("rejects and cleans up when MediaRecorder never finishes after stop", async () => {
