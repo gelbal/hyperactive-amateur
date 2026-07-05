@@ -58,6 +58,7 @@ let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = nul
 let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
 let activeCanvas: HTMLCanvasElement | null = null;
+let playbackEpoch = 0;
 
 export function setActiveCanvas(canvas: HTMLCanvasElement | null): void {
   activeCanvas = canvas;
@@ -334,7 +335,9 @@ function onCutBoundary(boundaryTime: number): void {
 
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
+  const epoch = playbackEpoch;
   Tone.getDraw().schedule(() => {
+    if (epoch !== playbackEpoch) return;
     if (
       preparedBoundary &&
       isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)
@@ -447,7 +450,9 @@ function schedulePrepareForBoundary(boundaryTime: number): void {
 
   disposePrepareEvent();
   prepareEventBoundaryTime = boundaryTime;
+  const epoch = playbackEpoch;
   prepareEventId = Tone.getDraw().schedule(() => {
+    if (epoch !== playbackEpoch) return;
     prepareEventId = null;
     prepareEventBoundaryTime = null;
     prepareUpcoming(boundaryTime);
@@ -455,6 +460,7 @@ function schedulePrepareForBoundary(boundaryTime: number): void {
 }
 
 function scheduleBoundaryEvent(): void {
+  playbackEpoch += 1;
   disposeBoundaryEvent();
   disposePrepareEvent();
   boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
@@ -473,6 +479,7 @@ export function setVideoCutSubdivision(value: CutSubdivision): void {
 // Reset transient render state — used on stop/pause so we don't carry stale
 // triggers into the next playback session.
 export function resetPlaybackState(): void {
+  playbackEpoch += 1;
   disposePrepareEvent();
   pendingTriggers = [];
   currentlyDisplayed = null;
@@ -553,6 +560,7 @@ export function __resetVideoEngineForTesting(): void {
   currentlyDisplayed = null;
   preparedBoundary = null;
   drawErrorLogged = false;
+  playbackEpoch = 0;
   if (host) {
     host.remove();
     host = null;

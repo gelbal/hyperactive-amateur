@@ -11,7 +11,9 @@ vi.mock("tone", () => toneHarness.createToneModule());
 import {
   drawCurrentFrame,
   initVideoEngine,
+  resetPlaybackState,
   setClipForTrack,
+  setVideoCutSubdivision,
   trigger,
   prepareUpcoming,
   pickActiveEvent,
@@ -277,6 +279,45 @@ describe("videoEngine integration", () => {
 
     toneHarness.draw.advanceTo(1.0);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("ignores a stale Draw-scheduled boundary commit after reset", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    resetPlaybackState();
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+  });
+
+  it("ignores stale Draw-scheduled prepares after subdivision reschedules", () => {
+    useAppStore.getState().actions.setBpm(120);
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 30.25);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    toneHarness.transport.fireRepeat(0, 30.0);
+    setVideoCutSubdivision("16n");
+
+    toneHarness.draw.advanceTo(30.17);
+    expect(playback.seek).not.toHaveBeenCalled();
   });
 
   it("pre-seeks and plays the prepared boundary winner without changing the display", () => {
