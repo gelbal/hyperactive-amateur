@@ -370,7 +370,9 @@ describe("streamLifecycle", () => {
       });
       document.dispatchEvent(new Event("visibilitychange"));
 
-      expect(abort).toHaveBeenCalledWith("Export was interrupted because the page was hidden.");
+      expect(abort).toHaveBeenCalledWith(
+        "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
+      );
       expect(useAppStore.getState().media.stream).toBeNull();
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(tracks[0].stop).toHaveBeenCalled();

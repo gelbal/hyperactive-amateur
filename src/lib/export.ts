@@ -7,9 +7,11 @@ import { ensureAudioRunning } from "./audioLifecycle";
 import { timeoutAfter, waitMs } from "./async";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { registerExportSession } from "./exportSession";
+import { holdScreenWakeLock, type ScreenWakeLockHandle } from "./wakeLock";
 
 const FRAMERATE = 30;
 const EXPORT_STOP_TIMEOUT_MS = 5000;
+const BEATS_PER_BAR = 4;
 
 export interface ExportStream {
   stream: MediaStream;
@@ -56,6 +58,10 @@ export interface ExportOptions {
   onProgress?: (fraction: number) => void;
 }
 
+export function getExportDurationMs(bars: number, bpm: number): number {
+  return (bars * BEATS_PER_BAR * 60_000) / bpm;
+}
+
 // Real-time render: starts the Transport at step 0 plus a MediaRecorder on the
 // canvas+audio stream, runs for `bars` worth of milliseconds, and resolves
 // with a single concatenated Blob.
@@ -65,11 +71,12 @@ export async function exportSong(
   options: ExportOptions,
 ): Promise<Blob> {
   const { bars, bpm, mimeType, onProgress } = options;
-  const durationMs = (bars * 4 * 60_000) / bpm;
+  const durationMs = getExportDurationMs(bars, bpm);
 
   let progressTimer: ReturnType<typeof setInterval> | null = null;
   let exportStream: ExportStream | null = null;
   let recorder: MediaRecorder | null = null;
+  let wakeLock: ScreenWakeLockHandle | null = null;
   let unregisterExportSession: (() => void) | null = null;
   let ownsExportSession = false;
   const chunks: Blob[] = [];
@@ -90,6 +97,7 @@ export async function exportSong(
     ownsExportSession = true;
     useAppStore.getState().actions.setIsExporting(true);
 
+    wakeLock = await holdScreenWakeLock();
     await ensureAudioRunning();
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
@@ -159,6 +167,7 @@ export async function exportSong(
     return new Blob(chunks, { type: recorder.mimeType || mimeType });
   } finally {
     if (progressTimer) clearInterval(progressTimer);
+    await wakeLock?.release();
     if (ownsExportSession) {
       unregisterExportSession?.();
       if (recorder && recorder.state !== "inactive") {

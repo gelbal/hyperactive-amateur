@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
-import { exportSong, downloadBlob, defaultExportFilename } from "../lib/export";
+import {
+  exportSong,
+  downloadBlob,
+  defaultExportFilename,
+  getExportDurationMs,
+} from "../lib/export";
 import { detectSupportedFormats } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
@@ -33,6 +38,8 @@ export function ExportButton() {
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const rendering = progress !== null;
+  const exportDurationMs = getExportDurationMs(bars, bpm);
+  const exportDurationSeconds = Math.round(exportDurationMs / 1000);
   const close = useCallback(() => setOpen(false), []);
   usePopoverDismiss(rootRef, open, close, { whileBusy: rendering });
 
@@ -153,7 +160,7 @@ export function ExportButton() {
               Length: <span className="text-orange-400 font-mono">{bars}</span> bar
               {bars === 1 ? "" : "s"}{" "}
               <span className="text-zinc-500">
-                ({Math.round(((bars * 4 * 60000) / bpm) / 100) / 10}s)
+                ({Math.round(exportDurationMs / 100) / 10}s)
               </span>
             </span>
             <input
@@ -166,6 +173,9 @@ export function ExportButton() {
               aria-label="bars"
             />
           </label>
+          <p className="text-xs text-zinc-400">
+            Keep this screen open — rendering takes about {exportDurationSeconds} s.
+          </p>
 
           {progress !== null && (
             <div className="flex flex-col gap-1">

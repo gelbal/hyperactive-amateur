@@ -15,6 +15,7 @@ vi.mock("tone", () => ({
 }));
 
 import { ExportButton } from "./ExportButton";
+import { useAppStore } from "../store/useAppStore";
 
 const STORAGE_KEY = "ha:exportMimeType";
 
@@ -33,6 +34,7 @@ describe("ExportButton format picker", () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    useAppStore.getState().actions.reset();
   });
 
   afterEach(() => {
@@ -76,5 +78,22 @@ describe("ExportButton format picker", () => {
     fireEvent.click(screen.getByRole("button", { name: /export/i }));
     const webm = screen.getByLabelText(/webm/i) as HTMLInputElement;
     expect(webm.checked).toBe(true);
+  });
+
+  it("shows rounded render-duration guidance before rendering", () => {
+    originalRecorder = stubMediaRecorder(["video/webm; codecs=vp9,opus"]);
+    useAppStore.getState().actions.setBpm(120);
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /export/i }));
+
+    expect(
+      screen.getByText("Keep this screen open — rendering takes about 8 s."),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("bars"), { target: { value: "8" } });
+
+    expect(
+      screen.getByText("Keep this screen open — rendering takes about 16 s."),
+    ).toBeInTheDocument();
   });
 });

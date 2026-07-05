@@ -143,7 +143,7 @@ export function installVisibilityListener(): () => void {
   const handler = () => {
     if (document.hidden) {
       const abortedExport = abortActiveExport(
-        "Export was interrupted because the page was hidden.",
+        "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
       );
       if (!abortedExport) {
         try {
