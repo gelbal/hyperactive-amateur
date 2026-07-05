@@ -131,6 +131,7 @@ export function initAudioLifecycle(): () => void {
 
     if (playback.isExporting) {
       abortActiveExport(EXPORT_AUDIO_INTERRUPTED_REASON);
+      stopPlayback({ allowExportStop: true });
     } else if (playback.isPlaying) {
       stopPlayback();
     }

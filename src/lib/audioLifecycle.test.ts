@@ -243,7 +243,7 @@ describe("ensureAudioRunning", () => {
     });
   });
 
-  it("aborts export directly and does not route through stopPlayback on interruption", () => {
+  it("aborts export and reconciles playback synchronously on interruption", () => {
     const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     useAppStore.getState().actions.setIsPlaying(true);
     useAppStore.getState().actions.setIsExporting(true);
@@ -251,10 +251,13 @@ describe("ensureAudioRunning", () => {
 
     audioContextStub.setState("interrupted");
 
+    expect(exportSessionMocks.abortActiveExport).toHaveBeenCalledTimes(1);
     expect(exportSessionMocks.abortActiveExport).toHaveBeenCalledWith(
       "Audio was interrupted — rendering stopped. Tap Render to try again.",
     );
-    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+    expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
+    expect(audioMocks.stopPlayback).toHaveBeenCalledWith({ allowExportStop: true });
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
     expect(useAppStore.getState().playback.audioState).toBe("resume-required");
     expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_INTERRUPTED, {
       state: "interrupted",
