@@ -83,11 +83,11 @@ async function renderCompletedExport(
   filenamePattern = FILENAME_RE,
 ) {
   vi.mocked(exportSong).mockResolvedValueOnce(blob);
-  render(<ExportButton />);
+  const { unmount } = render(<ExportButton />);
   fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
   fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
   const filenameNode = await screen.findByText(filenamePattern);
-  return { blob, filename: filenameNode.textContent ?? "" };
+  return { blob, filename: filenameNode.textContent ?? "", unmount };
 }
 
 describe("ExportButton format picker", () => {
@@ -334,6 +334,34 @@ describe("ExportButton format picker", () => {
     expect(
       screen.queryByText("Sharing failed — saved as a download instead."),
     ).not.toBeInTheDocument();
+  });
+
+  it("ignores a delayed share failure after the component unmounts", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    let rejectShare: (reason: unknown) => void = () => undefined;
+    const share = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectShare = reject;
+        }),
+    );
+    stubNavigatorShare({ canShare: true, share });
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const { unmount } = await renderCompletedExport();
+
+    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+    unmount();
+
+    await act(async () => {
+      rejectShare(new Error("late share failed after unmount"));
+      await Promise.resolve();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
   });
 
   it("ignores a delayed share failure after a new review replaces the old one", async () => {
