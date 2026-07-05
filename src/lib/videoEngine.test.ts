@@ -338,6 +338,47 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()).toBeNull();
   });
 
+  it("pauses prepared hidden video state on reset and subdivision reschedule", () => {
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+    resetPlaybackState();
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+
+    trigger(0, 1.0);
+    prepareUpcoming(1.0);
+    setVideoCutSubdivision("16n");
+    expect(playback.pause).toHaveBeenCalledTimes(2);
+  });
+
+  it("pauses an old prepared boundary before preparing a different one", () => {
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    __markMetadataReadyForTesting(0);
+    __markMetadataReadyForTesting(1);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+
+    const [firstVideo, secondVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    const firstPlayback = spyVideoPlayback(firstVideo);
+    const secondPlayback = spyVideoPlayback(secondVideo);
+
+    prepareUpcoming(1.0);
+    trigger(1, 1.25);
+    prepareUpcoming(1.25);
+
+    expect(firstPlayback.pause).toHaveBeenCalledTimes(1);
+    expect(secondPlayback.play).toHaveBeenCalledTimes(1);
+  });
+
   it("commits a prepared winner at the boundary without seeking it twice", () => {
     initVideoEngine();
     setClipForTrack(0, makeClip(0));

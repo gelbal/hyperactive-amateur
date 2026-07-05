@@ -148,6 +148,12 @@ function pauseTrack(trackId: number): void {
   videos.get(trackId)?.pause();
 }
 
+function clearPreparedState(): void {
+  if (!preparedBoundary) return;
+  pauseTrack(preparedBoundary.event.trackId);
+  preparedBoundary = null;
+}
+
 function startPlayback(trackId: number, when: number): void {
   if (!videos.has(trackId) || !trims.has(trackId)) return;
 
@@ -196,6 +202,7 @@ export function prepareUpcoming(boundaryTime: number): void {
   if (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)) {
     return;
   }
+  clearPreparedState();
 
   const winner = resolveBoundaryWinner(boundaryTime);
   if (!winner) return;
@@ -495,6 +502,7 @@ function scheduleBoundaryEvent(): void {
   playbackEpoch += 1;
   disposeBoundaryEvent();
   disposePrepareEvent();
+  clearPreparedState();
   boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
     const interval = subdivisionToSeconds(cutSubdivision);
     onCutBoundary(time);
@@ -516,7 +524,7 @@ export function resetPlaybackState(): void {
   pendingTriggers = [];
   currentlyDisplayed = null;
   lastDrawn = null;
-  preparedBoundary = null;
+  clearPreparedState();
 }
 
 // Wires the engine to the store so hidden videos stay in sync with track clips.
@@ -592,7 +600,7 @@ export function __resetVideoEngineForTesting(): void {
   pendingTriggers = [];
   currentlyDisplayed = null;
   lastDrawn = null;
-  preparedBoundary = null;
+  clearPreparedState();
   drawErrorLogged = false;
   playbackEpoch = 0;
   if (host) {
