@@ -161,6 +161,13 @@ export function installVisibilityListener(): () => void {
       suspendMediaStream(state.media.stream);
     }
   };
+  const reconcileHeldStream = () => {
+    const state = useAppStore.getState();
+    if (state.media.status !== "granted" || !state.media.stream) return;
+    if (!allTracksUsable(state.media.stream)) {
+      suspendMediaStream(state.media.stream);
+    }
+  };
   const handleVisibilityChange = () => {
     if (document.hidden) {
       handleHidden();
@@ -172,11 +179,30 @@ export function installVisibilityListener(): () => void {
       }
     }
   };
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-  window.addEventListener("pagehide", handleHidden);
+  const documentEvents =
+    typeof document.addEventListener === "function" &&
+    typeof document.removeEventListener === "function";
+  const windowEvents =
+    typeof window.addEventListener === "function" &&
+    typeof window.removeEventListener === "function";
+
+  if (documentEvents) {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("resume", reconcileHeldStream);
+  }
+  if (windowEvents) {
+    window.addEventListener("pagehide", handleHidden);
+    window.addEventListener("pageshow", reconcileHeldStream);
+  }
   return () => {
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-    window.removeEventListener("pagehide", handleHidden);
+    if (documentEvents) {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("resume", reconcileHeldStream);
+    }
+    if (windowEvents) {
+      window.removeEventListener("pagehide", handleHidden);
+      window.removeEventListener("pageshow", reconcileHeldStream);
+    }
   };
 }
 
