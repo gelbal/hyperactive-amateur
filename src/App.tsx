@@ -37,6 +37,7 @@ export function App() {
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
     let allowAutoSave = true;
+    let resumeAutoSaveUnsubscribe: (() => void) | null = null;
     void getStorageDurability().then((storageDurability) => {
       if (!cancelled) {
         useAppStore.getState().actions.setStorageDurability(storageDurability);
@@ -44,7 +45,22 @@ export function App() {
     });
     rehydrateFromStorage()
       .then((result) => {
-        allowAutoSave = !(result.degraded && !result.ok);
+        allowAutoSave = !result.degraded;
+        if (cancelled || !result.degraded || !result.ok) return;
+        // A degraded-but-hydrated load keeps autosave paused so the repaired
+        // state cannot overwrite the protected original. Dismissing the
+        // recovery notice is the user's acknowledgment — the explicit
+        // recovery action that re-enables saving.
+        resumeAutoSaveUnsubscribe = useAppStore.subscribe((state, prev) => {
+          if (
+            prev.ui.recoveryWarnings.length > 0 &&
+            state.ui.recoveryWarnings.length === 0
+          ) {
+            resumeAutoSaveUnsubscribe?.();
+            resumeAutoSaveUnsubscribe = null;
+            startAutoSave();
+          }
+        });
       })
       .catch(() => {
         allowAutoSave = false;
@@ -65,6 +81,7 @@ export function App() {
       detachInstallPrompt();
       detachAudioLifecycle();
       detachVisibility();
+      resumeAutoSaveUnsubscribe?.();
       stopAutoSave();
     };
   }, []);
