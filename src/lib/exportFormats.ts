@@ -51,3 +51,19 @@ export function detectSupportedFormats(): ExportFormat[] {
   }
   return Array.from(byExtension.values());
 }
+
+export function extensionForMimeType(
+  mimeType: string,
+  fallbackExtension: string,
+): string {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  if (!normalizedMimeType) return fallbackExtension;
+
+  const metadata =
+    FORMAT_METADATA[normalizedMimeType as keyof typeof FORMAT_METADATA] ??
+    FORMAT_METADATA[
+      normalizedMimeType.split(";")[0].trim() as keyof typeof FORMAT_METADATA
+    ];
+
+  return metadata?.extension ?? fallbackExtension;
+}

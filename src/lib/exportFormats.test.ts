@@ -1,7 +1,7 @@
 // ABOUTME: exportFormats tests — detectSupportedFormats against a stubbed MediaRecorder.isTypeSupported.
 // ABOUTME: Output is deduped to one entry per container (webm, mp4) in preference order.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { detectSupportedFormats } from "./exportFormats";
+import { detectSupportedFormats, extensionForMimeType } from "./exportFormats";
 
 describe("detectSupportedFormats", () => {
   let originalRecorder: typeof MediaRecorder | undefined;
@@ -67,5 +67,12 @@ describe("detectSupportedFormats", () => {
     expect(out[0].label).toBe("WebM (VP9)"); // first preference wins per container
     expect(out[1].extension).toBe("mp4");
     expect(out[1].label).toBe("MP4 (H.264)");
+  });
+
+  it("maps actual blob MIME types to container extensions with a safe fallback", () => {
+    expect(extensionForMimeType("video/mp4", "webm")).toBe("mp4");
+    expect(extensionForMimeType("video/webm; codecs=vp9,opus", "mp4")).toBe("webm");
+    expect(extensionForMimeType("", "webm")).toBe("webm");
+    expect(extensionForMimeType("video/unknown", "mp4")).toBe("mp4");
   });
 });

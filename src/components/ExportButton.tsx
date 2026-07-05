@@ -10,7 +10,7 @@ import {
   getExportDurationMs,
   shareBlob,
 } from "../lib/export";
-import { detectSupportedFormats } from "../lib/exportFormats";
+import { detectSupportedFormats, extensionForMimeType } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
@@ -184,7 +184,12 @@ export function ExportButton() {
         mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
       });
-      setCurrentReview({ blob, filename: defaultExportFilename(chosen.extension) });
+      setCurrentReview({
+        blob,
+        filename: defaultExportFilename(
+          extensionForMimeType(blob.type, chosen.extension),
+        ),
+      });
       setOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

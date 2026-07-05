@@ -42,6 +42,7 @@ const STORAGE_KEY = "ha:exportMimeType";
 const WEBM_MIME = "video/webm; codecs=vp9,opus";
 const MP4_MIME = "video/mp4; codecs=avc1.42E01E,mp4a.40.2";
 const FILENAME_RE = /^hyperactive-amateur-\d{8}-\d{4}\.webm$/;
+const MP4_FILENAME_RE = /^hyperactive-amateur-\d{8}-\d{4}\.mp4$/;
 
 function stubMediaRecorder(supported: string[]): typeof MediaRecorder | undefined {
   const original = (globalThis as { MediaRecorder?: typeof MediaRecorder })
@@ -77,12 +78,15 @@ function clearNavigatorShare(): void {
   delete (navigator as Partial<Navigator & { share: unknown }>).share;
 }
 
-async function renderCompletedExport(blob = new Blob(["movie"], { type: "video/webm" })) {
+async function renderCompletedExport(
+  blob = new Blob(["movie"], { type: "video/webm" }),
+  filenamePattern = FILENAME_RE,
+) {
   vi.mocked(exportSong).mockResolvedValueOnce(blob);
   render(<ExportButton />);
   fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
   fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
-  const filenameNode = await screen.findByText(FILENAME_RE);
+  const filenameNode = await screen.findByText(filenamePattern);
   return { blob, filename: filenameNode.textContent ?? "" };
 }
 
@@ -205,6 +209,28 @@ describe("ExportButton format picker", () => {
     expect(file).toBeInstanceOf(File);
     expect(file.name).toBe(filename);
     expect(file.type).toBe(blob.type);
+  });
+
+  it("names the review and shared File from the actual exported blob type", async () => {
+    originalRecorder = stubMediaRecorder([MP4_MIME, WEBM_MIME]);
+    const share = vi.fn().mockResolvedValue(undefined);
+    stubNavigatorShare({ canShare: true, share });
+    const mp4Blob = new Blob(["movie"], { type: "video/mp4" });
+
+    const { filename } = await renderCompletedExport(mp4Blob, MP4_FILENAME_RE);
+
+    expect(vi.mocked(exportSong).mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ mimeType: WEBM_MIME }),
+    );
+    expect(filename).toMatch(MP4_FILENAME_RE);
+
+    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+
+    await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    const file = share.mock.calls[0][0].files[0] as File;
+    expect(file.name).toBe(filename);
+    expect(file.name.endsWith(".mp4")).toBe(true);
+    expect(file.type).toBe("video/mp4");
   });
 
   it("keeps the review row when sharing is canceled", async () => {
