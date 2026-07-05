@@ -671,6 +671,33 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().session.storageDurability).toBe("persistent");
   });
 
+  it("coalesces persistence requests while one is still pending", async () => {
+    vi.useFakeTimers();
+    const pending = makeDeferred<string>();
+    installMocks.requestPersistence.mockReturnValue(pending.promise);
+
+    // Two successful clip saves land while the first persist() is unresolved:
+    // the second must coalesce into it, not issue an overlapping call.
+    for (const trackId of [0, 1]) {
+      const flow = recordIntoTrack(trackId);
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(flow).resolves.toBe(true);
+      await flushMicrotasks();
+    }
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+
+    pending.resolve("unknown");
+    await flushMicrotasks();
+
+    // An "unknown" outcome stays retryable once the in-flight request clears.
+    const third = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(third).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the clip and returns idle when saveNow rejects", async () => {
     vi.useFakeTimers();
     autoSaveMocks.saveNow.mockRejectedValue(new Error("quota exceeded"));
