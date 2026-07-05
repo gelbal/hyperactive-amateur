@@ -166,11 +166,11 @@ function makeLifecycleStream(): { stream: MediaStream; tracks: LifecycleTrack[] 
   };
 }
 
-function makeRecordResult() {
+function makeRecordResult({ durationMs = 1000 }: { durationMs?: number } = {}) {
   return {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
-    durationMs: 1000,
+    audioBuffer: { duration: durationMs / 1000, sampleRate: 48000 } as AudioBuffer,
+    durationMs,
   };
 }
 
@@ -481,6 +481,21 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().recording.countdownEndsAt).toBeNull();
 
     setRecordingState.mockRestore();
+  });
+
+  it("clamps saved trim end to the actual captured buffer duration", async () => {
+    vi.useFakeTimers();
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 500 }));
+
+    const promise = recordIntoTrack(5);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    const clip = useAppStore.getState().project.tracks[5].clip;
+    expect(clip?.durationMs).toBe(500);
+    expect(clip?.trimStartMs).toBe(0);
+    expect(clip?.trimEndMs).toBe(500);
   });
 
   it("sets the pinned store error for interrupted cancellation during the record window", async () => {

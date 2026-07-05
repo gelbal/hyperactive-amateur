@@ -244,6 +244,9 @@ async function runFlow(
     const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
     throwIfFlowAborted(signal, "Aborted after capture");
     const trim = autoTrim(result.audioBuffer);
+    const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
+    const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
+    const trimEndMs = Math.max(trimStartMs, Math.min(trim.trimEndMs, bufferDurationMs));
     // Poster generation is best-effort — never let a poster failure block
     // the clip save. captureFirstFrame returns null on any decode/timeout.
     let posterBlob: Blob | null = null;
@@ -260,8 +263,8 @@ async function runFlow(
       url,
       audioBuffer: result.audioBuffer,
       audioBlob: audioBufferToWav(result.audioBuffer),
-      trimStartMs: trim.trimStartMs,
-      trimEndMs: trim.trimEndMs,
+      trimStartMs,
+      trimEndMs,
       durationMs: result.durationMs,
       posterBlob,
       posterUrl,
@@ -271,8 +274,8 @@ async function runFlow(
     // is ~2 s and is mostly silence on either side of the actual sound.
     const trimmedForTagging = sliceAudioBuffer(
       result.audioBuffer,
-      trim.trimStartMs,
-      trim.trimEndMs,
+      trimStartMs,
+      trimEndMs,
     );
     void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
     return true;

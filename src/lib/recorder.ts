@@ -35,7 +35,9 @@ export async function recordClip(
   const recorder = recorderOptions
     ? new MediaRecorder(stream, recorderOptions)
     : new MediaRecorder(stream);
-  const audioCapture = startAudioBufferCapture(stream, audioContext);
+  const audioCapture = startAudioBufferCapture(stream, audioContext, {
+    maxDurationMs: durationMs,
+  });
   const chunks: Blob[] = [];
 
   recorder.ondataavailable = (event: BlobEvent) => {
@@ -108,7 +110,11 @@ export async function recordClip(
   const blob = new Blob(chunks, { type: mimeType });
   const capturedAudioBuffer = audioCapture?.stop() ?? null;
   if (capturedAudioBuffer) {
-    return { blob, audioBuffer: capturedAudioBuffer, durationMs };
+    return {
+      blob,
+      audioBuffer: capturedAudioBuffer,
+      durationMs: Math.round(capturedAudioBuffer.duration * 1000),
+    };
   }
 
   let audioBuffer: AudioBuffer;
@@ -123,5 +129,5 @@ export async function recordClip(
     );
   }
 
-  return { blob, audioBuffer, durationMs };
+  return { blob, audioBuffer, durationMs: Math.round(audioBuffer.duration * 1000) };
 }
