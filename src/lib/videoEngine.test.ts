@@ -111,6 +111,24 @@ describe("pickWithDucking", () => {
         ?.trackId,
     ).toBe(0);
   });
+
+  it("lets a same-tier candidate cut once the current trim has expired", () => {
+    const current = { trackId: 0, startTime: 1.0, trimDurationMs: 200 };
+
+    expect(
+      pickWithDucking([{ trackId: 1, startTime: 1.25 }], current, 1.25, 400, contexts)
+        ?.trackId,
+    ).toBe(1);
+  });
+
+  it("holds a same-tier candidate while the current trim is still visible", () => {
+    const current = { trackId: 0, startTime: 1.0, trimDurationMs: 600 };
+
+    expect(
+      pickWithDucking([{ trackId: 1, startTime: 1.25 }], current, 1.25, 400, contexts)
+        ?.trackId,
+    ).toBe(0);
+  });
 });
 
 describe("quantizeToBoundary", () => {

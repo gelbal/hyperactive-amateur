@@ -25,6 +25,8 @@ export interface TriggerEvent {
   trackId: number;
   // Audio context seconds (Tone.now base) when the trigger fired.
   startTime: number;
+  // Trimmed visual duration in milliseconds, when known for displayed events.
+  trimDurationMs?: number;
 }
 
 // Pre-seek lookahead. A real <video> element needs a few render frames
@@ -145,11 +147,16 @@ export function trigger(trackId: number, when: number): void {
   const trim = trims.get(trackId);
   if (!trim) return;
 
+  const event: TriggerEvent = {
+    trackId,
+    startTime: when,
+    trimDurationMs: trim.endMs - trim.startMs,
+  };
   const playing = useAppStore.getState().playback.isPlaying;
   if (playing) {
-    pendingTriggers.push({ trackId, startTime: when });
+    pendingTriggers.push(event);
   } else {
-    currentlyDisplayed = { trackId, startTime: when };
+    currentlyDisplayed = event;
   }
 
   if (metadataReady.get(trackId)) {
@@ -205,15 +212,21 @@ export function pickWithDucking(
 ): TriggerEvent | null {
   const winner = pickActiveEvent(candidates, contexts);
   if (!winner) return current;
-  if (!current) return winner;
+  const activeCurrent =
+    current &&
+    current.trimDurationMs !== undefined &&
+    audioTime >= current.startTime + current.trimDurationMs / 1000
+      ? null
+      : current;
+  if (!activeCurrent) return winner;
 
   const winnerTier = tagScore(winner.trackId, contexts);
-  const currentTier = tagScore(current.trackId, contexts);
+  const currentTier = tagScore(activeCurrent.trackId, contexts);
   if (winnerTier > currentTier) return winner;
 
-  const elapsedMs = (audioTime - current.startTime) * 1000;
+  const elapsedMs = (audioTime - activeCurrent.startTime) * 1000;
   if (winnerTier === currentTier && elapsedMs < sameTierHoldMs) {
-    return current;
+    return activeCurrent;
   }
   return winner;
 }
