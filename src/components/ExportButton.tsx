@@ -64,8 +64,11 @@ export function ExportButton() {
   const [error, setError] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [review, setReview] = useState<ExportReview | null>(null);
+  const [sharePending, setSharePending] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reviewObjectUrlRef = useRef<string | null>(null);
+  const reviewRef = useRef<ExportReview | null>(null);
+  const mountedRef = useRef(true);
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
   const exportDurationMs = getExportDurationMs(bars, bpm);
@@ -101,21 +104,36 @@ export function ExportButton() {
     reviewObjectUrlRef.current = null;
   }, []);
 
+  const setCurrentReview = useCallback((nextReview: ExportReview | null) => {
+    reviewRef.current = nextReview;
+    setReview(nextReview);
+  }, []);
+
   const dismissReview = useCallback(() => {
     revokeReviewObjectUrl();
-    setReview(null);
+    setCurrentReview(null);
     setShareFallback(null);
-  }, [revokeReviewObjectUrl]);
+  }, [revokeReviewObjectUrl, setCurrentReview]);
 
-  useEffect(() => () => revokeReviewObjectUrl(), [revokeReviewObjectUrl]);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      revokeReviewObjectUrl();
+    },
+    [revokeReviewObjectUrl],
+  );
 
-  const saveReview = (current: ExportReview) => {
+  const saveReview = (current: ExportReview): boolean => {
+    if (reviewRef.current !== current) return false;
     revokeReviewObjectUrl();
     const objectUrl = downloadBlob(current.blob, current.filename);
+    const savedReview = { ...current, objectUrl };
     reviewObjectUrlRef.current = objectUrl;
+    reviewRef.current = savedReview;
     setReview((existing) =>
-      existing === current ? { ...existing, objectUrl } : existing,
+      existing === current ? savedReview : existing,
     );
+    return true;
   };
 
   const handleSave = () => {
@@ -124,14 +142,20 @@ export function ExportButton() {
   };
 
   const handleShare = async () => {
-    if (!review) return;
+    if (!review || sharePending) return;
+    const currentReview = review;
+    setSharePending(true);
     setShareFallback(null);
     try {
-      await shareBlob(review.blob, review.filename);
+      await shareBlob(currentReview.blob, currentReview.filename);
     } catch (err) {
       if (isAbortError(err)) return;
-      saveReview(review);
-      setShareFallback(SHARE_FALLBACK_MESSAGE);
+      if (!mountedRef.current || reviewRef.current !== currentReview) return;
+      if (saveReview(currentReview) && mountedRef.current) {
+        setShareFallback(SHARE_FALLBACK_MESSAGE);
+      }
+    } finally {
+      if (mountedRef.current) setSharePending(false);
     }
   };
 
@@ -160,7 +184,7 @@ export function ExportButton() {
         mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
       });
-      setReview({ blob, filename: defaultExportFilename(chosen.extension) });
+      setCurrentReview({ blob, filename: defaultExportFilename(chosen.extension) });
       setOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -285,8 +309,9 @@ export function ExportButton() {
                 {shareAvailable && (
                   <button
                     type="button"
+                    disabled={sharePending}
                     onClick={() => void handleShare()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Share2 size={14} />
                     Share
