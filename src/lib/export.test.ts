@@ -6,7 +6,12 @@ const toneMocks = vi.hoisted(() => {
   const destinationDisconnect = vi.fn();
   const toneStart = vi.fn().mockResolvedValue(undefined);
   const transport = { start: vi.fn(), stop: vi.fn(), position: 0 };
-  return { destinationConnect, destinationDisconnect, toneStart, transport };
+  const rawContext = {
+    state: "running",
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  } as unknown as AudioContext;
+  return { destinationConnect, destinationDisconnect, toneStart, transport, rawContext };
 });
 
 vi.mock("tone", () => ({
@@ -16,6 +21,7 @@ vi.mock("tone", () => ({
     disconnect: toneMocks.destinationDisconnect,
   })),
   getTransport: vi.fn(() => toneMocks.transport),
+  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
 }));
 
 import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";

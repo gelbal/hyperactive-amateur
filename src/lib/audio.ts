@@ -3,6 +3,7 @@
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
 import type { Clip, Track } from "../types";
@@ -25,9 +26,7 @@ export function getAudioContext(): AudioContext {
   return Tone.getContext().rawContext as AudioContext;
 }
 
-export async function ensureAudioStarted(): Promise<void> {
-  await Tone.start();
-}
+export const ensureAudioStarted = ensureAudioRunning; // temporary delegate, removed in B3
 
 // Wires up Tone.Transport with a 16th-note loop callback. Idempotent — safe to call
 // multiple times (e.g. from React StrictMode-double-invoked effects).
@@ -116,7 +115,7 @@ export function triggerTrack(trackId: number, when: number): void {
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
   if (!canStartAudibleAction(useAppStore.getState())) return;
-  await ensureAudioStarted();
+  await ensureAudioRunning();
   triggerTrack(trackId, nowSeconds());
 }
 
@@ -162,7 +161,7 @@ function syncPlayers(tracks: Track[]): void {
 
 export async function startPlayback(): Promise<void> {
   if (!canStartAudibleAction(useAppStore.getState())) return;
-  await ensureAudioStarted();
+  await ensureAudioRunning();
   stepCounter = 0;
   Tone.getTransport().position = 0;
   videoEngine.resetPlaybackState();

@@ -1,6 +1,7 @@
 // ABOUTME: Tests for audio.ts trigger gating — showVideo gate, mute respected, fallback synth.
 // ABOUTME: Tone is fully mocked so JSDOM never touches a real audio context.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createAudioContextStub, type AudioContextStub } from "../test-utils/audioContextStub";
 
 type RepeatCb = (time: number) => void;
 const transportMock = {
@@ -20,6 +21,7 @@ vi.mock("./videoEngine", () => ({
 }));
 
 const drawMock = { schedule: vi.fn((fn: () => void) => fn()) };
+let audioContextStub: AudioContextStub;
 
 interface SynthMock {
   triggerAttackRelease: ReturnType<typeof vi.fn>;
@@ -59,7 +61,7 @@ vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => transportMock),
   getDraw: vi.fn(() => drawMock),
-  getContext: vi.fn(() => ({ rawContext: {} })),
+  getContext: vi.fn(() => ({ rawContext: audioContextStub })),
   MembraneSynth: vi.fn(function MembraneSynth() {
     return makeSynth();
   }),
@@ -87,14 +89,23 @@ function makeClip() {
 
 describe("audio: per-step trigger logic", () => {
   beforeEach(() => {
+    audioContextStub = createAudioContextStub();
+    audioContextStub.setState("running");
     __resetAudioForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     transportMock.scheduleRepeat.mockClear();
+    transportMock.start.mockClear();
+    transportMock.stop.mockClear();
+    transportMock.clear.mockClear();
     synthInstances.length = 0;
     playerInstances.length = 0;
     videoEngineTrigger.mockClear();
     vi.mocked(Tone.start).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("clipped track: fires player + videoEngine; showVideo=false skips video; muted skips both", () => {
@@ -135,6 +146,22 @@ describe("audio: per-step trigger logic", () => {
     await triggerTrackNow(2);
     expect(Tone.start).toHaveBeenCalled();
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("does not mark playback playing when audio never reaches running", async () => {
+    vi.useFakeTimers();
+    audioContextStub.setState("suspended");
+    initTransport();
+
+    const promise = togglePlayback();
+    const rejection = expect(promise).rejects.toMatchObject({ name: "AudioUnavailableError" });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await rejection;
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("ignores manual playback controls while export owns the Transport", async () => {
