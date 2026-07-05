@@ -7,6 +7,7 @@ import type {
   CutSubdivision,
   MediaStatus,
   RecordingState,
+  StorageDurability,
   Subgenre,
   Tag,
   Vibe,
@@ -83,6 +84,7 @@ export interface AppActions {
     source?: "user" | "system",
   ) => void;
   setRecoveryWarnings: (warnings: string[]) => void;
+  setStorageDurability: (durability: StorageDurability) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setVideoFacingMode: (mode: "user" | "environment") => void;
@@ -440,6 +442,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setRecoveryWarnings: (warnings) =>
       set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
+
+    setStorageDurability: (storageDurability) =>
+      set((state) => ({ session: { ...state.session, storageDurability } })),
 
     setMedia: (next) =>
       set((state) => ({

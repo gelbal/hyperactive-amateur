@@ -51,6 +51,16 @@ describe("useAppStore", () => {
     expect(get().playback.audioState).toBe("resume-required");
   });
 
+  it("tracks storage durability in the transient session slice", () => {
+    expect(get().session.storageDurability).toBe("unknown");
+
+    get().actions.setStorageDurability("best-effort");
+    expect(get().session.storageDurability).toBe("best-effort");
+
+    get().actions.setStorageDurability("persistent");
+    expect(get().session.storageDurability).toBe("persistent");
+  });
+
   it("tracks transient recording countdown deadline and explicit error state", () => {
     expect(get().recording.countdownEndsAt).toBeNull();
     expect(get().recording.error).toBeNull();

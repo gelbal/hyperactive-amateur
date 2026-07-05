@@ -1,6 +1,6 @@
 // ABOUTME: recordingFlow — shared "record into a track" sequence used by TrackRow and the in-viewport RecordingStation.
 // ABOUTME: Drives the countdown → record → trim → store → auto-tag pipeline; module-level controller serializes flows + carries Esc cancellation.
-import { useAppStore } from "../store/useAppStore";
+import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
 import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
@@ -16,6 +16,7 @@ import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import { saveNow } from "./autoSave";
+import { requestPersistence } from "./install";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -280,6 +281,7 @@ async function runFlow(
     const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
     const trimEndMs = Math.max(trimStartMs, Math.min(trim.trimEndMs, bufferDurationMs));
     const url = URL.createObjectURL(result.blob);
+    const wasFirstClip = selectClipCount(useAppStore.getState()) === 0;
     const newClip: Clip = {
       blob: result.blob,
       url,
@@ -295,6 +297,11 @@ async function runFlow(
     actions.setTrackClip(trackId, newClip);
     try {
       await saveNow();
+      if (wasFirstClip) {
+        void requestPersistence().then((storageDurability) => {
+          useAppStore.getState().actions.setStorageDurability(storageDurability);
+        });
+      }
     } catch {
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }

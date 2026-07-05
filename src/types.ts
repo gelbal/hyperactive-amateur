@@ -138,10 +138,15 @@ export interface MediaSlice {
   videoFacingMode: "user" | "environment";
 }
 
+export type StorageDurability = "persistent" | "best-effort" | "unknown";
+
 export interface SessionSlice {
   // Monotonic in-memory counter for edits that make pending AI pattern
   // responses stale. Not persisted; reloads start a fresh active project.
   projectRevision: number;
+  // Browser storage durability for this session. Not persisted because it is
+  // a property of the current browser bucket, not the project.
+  storageDurability: StorageDurability;
   // Track ids whose showVideo has been manually toggled in this session.
   // Transient — not persisted, cleared on reset and on page load.
   manuallyToggledShowVideo: number[];

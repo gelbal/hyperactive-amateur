@@ -34,6 +34,10 @@ const autoSaveMocks = vi.hoisted(() => ({
   saveNow: vi.fn(),
 }));
 
+const installMocks = vi.hoisted(() => ({
+  requestPersistence: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
@@ -83,6 +87,10 @@ vi.mock("./audioBufferSlice", () => ({
 
 vi.mock("./autoSave", () => ({
   saveNow: autoSaveMocks.saveNow,
+}));
+
+vi.mock("./install", () => ({
+  requestPersistence: installMocks.requestPersistence,
 }));
 
 import { COUNTDOWN_MS, cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
@@ -230,6 +238,8 @@ describe("recordingFlow", () => {
     posterMocks.captureFirstFrame.mockResolvedValue(null);
     autoSaveMocks.saveNow.mockReset();
     autoSaveMocks.saveNow.mockResolvedValue(undefined);
+    installMocks.requestPersistence.mockReset();
+    installMocks.requestPersistence.mockResolvedValue("best-effort");
     clearLogs();
   });
 
@@ -596,6 +606,27 @@ describe("recordingFlow", () => {
     expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
   });
 
+  it("requests persistent storage once after the first successful clip save", async () => {
+    vi.useFakeTimers();
+    installMocks.requestPersistence.mockResolvedValue("persistent");
+
+    const first = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(first).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+    await flushMicrotasks();
+    expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+
+    const second = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(second).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the clip and returns idle when saveNow rejects", async () => {
     vi.useFakeTimers();
     autoSaveMocks.saveNow.mockRejectedValue(new Error("quota exceeded"));
@@ -607,6 +638,7 @@ describe("recordingFlow", () => {
     await expect(promise).resolves.toBe(true);
     expect(useAppStore.getState().recording.state).toBe("idle");
     expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
   });
 
   it("discards a late poster when the clip was replaced before it resolves", async () => {

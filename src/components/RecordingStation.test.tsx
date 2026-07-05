@@ -1,6 +1,6 @@
 // ABOUTME: RecordingStation test — target advance on skip, Record fires the flow, Done dismisses, full-track hides.
 import { act, render, screen, fireEvent, cleanup } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const recordIntoTrack = vi.fn();
 vi.mock("../lib/recordingFlow", () => ({
@@ -9,11 +9,14 @@ vi.mock("../lib/recordingFlow", () => ({
 
 import { RecordingStation } from "./RecordingStation";
 import { TrackInfo } from "./TrackInfo";
+import { __resetInstallForTesting, captureInstallPrompt } from "../lib/install";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
+const MANUAL_INSTALL_COPY = "Tap Share → Add to Home Screen to install.";
+const originalMatchMedia = window.matchMedia;
 
 function makeClip(): Clip {
   return {
@@ -25,13 +28,43 @@ function makeClip(): Clip {
     trimEndMs: 800,
     durationMs: 1000,
     posterBlob: null,
-    posterUrl: null,  };
+    posterUrl: null,
+  };
+}
+
+function stubMatchMedia({
+  coarse = false,
+  standalone = false,
+}: {
+  coarse?: boolean;
+  standalone?: boolean;
+}) {
+  window.matchMedia = vi.fn((query: string) => ({
+    matches:
+      (query === "(pointer: coarse)" && coarse) ||
+      (query === "(display-mode: standalone)" && standalone),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
 }
 
 describe("RecordingStation", () => {
   beforeEach(() => {
+    __resetInstallForTesting();
     recordIntoTrack.mockReset();
     useAppStore.getState().actions.reset();
+    window.matchMedia = originalMatchMedia;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __resetInstallForTesting();
+    window.matchMedia = originalMatchMedia;
   });
 
   it("targets the lowest empty track, Skip advances, Record fires the flow, Done dismisses, full-kit hides the station", async () => {
@@ -161,5 +194,77 @@ describe("RecordingStation", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
     expect(screen.getAllByText(INTERRUPTION_COPY)).toHaveLength(1);
+  });
+
+  it("shows the manual install hint before clips under feature signals without reading an iOS UA", async () => {
+    stubMatchMedia({ coarse: true });
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36 Chrome/126",
+    );
+
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Choose camera and microphone"));
+    });
+
+    expect(screen.getByText(MANUAL_INSTALL_COPY)).toBeInTheDocument();
+  });
+
+  it("hides the manual install hint after clips exist", async () => {
+    stubMatchMedia({ coarse: true });
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
+
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Choose camera and microphone"));
+    });
+
+    expect(screen.queryByText(MANUAL_INSTALL_COPY)).toBeNull();
+  });
+
+  it("hides the manual install hint when standalone, fine pointer, or install prompt captured", async () => {
+    stubMatchMedia({ coarse: true, standalone: true });
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Choose camera and microphone"));
+    });
+    expect(screen.queryByText(MANUAL_INSTALL_COPY)).toBeNull();
+    cleanup();
+
+    stubMatchMedia({ coarse: false });
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Choose camera and microphone"));
+    });
+    expect(screen.queryByText(MANUAL_INSTALL_COPY)).toBeNull();
+    cleanup();
+
+    stubMatchMedia({ coarse: true });
+    const detach = captureInstallPrompt();
+    const event = new Event("beforeinstallprompt");
+    Object.assign(event, { prompt: async () => undefined });
+    window.dispatchEvent(event);
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Choose camera and microphone"));
+    });
+    expect(screen.queryByText(MANUAL_INSTALL_COPY)).toBeNull();
+    expect(screen.getByRole("button", { name: "Install app" })).toBeInTheDocument();
+    detach();
   });
 });

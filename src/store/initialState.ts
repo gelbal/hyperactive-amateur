@@ -78,6 +78,7 @@ export function createInitialState(): AppState {
     },
     session: {
       projectRevision: 0,
+      storageDurability: "unknown",
       manuallyToggledShowVideo: [],
       manuallyTagged: [],
       recordingStationDismissed: false,
