@@ -72,6 +72,8 @@ function makeStream(): { stream: MediaStream; tracks: FakeTrack[] } {
   const tracks = [new FakeTrack("video"), new FakeTrack("audio")];
   const stream = {
     getTracks: () => tracks,
+    getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
   } as unknown as MediaStream;
   return { stream, tracks };
 }
@@ -231,6 +233,25 @@ describe("streamLifecycle", () => {
 
         vi.advanceTimersByTime(1);
         expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps pending idle mute suspension when another track unmutes but audio stays muted", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        tracks[1].fireMute();
+        vi.advanceTimersByTime(200);
+        tracks[0].fireUnmute();
+        vi.advanceTimersByTime(50);
+
+        expect(useAppStore.getState().media.status).toBe("suspended");
+        expect(useAppStore.getState().media.stream).toBeNull();
       } finally {
         vi.useRealTimers();
       }

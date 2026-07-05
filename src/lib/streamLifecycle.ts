@@ -43,6 +43,14 @@ function clearPendingMuteSuspension(stream: MediaStream): void {
   pendingMuteSuspensions.delete(stream);
 }
 
+function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
+  return tracks.some((track) => track.readyState === "live" && !track.muted);
+}
+
+function requiredTracksUsable(stream: MediaStream): boolean {
+  return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
+}
+
 function scheduleMutedSuspension(stream: MediaStream): void {
   clearPendingMuteSuspension(stream);
   const timer = setTimeout(() => {
@@ -70,7 +78,9 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
   const tracks = stream.getTracks();
   const onEnded = () => transitionToSuspended(stream);
   const onMute = () => onTrackMuted(stream);
-  const onUnmute = () => clearPendingMuteSuspension(stream);
+  const onUnmute = () => {
+    if (requiredTracksUsable(stream)) clearPendingMuteSuspension(stream);
+  };
   for (const track of tracks) {
     track.addEventListener("ended", onEnded);
     track.addEventListener("mute", onMute);
