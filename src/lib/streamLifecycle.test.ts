@@ -393,6 +393,24 @@ describe("streamLifecycle", () => {
       unregister();
     });
 
+    it("fires the export abort callback once when hidden and pagehide both arrive", () => {
+      const abort = vi.fn();
+      const unregister = registerExportSession({ abort });
+      if (!unregister) throw new Error("unexpected active export session");
+      const detach = installVisibilityListener();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+
+      expect(abort).toHaveBeenCalledTimes(1);
+      detach();
+      unregister();
+    });
+
     it("on hidden: flushes a pending autosave best-effort", async () => {
       startAutoSave();
       useAppStore.getState().actions.setBpm(134);
