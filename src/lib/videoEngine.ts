@@ -256,7 +256,9 @@ function onCutBoundary(boundaryTime: number): void {
 
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
-  currentlyDisplayed = next;
+  Tone.getDraw().schedule(() => {
+    currentlyDisplayed = next;
+  }, boundaryTime);
 }
 
 function subdivisionToSeconds(value: CutSubdivision): number {
@@ -279,16 +281,22 @@ function subdivisionToSeconds(value: CutSubdivision): number {
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
+  const displayed = currentlyDisplayed;
+  const video = displayed ? videos.get(displayed.trackId) : null;
+  const trim = displayed ? trims.get(displayed.trackId) : null;
+
+  if (displayed && trim) {
+    const elapsedMs = (audioTime - displayed.startTime) * 1000;
+    if (elapsedMs < 0) return;
+  }
 
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, w, h);
 
-  if (!currentlyDisplayed) return;
-  const video = videos.get(currentlyDisplayed.trackId);
-  const trim = trims.get(currentlyDisplayed.trackId);
+  if (!displayed) return;
   if (!video || !trim) return;
   const trimDurationMs = trim.endMs - trim.startMs;
-  const elapsedMs = (audioTime - currentlyDisplayed.startTime) * 1000;
+  const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
     video.pause();
     return;

@@ -1,14 +1,26 @@
 // ABOUTME: Viewport tests — gate-state transitions across idle/denied/granted; recording station mount.
 import { render, screen, fireEvent, act, cleanup, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const toneMocks = vi.hoisted(() => ({
+  immediate: vi.fn(() => 1),
+  now: vi.fn(() => 1.1),
+}));
 vi.mock("tone", () => ({
-  now: vi.fn(() => 0),
+  immediate: toneMocks.immediate,
+  now: toneMocks.now,
   getTransport: vi.fn(() => ({
     clear: vi.fn(),
     scheduleRepeat: vi.fn(() => 1),
   })),
 }));
+
+const videoEngineMocks = vi.hoisted(() => ({
+  drawCurrentFrame: vi.fn(),
+  initVideoEngine: vi.fn(),
+  setActiveCanvas: vi.fn(),
+}));
+vi.mock("../lib/videoEngine", () => videoEngineMocks);
 
 const requestMedia = vi.fn();
 const ensureAudioRunning = vi.fn();
@@ -23,7 +35,28 @@ import { Viewport } from "./Viewport";
 import { useAppStore } from "../store/useAppStore";
 
 describe("Viewport", () => {
+  let rafCallback: FrameRequestCallback | null = null;
+  let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
+
   beforeEach(() => {
+    rafCallback = null;
+    requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        rafCallback = callback;
+        return 1;
+      });
+    cancelAnimationFrameSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
+    toneMocks.immediate.mockClear();
+    toneMocks.now.mockClear();
+    toneMocks.immediate.mockReturnValue(1);
+    toneMocks.now.mockReturnValue(1.1);
+    videoEngineMocks.drawCurrentFrame.mockReset();
+    videoEngineMocks.initVideoEngine.mockReset();
+    videoEngineMocks.setActiveCanvas.mockReset();
     requestMedia.mockReset();
     ensureAudioRunning.mockReset();
     ensureAudioRunning.mockImplementation(async () => {
@@ -37,6 +70,11 @@ describe("Viewport", () => {
     (document.documentElement as any).requestFullscreen = () => Promise.resolve();
   });
 
+  afterEach(() => {
+    requestAnimationFrameSpy?.mockRestore();
+    cancelAnimationFrameSpy?.mockRestore();
+  });
+
   it("keeps canvas backing store at 480x480 even when CSS scales", () => {
     render(<Viewport />);
     const canvas = screen.getByLabelText(
@@ -44,6 +82,17 @@ describe("Viewport", () => {
     ) as HTMLCanvasElement;
     expect(canvas.width).toBe(480);
     expect(canvas.height).toBe(480);
+  });
+
+  it("passes audible Tone.immediate time into the draw loop", () => {
+    render(<Viewport />);
+
+    expect(rafCallback).not.toBeNull();
+    rafCallback?.(123);
+
+    expect(toneMocks.immediate).toHaveBeenCalledTimes(1);
+    expect(toneMocks.now).not.toHaveBeenCalled();
+    expect(videoEngineMocks.drawCurrentFrame).toHaveBeenCalledWith(expect.any(Object), 1);
   });
 
   it("idle: shows the gate; click calls requestMedia. Denied: swaps to blocked copy. Granted: gate gone, station mounted.", () => {

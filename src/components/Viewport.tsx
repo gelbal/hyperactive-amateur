@@ -70,7 +70,7 @@ export function Viewport() {
     const draw = () => {
       // Audio time is the source of truth for "what should be on screen".
       // rAF only decides when we paint.
-      const audioTime = Tone.now();
+      const audioTime = Tone.immediate();
       drawCurrentFrame(ctx, audioTime);
       rafId = requestAnimationFrame(draw);
     };

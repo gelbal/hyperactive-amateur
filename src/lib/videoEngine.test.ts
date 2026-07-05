@@ -10,6 +10,7 @@ vi.mock("tone", () => toneHarness.createToneModule());
 
 import {
   drawCurrentFrame,
+  initVideoEngine,
   setClipForTrack,
   trigger,
   pickActiveEvent,
@@ -182,6 +183,27 @@ describe("videoEngine integration", () => {
     expect(toneHarness.draw.schedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
   });
 
+  it("defers cut-boundary display changes until Draw reaches the audible boundary", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
   it("clears instead of drawing video after the displayed clip reaches trim end", () => {
     setClipForTrack(0, makeTrimmedClip());
     const video = document.querySelector("video") as HTMLVideoElement;
@@ -199,5 +221,19 @@ describe("videoEngine integration", () => {
     expect(afterEnd.drawImage).not.toHaveBeenCalled();
     expect(afterEnd.fillRect).toHaveBeenCalled();
     expect(pause).toHaveBeenCalled();
+  });
+
+  it("keeps the previous frame when the displayed event has not reached its start time", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "videoWidth", { configurable: true, value: 640 });
+    Object.defineProperty(video, "videoHeight", { configurable: true, value: 480 });
+
+    trigger(0, 2.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.99);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
   });
 });
