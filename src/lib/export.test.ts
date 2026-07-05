@@ -402,8 +402,7 @@ describe("exportSong", () => {
 });
 
 describe("downloadBlob", () => {
-  it("delays object URL revocation until after the synthetic click has been dispatched", () => {
-    vi.useFakeTimers();
+  it("returns the created object URL and leaves revocation to the caller", () => {
     const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/download");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const click = vi
@@ -411,16 +410,13 @@ describe("downloadBlob", () => {
       .mockImplementation(() => undefined);
 
     try {
-      downloadBlob(new Blob(["x"], { type: "video/webm" }), "beat.webm");
+      const url = downloadBlob(new Blob(["x"], { type: "video/webm" }), "beat.webm");
 
       expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(url).toBe("blob:test/download");
       expect(click).toHaveBeenCalledTimes(1);
       expect(revokeObjectURL).not.toHaveBeenCalled();
-
-      vi.runOnlyPendingTimers();
-      expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/download");
     } finally {
-      vi.useRealTimers();
       createObjectURL.mockRestore();
       revokeObjectURL.mockRestore();
       click.mockRestore();

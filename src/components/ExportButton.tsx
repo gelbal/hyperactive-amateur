@@ -1,13 +1,14 @@
-// ABOUTME: ExportButton — top-bar button + popover with bars slider, format picker, progress, and download.
+// ABOUTME: ExportButton — top-bar button + popover with bars slider, format picker, progress, and review.
 // ABOUTME: Mirrors the FeelDisclosure pattern: anchored popover, click-outside + Escape close, no modal scrim.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Share2, Trash2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import {
   exportSong,
   downloadBlob,
   defaultExportFilename,
   getExportDurationMs,
+  shareBlob,
 } from "../lib/export";
 import { detectSupportedFormats } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
@@ -19,6 +20,31 @@ const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
+const SHARE_FALLBACK_MESSAGE = "Sharing failed — saved as a download instead.";
+
+type ExportReview = {
+  blob: Blob;
+  filename: string;
+  objectUrl?: string;
+};
+
+function makeShareFile(blob: Blob, filename: string): File | null {
+  if (typeof File === "undefined") return null;
+  return new File([blob], filename, { type: blob.type });
+}
+
+function canShareReview(review: ExportReview | null): boolean {
+  if (!review) return false;
+  const file = makeShareFile(review.blob, review.filename);
+  return Boolean(file && navigator.canShare?.({ files: [file] }));
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException || err instanceof Error) &&
+    err.name === "AbortError"
+  );
+}
 
 function readStoredFormat(): string | null {
   if (typeof window === "undefined") return null;
@@ -36,8 +62,12 @@ export function ExportButton() {
   const [bars, setBars] = useState(DEFAULT_BARS);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shareFallback, setShareFallback] = useState<string | null>(null);
+  const [review, setReview] = useState<ExportReview | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const reviewObjectUrlRef = useRef<string | null>(null);
   const rendering = progress !== null;
+  const shareAvailable = useMemo(() => canShareReview(review), [review]);
   const exportDurationMs = getExportDurationMs(bars, bpm);
   const exportDurationSeconds = Math.round(exportDurationMs / 1000);
   const close = useCallback(() => setOpen(false), []);
@@ -65,6 +95,46 @@ export function ExportButton() {
     if (!open) setError(null);
   }, [open]);
 
+  const revokeReviewObjectUrl = useCallback(() => {
+    if (!reviewObjectUrlRef.current) return;
+    URL.revokeObjectURL(reviewObjectUrlRef.current);
+    reviewObjectUrlRef.current = null;
+  }, []);
+
+  const dismissReview = useCallback(() => {
+    revokeReviewObjectUrl();
+    setReview(null);
+    setShareFallback(null);
+  }, [revokeReviewObjectUrl]);
+
+  useEffect(() => () => revokeReviewObjectUrl(), [revokeReviewObjectUrl]);
+
+  const saveReview = (current: ExportReview) => {
+    revokeReviewObjectUrl();
+    const objectUrl = downloadBlob(current.blob, current.filename);
+    reviewObjectUrlRef.current = objectUrl;
+    setReview((existing) =>
+      existing === current ? { ...existing, objectUrl } : existing,
+    );
+  };
+
+  const handleSave = () => {
+    if (!review) return;
+    saveReview(review);
+  };
+
+  const handleShare = async () => {
+    if (!review) return;
+    setShareFallback(null);
+    try {
+      await shareBlob(review.blob, review.filename);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      saveReview(review);
+      setShareFallback(SHARE_FALLBACK_MESSAGE);
+    }
+  };
+
   const handleRender = async () => {
     if (!canStartAudibleAction(useAppStore.getState())) {
       setError("Finish recording or export before rendering.");
@@ -80,6 +150,7 @@ export function ExportButton() {
       setError("This browser does not support video export.");
       return;
     }
+    dismissReview();
     setError(null);
     setProgress(0);
     try {
@@ -89,8 +160,8 @@ export function ExportButton() {
         mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
       });
-      downloadBlob(blob, defaultExportFilename(chosen.extension));
-      setOpen(false);
+      setReview({ blob, filename: defaultExportFilename(chosen.extension) });
+      setOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -197,6 +268,50 @@ export function ExportButton() {
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 
+          {review && (
+            <div className="flex flex-col gap-2 rounded border border-zinc-700 bg-zinc-950/60 p-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  Ready
+                </span>
+                <span className="font-mono text-xs text-zinc-100 break-all">
+                  {review.filename}
+                </span>
+              </div>
+              {shareFallback && (
+                <p className="text-xs text-orange-300">{shareFallback}</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {shareAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => void handleShare()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
+                  >
+                    <Share2 size={14} />
+                    Share
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
+                >
+                  <Download size={14} />
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissReview}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-700 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-800"
+                >
+                  <Trash2 size={14} />
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => void handleRender()}
@@ -204,7 +319,7 @@ export function ExportButton() {
             className="flex items-center justify-center gap-2 px-4 py-2 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50"
           >
             <Download size={16} />
-            {rendering ? "Rendering" : "Render"}
+            {rendering ? "Rendering" : review ? "Render again" : "Render"}
           </button>
         </div>
       )}

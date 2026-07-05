@@ -184,7 +184,8 @@ export async function exportSong(
   }
 }
 
-export function downloadBlob(blob: Blob, filename: string): void {
+// Creates a download URL and synthetic anchor click; the caller owns revocation.
+export function downloadBlob(blob: Blob, filename: string): string {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -192,7 +193,13 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return url;
+}
+
+// Shares the rendered blob as a named File so mobile share sheets receive media.
+export async function shareBlob(blob: Blob, filename: string): Promise<void> {
+  const file = new File([blob], filename, { type: blob.type });
+  await navigator.share({ files: [file] });
 }
 
 export function defaultExportFilename(extension = "webm"): string {
