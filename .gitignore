@@ -33,12 +33,14 @@ playwright-report/
 test-results/
 .serena/
 .agent-relay/
+.agentworkforce/
 .mcp.json
 
 # typescript build info
 *.tsbuildinfo
 
-# project-local dev artifacts (specs, build plans, working notes, Claude
-# settings). Kept on disk for the contributor working with Claude Code; not
-# part of the public source tree.
+# project-local dev artifacts (docs, specs, build plans, audits, agent
+# guides, working notes). Kept on disk for the maintainer; not part of the
+# public source tree.
 .claude/
+/AGENTS.md

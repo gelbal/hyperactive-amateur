@@ -722,8 +722,8 @@ export function __resetGeminiProxyForTesting(): void {
 }
 
 // Vercel surfaces any uncaught throw from a route module as a plain-text
-// FUNCTION_INVOCATION_FAILED page (the 2026-07 /api/gemini-token incident,
-// docs/audits/2026-07-gemini-500-incident.md). Exported routes therefore get
+// FUNCTION_INVOCATION_FAILED page (the 2026-07 /api/gemini-token incident;
+// full root-cause record in the maintainer's audit notes). Exported routes get
 // a last-resort boundary that keeps unexpected failures as stable JSON and
 // logs a route label for the Vercel runtime logs, never provider secrets.
 export function withCrashBoundary(
