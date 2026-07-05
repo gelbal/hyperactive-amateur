@@ -12,6 +12,13 @@ describe("useAppStore", () => {
     get().actions.reset();
   });
 
+  it("tracks transient audio context state in the playback slice", () => {
+    expect(get().playback.audioState).toBe("unknown");
+
+    get().actions.setAudioState("resume-required");
+    expect(get().playback.audioState).toBe("resume-required");
+  });
+
   it("setBpm and setSameTierHoldMs clamp to their valid ranges", () => {
     get().actions.setBpm(250);
     expect(get().project.bpm).toBe(180);

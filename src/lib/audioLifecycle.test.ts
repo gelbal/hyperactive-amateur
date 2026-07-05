@@ -9,19 +9,33 @@ import {
 
 let audioContextStub: AudioContextStub;
 
+const audioMocks = vi.hoisted(() => ({
+  stopPlayback: vi.fn(),
+}));
+const exportSessionMocks = vi.hoisted(() => ({
+  abortActiveExport: vi.fn(),
+}));
+
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./audio", () => ({
   getAudioContext: () => audioContextStub,
+  stopPlayback: audioMocks.stopPlayback,
+}));
+
+vi.mock("./exportSession", () => ({
+  abortActiveExport: exportSessionMocks.abortActiveExport,
 }));
 
 import * as Tone from "tone";
+import { useAppStore } from "../store/useAppStore";
 import {
   __resetAudioLifecycleForTesting,
   AudioUnavailableError,
   ensureAudioRunning,
+  initAudioLifecycle,
   noteMicHeld,
   noteMicReleased,
 } from "./audioLifecycle";
@@ -29,16 +43,27 @@ import { LOG_EVENTS, logger } from "./logger";
 
 describe("ensureAudioRunning", () => {
   let audioSession: ReturnType<typeof installNavigatorAudioSession> | null;
+  let detachAudioLifecycle: (() => void) | null;
 
   beforeEach(() => {
     audioContextStub = createAudioContextStub();
     audioSession = null;
+    detachAudioLifecycle = null;
     __resetAudioLifecycleForTesting();
+    useAppStore.getState().actions.setIsExporting(false);
+    useAppStore.getState().actions.reset();
+    audioMocks.stopPlayback.mockReset();
+    audioMocks.stopPlayback.mockImplementation(() => {
+      useAppStore.getState().actions.setIsPlaying(false);
+    });
+    exportSessionMocks.abortActiveExport.mockReset();
+    exportSessionMocks.abortActiveExport.mockReturnValue(true);
     vi.mocked(Tone.start).mockResolvedValue(undefined);
     vi.mocked(Tone.start).mockClear();
   });
 
   afterEach(() => {
+    detachAudioLifecycle?.();
     audioSession?.uninstall();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -50,6 +75,7 @@ describe("ensureAudioRunning", () => {
     await expect(ensureAudioRunning()).resolves.toBeUndefined();
 
     expect(Tone.start).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().playback.audioState).toBe("running");
   });
 
   it("rejects with AudioUnavailableError when the context stays suspended", async () => {
@@ -62,6 +88,7 @@ describe("ensureAudioRunning", () => {
 
     await rejection;
     await expect(promise).rejects.toMatchObject({ name: "AudioUnavailableError" });
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -152,5 +179,54 @@ describe("ensureAudioRunning", () => {
     } else {
       delete (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession;
     }
+  });
+
+  it("stops playback synchronously and marks resume required on interruption", () => {
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    useAppStore.getState().actions.setIsPlaying(true);
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("interrupted");
+
+    expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
+    expect(exportSessionMocks.abortActiveExport).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_INTERRUPTED, {
+      state: "interrupted",
+      wasExporting: false,
+      wasPlaying: true,
+    });
+  });
+
+  it("aborts export directly and does not route through stopPlayback on interruption", () => {
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    useAppStore.getState().actions.setIsPlaying(true);
+    useAppStore.getState().actions.setIsExporting(true);
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("interrupted");
+
+    expect(exportSessionMocks.abortActiveExport).toHaveBeenCalledWith(
+      "Audio was interrupted — rendering stopped. Tap Render to try again.",
+    );
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_INTERRUPTED, {
+      state: "interrupted",
+      wasExporting: true,
+      wasPlaying: true,
+    });
+  });
+
+  it("does not clear resume-required from a running statechange alone", () => {
+    useAppStore.getState().actions.setAudioState("resume-required");
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("running");
+
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+    expect(exportSessionMocks.abortActiveExport).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
   });
 });

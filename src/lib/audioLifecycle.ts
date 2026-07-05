@@ -1,11 +1,15 @@
 // ABOUTME: Verified Web Audio lifecycle helpers for gesture-started audible actions.
 // ABOUTME: Waits for AudioContext running state before callers claim sound is available.
 import * as Tone from "tone";
-import { getAudioContext } from "./audio";
+import { useAppStore } from "../store/useAppStore";
+import { getAudioContext, stopPlayback } from "./audio";
+import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 
 const RUNNING_WAIT_TIMEOUT_MS = 500;
 const RUNNING_POLL_MS = 100;
+const EXPORT_AUDIO_INTERRUPTED_REASON =
+  "Audio was interrupted — rendering stopped. Tap Render to try again.";
 let hasStartedAudibleAction = false;
 let micHeld = false;
 
@@ -83,15 +87,48 @@ async function waitForRunning(context: AudioContext): Promise<void> {
 }
 
 export async function ensureAudioRunning(): Promise<void> {
-  if (!micHeld) setSessionType("playback");
-  await Tone.start();
-  const context = getAudioContext();
-  if (context.state === "running") {
+  try {
+    if (!micHeld) setSessionType("playback");
+    await Tone.start();
+    const context = getAudioContext();
+    if (context.state !== "running") {
+      await waitForRunning(context);
+    }
     hasStartedAudibleAction = true;
-    return;
+    useAppStore.getState().actions.setAudioState("running");
+  } catch (err) {
+    useAppStore.getState().actions.setAudioState("resume-required");
+    throw err;
   }
-  await waitForRunning(context);
-  hasStartedAudibleAction = true;
+}
+
+export function initAudioLifecycle(): () => void {
+  const context = getAudioContext();
+  const onStateChange = () => {
+    if (context.state === "running") return;
+
+    const { playback } = useAppStore.getState();
+    if (!playback.isPlaying && !playback.isExporting) return;
+
+    logger.warn(LOG_EVENTS.AUDIO_INTERRUPTED, {
+      state: context.state,
+      wasExporting: playback.isExporting,
+      wasPlaying: playback.isPlaying,
+    });
+
+    if (playback.isExporting) {
+      abortActiveExport(EXPORT_AUDIO_INTERRUPTED_REASON);
+    } else if (playback.isPlaying) {
+      stopPlayback();
+    }
+
+    useAppStore.getState().actions.setAudioState("resume-required");
+  };
+
+  context.addEventListener("statechange", onStateChange);
+  return () => {
+    context.removeEventListener("statechange", onStateChange);
+  };
 }
 
 export function __resetAudioLifecycleForTesting(): void {

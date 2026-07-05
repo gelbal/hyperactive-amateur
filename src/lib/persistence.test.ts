@@ -8,6 +8,7 @@ import {
   loadRecoveryBackup,
   saveProject,
   saveRecoveryBackup,
+  snapshot,
 } from "./persistence";
 import { useAppStore } from "../store/useAppStore";
 
@@ -32,6 +33,15 @@ describe("persistence", () => {
     expect(loaded?.sameTierHoldMs).toBe(750);
     expect(loaded?.tracks[0].showVideo).toBe(false);
     expect(loaded?.tracks[2].steps[7]).toBe(true);
+  });
+
+  it("omits transient playback audioState from persistence snapshots", () => {
+    useAppStore.getState().actions.setAudioState("resume-required");
+
+    const persisted = snapshot(useAppStore.getState());
+
+    expect(persisted).not.toHaveProperty("playback");
+    expect(persisted).not.toHaveProperty("audioState");
   });
 
   it("clearProject removes the record so loadProject returns null", async () => {

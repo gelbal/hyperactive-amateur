@@ -1,15 +1,16 @@
 // ABOUTME: audibleActionGate tests — one predicate shared by playback, pads, keys, recording, and export.
 import { describe, expect, it } from "vitest";
 import { canStartAudibleAction } from "./audibleActionGate";
-import type { PlaybackState, RecordingSlice } from "../types";
+import type { AppState, PlaybackState, RecordingSlice } from "../types";
 
 function state(
   playback: Partial<PlaybackState> = {},
   recording: Partial<RecordingSlice> = {},
-) {
+): Pick<AppState, "playback" | "recording"> {
   return {
     playback: {
       isPlaying: false,
+      audioState: "unknown",
       isExporting: false,
       currentStep: 0,
       activeTriggers: [],
