@@ -147,6 +147,8 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().recording).toEqual({
       state: "countdown",
       activeTrackId: 2,
+      countdownEndsAt: null,
+      error: null,
     });
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
 

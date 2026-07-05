@@ -32,6 +32,30 @@ describe("useAppStore", () => {
     expect(get().playback.audioState).toBe("resume-required");
   });
 
+  it("tracks transient recording countdown deadline and explicit error state", () => {
+    expect(get().recording.countdownEndsAt).toBeNull();
+    expect(get().recording.error).toBeNull();
+
+    get().actions.setCountdownEndsAt(12.5);
+    get().actions.setRecordingError("camera failed");
+    expect(get().recording.countdownEndsAt).toBe(12.5);
+    expect(get().recording.error).toBe("camera failed");
+
+    get().actions.setRecordingState("idle", null);
+    expect(get().recording.error).toBe("camera failed");
+
+    get().actions.setCountdownEndsAt(null);
+    get().actions.setRecordingError(null);
+    expect(get().recording.countdownEndsAt).toBeNull();
+    expect(get().recording.error).toBeNull();
+
+    get().actions.setCountdownEndsAt(24);
+    get().actions.setRecordingError("stale failure");
+    get().actions.setRecordingState("preparing", 3);
+    expect(get().recording.countdownEndsAt).toBeNull();
+    expect(get().recording.error).toBeNull();
+  });
+
   it("setBpm and setSameTierHoldMs clamp to their valid ranges", () => {
     get().actions.setBpm(250);
     expect(get().project.bpm).toBe(180);
