@@ -5,6 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
+import { interruptActiveRecording } from "./recordingInterrupt";
 
 const RUNNING_WAIT_TIMEOUT_MS = 500;
 const RUNNING_POLL_MS = 100;
@@ -126,8 +127,9 @@ export function initAudioLifecycle(): () => void {
   const onStateChange = () => {
     if (context.state === "running") return;
 
+    const recordingInterrupted = interruptActiveRecording("interrupted");
     const { playback } = useAppStore.getState();
-    if (!playback.isPlaying && !playback.isExporting) return;
+    if (!recordingInterrupted && !playback.isPlaying && !playback.isExporting) return;
 
     logger.warn(LOG_EVENTS.AUDIO_INTERRUPTED, {
       state: context.state,

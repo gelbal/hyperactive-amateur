@@ -196,6 +196,49 @@ describe("streamLifecycle", () => {
       expect(media.stream).toBeNull();
     });
 
+    it("cancels an in-flight recording before stopping tracks when a required track ends", () => {
+      const { stream, tracks } = makeStream();
+      const order: string[] = [];
+      const interrupt = vi.fn(() => order.push("cancel"));
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      for (const track of tracks) {
+        track.stop.mockImplementation(() => {
+          order.push(`stop:${track.kind}`);
+          track.readyState = "ended";
+        });
+      }
+      setGrantedWithStream(stream);
+      attachStreamEndedListeners(stream);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).toHaveBeenCalledWith("interrupted");
+      expect(order[0]).toBe("cancel");
+      expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+    });
+
+    it("does not invoke the recording interrupt handler when a track ends while idle", () => {
+      const { stream, tracks } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => false,
+        interrupt,
+      });
+      setGrantedWithStream(stream);
+      attachStreamEndedListeners(stream);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(useAppStore.getState().media.status).toBe("suspended");
+    });
+
     it("does not crash when a track mutes without a registered recording interrupt handler", () => {
       vi.useFakeTimers();
       try {
@@ -354,6 +397,89 @@ describe("streamLifecycle", () => {
       expect(media.status).toBe("suspended");
       expect(media.stream).toBeNull();
       detach();
+    });
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: cancels an in-flight recording before stopping held media", ({ dispatch }) => {
+      const { stream, tracks } = makeStream();
+      const order: string[] = [];
+      const interrupt = vi.fn(() => order.push("cancel"));
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      for (const track of tracks) {
+        track.stop.mockImplementation(() => {
+          order.push(`stop:${track.kind}`);
+          track.readyState = "ended";
+        });
+      }
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).toHaveBeenCalledWith("interrupted");
+        expect(order[0]).toBe("cancel");
+        expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+      }
+    });
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: does not invoke the recording interrupt handler when idle", ({ dispatch }) => {
+      const { stream } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => false,
+        interrupt,
+      });
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).not.toHaveBeenCalled();
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+      }
     });
 
     it("on visible: marks audio resume required without starting Tone", () => {

@@ -6,24 +6,22 @@ import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
+import {
+  interruptActiveRecording,
+  registerRecordingInterruptHandler,
+  type RecordingInterruptHandler,
+} from "./recordingInterrupt";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
 }
 
-export interface RecordingInterruptHandler {
-  isActive: () => boolean;
-  interrupt: (reason: "interrupted") => void;
-}
+export { registerRecordingInterruptHandler };
+export type { RecordingInterruptHandler };
 
 const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
 const pendingMuteSuspensions = new WeakMap<MediaStream, ReturnType<typeof setTimeout>>();
 const TRACK_MUTE_SUSPEND_DELAY_MS = 250;
-let recordingInterruptHandler: RecordingInterruptHandler | null = null;
-
-export function registerRecordingInterruptHandler(handler: RecordingInterruptHandler | null): void {
-  recordingInterruptHandler = handler;
-}
 
 function detachLifecycle(stream: MediaStream): void {
   const handle = lifecycleHandles.get(stream);
@@ -43,6 +41,7 @@ function stopTracks(stream: MediaStream): void {
 // user re-flipped the camera) means the listener fired on a stale handle and
 // should not touch the store.
 function transitionToSuspended(stream: MediaStream): void {
+  interruptActiveRecording("interrupted");
   suspendMediaStream(stream);
 }
 
@@ -71,10 +70,8 @@ function scheduleMutedSuspension(stream: MediaStream): void {
 }
 
 function onTrackMuted(stream: MediaStream): void {
-  const interruptHandler = recordingInterruptHandler;
-  if (interruptHandler?.isActive()) {
+  if (interruptActiveRecording("interrupted")) {
     clearPendingMuteSuspension(stream);
-    interruptHandler.interrupt("interrupted");
     suspendMediaStream(stream);
     return;
   }
@@ -158,14 +155,14 @@ export function installVisibilityListener(): () => void {
     }
     const state = useAppStore.getState();
     if (state.media.status === "granted" && state.media.stream) {
-      suspendMediaStream(state.media.stream);
+      transitionToSuspended(state.media.stream);
     }
   };
   const reconcileHeldStream = () => {
     const state = useAppStore.getState();
     if (state.media.status !== "granted" || !state.media.stream) return;
     if (!allTracksUsable(state.media.stream)) {
-      suspendMediaStream(state.media.stream);
+      transitionToSuspended(state.media.stream);
     }
   };
   const handleVisibilityChange = () => {

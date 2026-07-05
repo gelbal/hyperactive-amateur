@@ -15,6 +15,9 @@ const audioMocks = vi.hoisted(() => ({
 const exportSessionMocks = vi.hoisted(() => ({
   abortActiveExport: vi.fn(),
 }));
+const recordingInterruptMocks = vi.hoisted(() => ({
+  interruptActiveRecording: vi.fn(),
+}));
 
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +30,10 @@ vi.mock("./audio", () => ({
 
 vi.mock("./exportSession", () => ({
   abortActiveExport: exportSessionMocks.abortActiveExport,
+}));
+
+vi.mock("./recordingInterrupt", () => ({
+  interruptActiveRecording: recordingInterruptMocks.interruptActiveRecording,
 }));
 
 import * as Tone from "tone";
@@ -42,6 +49,9 @@ import {
   shouldShowSilentSwitchHint,
 } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
+
+const INTERRUPTION_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
 
 describe("ensureAudioRunning", () => {
   let audioSession: ReturnType<typeof installNavigatorAudioSession> | null;
@@ -62,6 +72,8 @@ describe("ensureAudioRunning", () => {
     });
     exportSessionMocks.abortActiveExport.mockReset();
     exportSessionMocks.abortActiveExport.mockReturnValue(true);
+    recordingInterruptMocks.interruptActiveRecording.mockReset();
+    recordingInterruptMocks.interruptActiveRecording.mockReturnValue(false);
     vi.mocked(Tone.start).mockResolvedValue(undefined);
     vi.mocked(Tone.start).mockClear();
   });
@@ -329,6 +341,30 @@ describe("ensureAudioRunning", () => {
         Reflect.deleteProperty(document, "visibilityState");
       }
     }
+  });
+
+  it("routes recording-path audio interruptions through the recording interrupt seam", () => {
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    recordingInterruptMocks.interruptActiveRecording.mockImplementation(() => {
+      useAppStore.getState().actions.setRecordingError(INTERRUPTION_COPY);
+      return true;
+    });
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("interrupted");
+
+    expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledTimes(1);
+    expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledWith("interrupted");
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+    expect(exportSessionMocks.abortActiveExport).not.toHaveBeenCalled();
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_INTERRUPTED, {
+      state: "interrupted",
+      wasExporting: false,
+      wasPlaying: false,
+    });
   });
 
   it("does not clear resume-required from a running statechange alone", () => {
