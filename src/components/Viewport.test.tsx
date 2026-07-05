@@ -38,6 +38,9 @@ describe("Viewport", () => {
   let rafCallback: FrameRequestCallback | null = null;
   let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
+  const originalDevicePixelRatio = window.devicePixelRatio;
+  const originalResizeObserver = globalThis.ResizeObserver;
 
   beforeEach(() => {
     rafCallback = null;
@@ -73,15 +76,163 @@ describe("Viewport", () => {
   afterEach(() => {
     requestAnimationFrameSpy?.mockRestore();
     cancelAnimationFrameSpy?.mockRestore();
+    getContextSpy?.mockRestore();
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      value: originalDevicePixelRatio,
+    });
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: originalResizeObserver,
+    });
+    Object.defineProperty(window, "ResizeObserver", {
+      configurable: true,
+      value: originalResizeObserver,
+    });
   });
 
-  it("keeps canvas backing store at 480x480 even when CSS scales", () => {
+  function setDevicePixelRatio(value: number) {
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      value,
+    });
+  }
+
+  function installResizeObserver(cssSize: number) {
+    class StubResizeObserver implements ResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+
+      observe(target: Element) {
+        this.callback(
+          [
+            {
+              target,
+              contentRect: {
+                width: cssSize,
+                height: cssSize,
+              },
+            } as ResizeObserverEntry,
+          ],
+          this,
+        );
+      }
+
+      unobserve() {}
+
+      disconnect() {}
+    }
+
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: StubResizeObserver,
+    });
+    Object.defineProperty(window, "ResizeObserver", {
+      configurable: true,
+      value: StubResizeObserver,
+    });
+  }
+
+  function getRenderCanvas() {
+    return document.querySelector(".ha-render-canvas") as HTMLCanvasElement | null;
+  }
+
+  function getDisplayCanvas() {
+    return screen.getByLabelText("hard-cut video viewport") as HTMLCanvasElement;
+  }
+
+  it("keeps a hidden 480 render canvas registered for export", () => {
     render(<Viewport />);
-    const canvas = screen.getByLabelText(
-      "hard-cut video viewport",
-    ) as HTMLCanvasElement;
-    expect(canvas.width).toBe(480);
-    expect(canvas.height).toBe(480);
+    const renderCanvas = getRenderCanvas();
+
+    expect(renderCanvas).toBeInTheDocument();
+    expect(renderCanvas?.width).toBe(480);
+    expect(renderCanvas?.height).toBe(480);
+    expect(renderCanvas).toHaveAttribute("aria-hidden", "true");
+    expect(renderCanvas?.style.opacity).toBe("0");
+    expect(renderCanvas?.style.display).not.toBe("none");
+    expect(videoEngineMocks.setActiveCanvas).toHaveBeenLastCalledWith(renderCanvas);
+  });
+
+  it("sizes the display canvas from CSS size and capped DPR", () => {
+    setDevicePixelRatio(3);
+    installResizeObserver(390);
+
+    render(<Viewport />);
+
+    let displayCanvas = getDisplayCanvas();
+    expect(displayCanvas).toHaveClass("ha-display-canvas");
+    expect(displayCanvas.width).toBe(780);
+    expect(displayCanvas.height).toBe(780);
+
+    cleanup();
+    setDevicePixelRatio(1);
+    installResizeObserver(390);
+
+    render(<Viewport />);
+
+    displayCanvas = getDisplayCanvas();
+    expect(displayCanvas.width).toBe(390);
+    expect(displayCanvas.height).toBe(390);
+  });
+
+  it("blits the render canvas onto the display canvas each animation frame", () => {
+    const renderContext = { canvas: null } as unknown as CanvasRenderingContext2D;
+    const displayDrawImage = vi.fn();
+    const displayContext = {
+      canvas: null,
+      drawImage: displayDrawImage,
+    } as unknown as CanvasRenderingContext2D;
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(function (
+        this: HTMLCanvasElement,
+        contextId: string,
+      ) {
+        if (contextId === "2d" && this.classList.contains("ha-render-canvas")) {
+          return renderContext;
+        }
+        if (contextId === "2d" && this.classList.contains("ha-display-canvas")) {
+          return displayContext;
+        }
+        return originalGetContext.call(this, contextId);
+      } as typeof HTMLCanvasElement.prototype.getContext);
+
+    render(<Viewport />);
+    const renderCanvas = getRenderCanvas();
+
+    expect(rafCallback).not.toBeNull();
+    rafCallback?.(123);
+
+    expect(videoEngineMocks.drawCurrentFrame).toHaveBeenCalledWith(renderContext, 1);
+    expect(displayDrawImage).toHaveBeenCalledTimes(1);
+    expect(displayDrawImage.mock.calls[0]?.[0]).toBe(renderCanvas);
+  });
+
+  it("falls back to a 480 display canvas when ResizeObserver is absent", () => {
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, "ResizeObserver", {
+      configurable: true,
+      value: undefined,
+    });
+
+    expect(() => render(<Viewport />)).not.toThrow();
+    const displayCanvas = getDisplayCanvas();
+    expect(displayCanvas.width).toBe(480);
+    expect(displayCanvas.height).toBe(480);
+  });
+
+  it("keeps fullscreen presentation classes on the display canvas", () => {
+    render(<Viewport />);
+    const renderCanvas = getRenderCanvas();
+    const displayCanvas = getDisplayCanvas();
+
+    expect(displayCanvas).toHaveClass("ha-canvas");
+    expect(displayCanvas).toHaveClass("ha-display-canvas");
+    expect(renderCanvas).not.toHaveClass("ha-canvas");
   });
 
   it("passes audible Tone.immediate time into the draw loop", () => {
