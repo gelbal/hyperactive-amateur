@@ -205,11 +205,16 @@ export function ExportButton() {
         aria-label="Export"
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={!canStart && !open}
-        onClick={() => setOpen((v) => !v)}
+        disabled={rendering || (!canStart && !open)}
+        onClick={() => {
+          if (rendering) return;
+          setOpen((v) => !v);
+        }}
         className={
           "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
-          (!canStart && !open
+          (rendering
+            ? "bg-zinc-800 border-zinc-600 text-zinc-400 cursor-progress"
+            : !canStart && !open
             ? "bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed"
             : open
             ? "bg-zinc-800 border-zinc-600 text-zinc-200"

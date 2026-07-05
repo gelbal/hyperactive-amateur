@@ -153,6 +153,32 @@ describe("ExportButton format picker", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the popover open when the export trigger is clicked during rendering", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    let resolveExport: (blob: Blob) => void = () => undefined;
+    vi.mocked(exportSong).mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveExport = resolve;
+        }),
+    );
+    render(<ExportButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+
+    expect(screen.getByRole("dialog", { name: /^export song$/i })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveExport(new Blob(["movie"], { type: "video/webm" }));
+      await Promise.resolve();
+    });
+  });
+
   it("shows a review row after rendering and hides Share when file sharing is unsupported", async () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     stubNavigatorShare({ canShare: false });
