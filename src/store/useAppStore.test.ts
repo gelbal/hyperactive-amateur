@@ -24,6 +24,7 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
     url: "blob:test/clip",
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 800,
     durationMs: 1000,
@@ -169,10 +170,11 @@ describe("useAppStore", () => {
 
   it("scratch revokes object URLs on every clip and resets state", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/x",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -231,10 +233,11 @@ describe("useAppStore", () => {
   it("ignores output-affecting project mutations while export is active", () => {
     const before = get().project;
     const sessionBefore = get().session;
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/export-clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -263,10 +266,11 @@ describe("useAppStore", () => {
 
   it("clearTrackClip revokes both blob URL and poster URL and re-opens the recording station", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -288,10 +292,11 @@ describe("useAppStore", () => {
 
   it("setTrackClip revokes the previous clip's poster URL when replaced", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const first = {
+    const first: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/a",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -384,6 +389,7 @@ describe("useAppStore", () => {
               blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
               url: "blob:test/hydr",
               audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+              audioStatus: "ok" as const,
               trimStartMs: 0,
               trimEndMs: 800,
               durationMs: 1000,

@@ -369,6 +369,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
             blob: pt.clipBlob,
             url: URL.createObjectURL(pt.clipBlob),
             audioBuffer,
+            audioStatus: "ok",
             audioBlob: pt.audioBlob ?? null,
             trimStartMs: pt.trimStartMs,
             trimEndMs: pt.trimEndMs,

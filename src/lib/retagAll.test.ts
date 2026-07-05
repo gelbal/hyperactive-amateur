@@ -28,6 +28,7 @@ function fakeClip(): Clip {
     blob: new Blob(["x"], { type: "audio/wav" }),
     url: "blob:test",
     audioBuffer: buffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 2000,
     durationMs: 2000,

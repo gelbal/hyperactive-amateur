@@ -35,6 +35,7 @@ function makeClip(seed: number): Clip {
     blob: new Blob([new Uint8Array([seed])], { type: "video/webm" }),
     url: `blob:test/${seed}`,
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 800,
     durationMs: 1000,

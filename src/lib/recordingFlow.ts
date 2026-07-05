@@ -283,6 +283,7 @@ async function runFlow(
       blob: result.blob,
       url,
       audioBuffer: result.audioBuffer,
+      audioStatus: "ok",
       audioBlob: audioBufferToWav(result.audioBuffer),
       trimStartMs,
       trimEndMs,

@@ -44,6 +44,7 @@ async function makeClip(): Promise<Clip> {
     blob: await persistedBlob([1, 2, 3], "video/webm"),
     url: "blob:test/x",
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
     audioBlob: await persistedBlob([4, 5, 6], "audio/wav"),
     trimStartMs: 50,
     trimEndMs: 950,

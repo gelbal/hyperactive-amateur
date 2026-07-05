@@ -74,6 +74,7 @@ describe("persistence", () => {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       audioBlob,
       trimStartMs: 0,
       trimEndMs: 800,

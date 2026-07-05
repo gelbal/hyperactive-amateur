@@ -8,8 +8,9 @@ export interface Clip {
   blob: Blob;
   // Object URL for the blob; recreated on rehydrate (not persisted).
   url: string;
-  // Decoded audio side of the clip; reused on every playback to avoid decode latency.
-  audioBuffer: AudioBuffer;
+  // Decoded audio side of the clip; null only for repair-state clips.
+  audioBuffer: AudioBuffer | null;
+  audioStatus: "ok" | "unavailable";
   // Persisted playback sidecar. Present for new recordings so reload does not
   // depend on decoding a mixed video container as audio.
   audioBlob?: Blob | null;

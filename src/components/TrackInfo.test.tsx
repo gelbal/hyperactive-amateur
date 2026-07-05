@@ -16,6 +16,7 @@ describe("TrackInfo re-record overlay", () => {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/clip-0",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
