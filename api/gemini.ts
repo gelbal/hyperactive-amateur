@@ -721,9 +721,28 @@ export function __resetGeminiProxyForTesting(): void {
   devMemoryStore = null;
 }
 
+// Vercel surfaces any uncaught throw from a route module as a plain-text
+// FUNCTION_INVOCATION_FAILED page (the 2026-07 /api/gemini-token incident,
+// docs/audits/2026-07-gemini-500-incident.md). Exported routes therefore get
+// a last-resort boundary that keeps unexpected failures as stable JSON and
+// logs a route label for the Vercel runtime logs, never provider secrets.
+export function withCrashBoundary(
+  handler: (request: Request) => Promise<Response>,
+  routeLabel: string,
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    try {
+      return await handler(request);
+    } catch (err) {
+      console.error(`[gemini-proxy] ${routeLabel} crashed`, err);
+      return jsonResponse({ error: "proxy-internal-error" }, 503);
+    }
+  };
+}
+
 // Vercel Node runtime expects the `{ fetch }` wrapper export, not a bare
 // default-export function. Keep handleGeminiRequest as a named export so
 // the Vite dev middleware in vite.config.ts can import it unchanged.
 export default {
-  fetch: handleGeminiRequest,
+  fetch: withCrashBoundary(handleGeminiRequest, "gemini"),
 };
