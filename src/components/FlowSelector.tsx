@@ -22,7 +22,7 @@ export function FlowSelector() {
         onChange={(e) =>
           useAppStore.getState().actions.setVibe(e.target.value as Vibe)
         }
-        className="bg-zinc-900 rounded border border-zinc-700 text-zinc-200 px-2 py-1 focus:outline-none focus:border-orange-500 transition-colors"
+        className="bg-zinc-900 rounded border border-zinc-700 text-zinc-200 px-2 py-1 pointer-coarse:min-h-11 focus:outline-none focus:border-orange-500 transition-colors"
       >
         {VIBES.map((v) => (
           <option key={v} value={v}>

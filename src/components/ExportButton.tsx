@@ -211,7 +211,7 @@ export function ExportButton() {
           setOpen((v) => !v);
         }}
         className={
-          "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
+          "flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
           (rendering
             ? "bg-zinc-800 border-zinc-600 text-zinc-400 cursor-progress"
             : !canStart && !open
@@ -240,7 +240,7 @@ export function ExportButton() {
                   <label
                     key={fmt.mimeType}
                     className={
-                      "px-3 py-1.5 rounded-full text-xs cursor-pointer border " +
+                      "inline-flex items-center px-3 py-1.5 pointer-coarse:min-h-11 rounded-full text-xs cursor-pointer border " +
                       (mimeType === fmt.mimeType
                         ? "bg-orange-500 text-zinc-950 border-orange-500"
                         : "bg-zinc-900 text-zinc-300 border-zinc-700 hover:bg-zinc-800")

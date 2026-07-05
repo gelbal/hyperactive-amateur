@@ -55,6 +55,31 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+@media (pointer: coarse) {
+  input[type="range"] {
+    height: 2rem;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+  }
+
+  input[type="range"]::-moz-range-track {
+    height: 6px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 1.5rem;
+    height: 1.5rem;
+    margin-top: -9px;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;

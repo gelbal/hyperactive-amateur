@@ -46,7 +46,7 @@ export function FeelDisclosure() {
         aria-label="Feel: cut rate, swing, hold"
         onClick={() => setOpen((v) => !v)}
         className={
-          "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
+          "flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
           (open
             ? "bg-zinc-800 border-zinc-600"
             : "bg-zinc-900 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600")

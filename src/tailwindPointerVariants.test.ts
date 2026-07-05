@@ -28,7 +28,18 @@ describe("tailwind pointer-coarse variants", () => {
     const css = await builtCss();
     // 44px step cells (StepGrid) and the camera Flip button (RecordingStation).
     expect(css).toMatch(/pointer-coarse\\:h-11/);
+    expect(css).toMatch(/\.pointer-coarse\\:min-h-11\s*{\s*min-height: 2\.75rem;/);
     expect(css).toMatch(/any-pointer-coarse\\:flex/);
+  }, 20_000);
+
+  it("emits 24px range thumbs for coarse pointers", async () => {
+    const css = await builtCss();
+    expect(css).toMatch(
+      /@media \(pointer: coarse\)[\s\S]*input\[type="range"\]::-webkit-slider-thumb\s*{[^}]*width:\s*1\.5rem;[^}]*height:\s*1\.5rem;/,
+    );
+    expect(css).toMatch(
+      /@media \(pointer: coarse\)[\s\S]*input\[type="range"\]::-moz-range-thumb\s*{[^}]*width:\s*1\.5rem;[^}]*height:\s*1\.5rem;/,
+    );
   }, 20_000);
 
   it("emits dynamic viewport sizing and the shared dark page background", async () => {

@@ -7,6 +7,14 @@ import { useAppStore } from "../store/useAppStore";
 describe("FeelDisclosure", () => {
   beforeEach(() => useAppStore.getState().actions.reset());
 
+  it("sizes the trigger to 44px on coarse pointers", () => {
+    render(<FeelDisclosure />);
+
+    expect(screen.getByLabelText("Feel: cut rate, swing, hold")).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+  });
+
   it("clamps the popover to the mobile viewport and restores anchored layout at sm", () => {
     render(<FeelDisclosure />);
     fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold"));
