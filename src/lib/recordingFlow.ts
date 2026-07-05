@@ -56,6 +56,37 @@ export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function attachPosterWhenReady(
+  trackId: number,
+  clip: Clip,
+  sourceBlob: Blob,
+  signal: AbortSignal,
+): void {
+  void (async () => {
+    let posterBlob: Blob | null = null;
+    try {
+      posterBlob = await captureFirstFrame(sourceBlob);
+    } catch (err) {
+      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+        phase: "poster",
+        message: errorMessage(err),
+      });
+      posterBlob = null;
+    }
+    try {
+      throwIfFlowAborted(signal, "Aborted after poster extraction");
+    } catch (err) {
+      if (isFlowAbort(err, signal)) return;
+      throw err;
+    }
+    useAppStore.getState().actions.setTrackPoster(trackId, posterBlob, clip);
+  })();
+}
+
 registerRecordingInterruptHandler({
   isActive: isRecordingInFlight,
   interrupt: (reason) => cancelCurrentRecording(reason),
@@ -247,17 +278,7 @@ async function runFlow(
     const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
     const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
     const trimEndMs = Math.max(trimStartMs, Math.min(trim.trimEndMs, bufferDurationMs));
-    // Poster generation is best-effort — never let a poster failure block
-    // the clip save. captureFirstFrame returns null on any decode/timeout.
-    let posterBlob: Blob | null = null;
-    try {
-      posterBlob = await captureFirstFrame(result.blob);
-    } catch {
-      posterBlob = null;
-    }
-    throwIfFlowAborted(signal, "Aborted after poster extraction");
     const url = URL.createObjectURL(result.blob);
-    const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
     const newClip: Clip = {
       blob: result.blob,
       url,
@@ -266,10 +287,13 @@ async function runFlow(
       trimStartMs,
       trimEndMs,
       durationMs: result.durationMs,
-      posterBlob,
-      posterUrl,
+      posterBlob: null,
+      posterUrl: null,
     };
     actions.setTrackClip(trackId, newClip);
+    // Poster generation is best-effort and intentionally not awaited: the clip
+    // save is the durability boundary, and the poster can attach later.
+    attachPosterWhenReady(trackId, newClip, result.blob, signal);
     // Send only the trimmed window to the AI tagger — the raw recording
     // is ~2 s and is mostly silence on either side of the actual sound.
     const trimmedForTagging = sliceAudioBuffer(

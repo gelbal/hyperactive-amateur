@@ -14,9 +14,24 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
+import type { Clip } from "../types";
 import { useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
+
+function makeClip(overrides: Partial<Clip> = {}): Clip {
+  return {
+    blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    url: "blob:test/clip",
+    audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    trimStartMs: 0,
+    trimEndMs: 800,
+    durationMs: 1000,
+    posterBlob: null,
+    posterUrl: null,
+    ...overrides,
+  };
+}
 
 describe("useAppStore", () => {
   beforeEach(() => {
@@ -289,6 +304,74 @@ describe("useAppStore", () => {
     expect(revoke).toHaveBeenCalledWith("blob:test/a");
     expect(revoke).toHaveBeenCalledWith("blob:test/poster-a");
     revoke.mockRestore();
+  });
+
+  it("setTrackPoster attaches and replaces poster blobs without bumping projectRevision", () => {
+    const create = vi.spyOn(URL, "createObjectURL");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    create.mockReturnValueOnce("blob:test/poster-a").mockReturnValueOnce("blob:test/poster-b");
+    get().actions.setTrackClip(0, makeClip());
+    const revision = get().session.projectRevision;
+    const firstPoster = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
+    const secondPoster = new Blob([new Uint8Array([10])], { type: "image/jpeg" });
+
+    get().actions.setTrackPoster(0, firstPoster);
+    expect(get().project.tracks[0].clip?.posterBlob).toBe(firstPoster);
+    expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-a");
+
+    get().actions.setTrackPoster(0, secondPoster);
+    expect(get().project.tracks[0].clip?.posterBlob).toBe(secondPoster);
+    expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-b");
+    expect(revoke).toHaveBeenCalledWith("blob:test/poster-a");
+    expect(get().session.projectRevision).toBe(revision);
+    create.mockRestore();
+    revoke.mockRestore();
+  });
+
+  it("setTrackPoster no-ops while exporting or when the track has no clip", () => {
+    const create = vi.spyOn(URL, "createObjectURL");
+    const poster = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
+    const emptyProject = get().project;
+    const emptyRevision = get().session.projectRevision;
+
+    get().actions.setTrackPoster(0, poster);
+    expect(get().project).toBe(emptyProject);
+    expect(get().session.projectRevision).toBe(emptyRevision);
+    expect(create).not.toHaveBeenCalled();
+
+    get().actions.setTrackClip(0, makeClip());
+    const clipBeforeExport = get().project.tracks[0].clip;
+    const exportRevision = get().session.projectRevision;
+    get().actions.setIsExporting(true);
+
+    get().actions.setTrackPoster(0, poster);
+    expect(get().project.tracks[0].clip).toBe(clipBeforeExport);
+    expect(get().session.projectRevision).toBe(exportRevision);
+    expect(create).not.toHaveBeenCalled();
+    get().actions.setIsExporting(false);
+    create.mockRestore();
+  });
+
+  it("setTrackPoster discards a stale poster when the clip changed since capture started", () => {
+    const create = vi.spyOn(URL, "createObjectURL");
+    const first = makeClip({ url: "blob:test/first" });
+    const replacement = makeClip({
+      blob: new Blob([new Uint8Array([2])], { type: "video/webm" }),
+      url: "blob:test/replacement",
+    });
+    get().actions.setTrackClip(0, first);
+    get().actions.setTrackClip(0, replacement);
+
+    get().actions.setTrackPoster(
+      0,
+      new Blob([new Uint8Array([9])], { type: "image/jpeg" }),
+      first,
+    );
+
+    expect(get().project.tracks[0].clip).toBe(replacement);
+    expect(get().project.tracks[0].clip?.posterBlob).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
   });
 
   it("hydrateProject sets recordingStationDismissed=true when any incoming track has a clip", () => {

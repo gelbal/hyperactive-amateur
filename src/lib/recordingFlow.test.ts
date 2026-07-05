@@ -520,46 +520,106 @@ describe("recordingFlow", () => {
     expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
   });
 
-  it("keeps user cancellation quiet and discards the clip during poster extraction", async () => {
+  it("saves the clip and returns idle before poster extraction resolves, then attaches the late poster", async () => {
     vi.useFakeTimers();
     const onError = vi.fn();
     const poster = makeDeferred<Blob | null>();
+    const posterBlob = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
     posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+    const setTrackPoster = vi.spyOn(useAppStore.getState().actions, "setTrackPoster");
 
     const promise = recordIntoTrack(2, { onError });
-    await flushMicrotasks();
-    await advanceCountdownToDeadline();
-    expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
-    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+      expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
 
-    cancelCurrentRecording("user");
-    poster.resolve(null);
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: true,
+      });
+      const stateBeforePoster = useAppStore.getState();
+      const savedClip = stateBeforePoster.project.tracks[2].clip;
+      expect(stateBeforePoster.recording.state).toBe("idle");
+      expect(savedClip).not.toBeNull();
+      expect(savedClip?.posterBlob).toBeNull();
+      expect(savedClip?.posterUrl).toBeNull();
+      expect(setTrackPoster).not.toHaveBeenCalled();
 
-    await expect(promise).resolves.toBe(false);
-    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
-    expect(useAppStore.getState().recording.error).toBeNull();
-    expect(onError).not.toHaveBeenCalled();
+      poster.resolve(posterBlob);
+      await flushMicrotasks(5);
+
+      expect(setTrackPoster).toHaveBeenCalledWith(2, posterBlob, savedClip);
+      expect(useAppStore.getState().project.tracks[2].clip?.posterBlob).toBe(posterBlob);
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      poster.resolve(null);
+      await promise.catch(() => false);
+      setTrackPoster.mockRestore();
+    }
   });
 
-  it("keeps interrupted cancellation pinned and discards the clip during poster extraction", async () => {
+  it("discards a late poster when the clip was replaced before it resolves", async () => {
     vi.useFakeTimers();
     const onError = vi.fn();
     const poster = makeDeferred<Blob | null>();
+    const posterBlob = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
     posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
 
     const promise = recordIntoTrack(2, { onError });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+      expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: true,
+      });
+      const savedClip = useAppStore.getState().project.tracks[2].clip;
+      if (!savedClip) throw new Error("missing saved clip");
+      const urlCallsAfterSave = createObjectURL.mock.calls.length;
+      const replacement = {
+        ...savedClip,
+        blob: new Blob([new Uint8Array([2])], { type: "video/webm" }),
+        url: "blob:test/replacement",
+        posterBlob: null,
+        posterUrl: null,
+      };
+      useAppStore.getState().actions.setTrackClip(2, replacement);
+
+      poster.resolve(posterBlob);
+      await flushMicrotasks(5);
+
+      expect(useAppStore.getState().project.tracks[2].clip).toBe(replacement);
+      expect(useAppStore.getState().project.tracks[2].clip?.posterBlob).toBeNull();
+      expect(createObjectURL).toHaveBeenCalledTimes(urlCallsAfterSave);
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      poster.resolve(null);
+      await promise.catch(() => false);
+      createObjectURL.mockRestore();
+    }
+  });
+
+  it("keeps the saved clip intact when poster extraction returns null", async () => {
+    vi.useFakeTimers();
+    posterMocks.captureFirstFrame.mockResolvedValue(null);
+
+    const promise = recordIntoTrack(2);
     await flushMicrotasks();
     await advanceCountdownToDeadline();
-    expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
-    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
 
-    cancelCurrentRecording("interrupted");
-    poster.resolve(null);
-
-    await expect(promise).resolves.toBe(false);
-    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
-    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
-    expect(onError).not.toHaveBeenCalled();
+    await expect(promise).resolves.toBe(true);
+    const clip = useAppStore.getState().project.tracks[2].clip;
+    expect(clip).not.toBeNull();
+    expect(clip?.posterBlob).toBeNull();
+    expect(clip?.posterUrl).toBeNull();
   });
 
   it("keeps waiting when the audio clock has not reached the countdown deadline", async () => {
