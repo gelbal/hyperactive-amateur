@@ -495,11 +495,26 @@ function isSchema2Metadata(value: unknown): value is PersistedProjectV2 {
   );
 }
 
+// A kill between the schema-2 metadata write and the legacy delete leaves the
+// old monolith behind as duplicate storage. Once schema 2 loads cleanly it is
+// the source of truth, so lingering legacy records are removed. Degraded
+// loads (missing blob records) keep them: the monolith's inline bytes may be
+// the only remaining copy of the media.
+async function deleteLingeringLegacyRecords(): Promise<void> {
+  await Promise.all(
+    [LEGACY_PROJECT_KEY, LEGACY_PROJECT_BACKUP_KEY].map(async (key) => {
+      if ((await get(key)) !== undefined) await del(key);
+    }),
+  );
+}
+
 export async function loadProject(): Promise<PersistedProject | null> {
   const metadata = await get(PROJECT_KEY);
   if (isRecord(metadata)) {
     if (isSchema2Metadata(metadata)) {
-      return resolveMetadataRecord(metadata);
+      const resolved = await resolveMetadataRecord(metadata);
+      if (!resolved.missingBlobs) await deleteLingeringLegacyRecords();
+      return resolved;
     }
     throw new InvalidMetadataError(
       `${PROJECT_KEY} exists but is not valid schema-${PERSISTED_SCHEMA_VERSION} metadata`,

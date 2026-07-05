@@ -20,7 +20,7 @@ import { initAudioLifecycle } from "./lib/audioLifecycle";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
-import { startAutoSave, stopAutoSave } from "./lib/autoSave";
+import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, getStorageDurability } from "./lib/install";
 
@@ -82,7 +82,7 @@ export function App() {
       detachAudioLifecycle();
       detachVisibility();
       resumeAutoSaveUnsubscribe?.();
-      stopAutoSave();
+      shutdownAutoSave();
     };
   }, []);
   useSpacebarPlayToggle();

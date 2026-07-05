@@ -9,7 +9,7 @@ const rehydrateMocks = vi.hoisted(() => ({
 
 const autoSaveMocks = vi.hoisted(() => ({
   startAutoSave: vi.fn(),
-  stopAutoSave: vi.fn(),
+  shutdownAutoSave: vi.fn(),
 }));
 
 vi.mock("./lib/audio", () => ({ initTransport: vi.fn() }));
@@ -24,7 +24,7 @@ vi.mock("./lib/rehydrate", () => ({
 }));
 vi.mock("./lib/autoSave", () => ({
   startAutoSave: autoSaveMocks.startAutoSave,
-  stopAutoSave: autoSaveMocks.stopAutoSave,
+  shutdownAutoSave: autoSaveMocks.shutdownAutoSave,
 }));
 vi.mock("./lib/useSpacebarPlayToggle", () => ({ useSpacebarPlayToggle: vi.fn() }));
 vi.mock("./lib/useKeyboardTriggers", () => ({ useKeyboardTriggers: vi.fn() }));

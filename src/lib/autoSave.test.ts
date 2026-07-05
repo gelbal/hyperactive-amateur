@@ -6,6 +6,7 @@ import {
   __flushAutoSaveForTesting,
   flushPending,
   saveNow,
+  shutdownAutoSave,
   startAutoSave,
   stopAutoSave,
 } from "./autoSave";
@@ -123,6 +124,32 @@ describe("autoSave", () => {
     saveSpy.mockClear();
     expect(flushPending()).toBe(false);
     await Promise.resolve();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("shutdownAutoSave flushes a pending debounced change before detaching", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(152);
+
+    shutdownAutoSave();
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy.mock.calls[0][0].project.bpm).toBe(152);
+    // Detached: later store changes schedule nothing.
+    useAppStore.getState().actions.setBpm(153);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("stopAutoSave drops pending work without writing (destructive pause)", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(154);
+
+    stopAutoSave();
+    await vi.advanceTimersByTimeAsync(600);
+
     expect(saveSpy).not.toHaveBeenCalled();
   });
 

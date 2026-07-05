@@ -26,6 +26,7 @@ vi.mock("idb-keyval", async (importOriginal) => {
 const META_KEY = "ha:meta";
 const BACKUP_KEY = "ha:meta-backup";
 const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
+const LEGACY_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
 const BLOB_PREFIX = "ha:blob:";
 
 function makeBlob(bytes: number[], type: string): Blob {
@@ -317,6 +318,37 @@ describe("persistence", () => {
     });
     expect(await get(LEGACY_PROJECT_KEY)).toBeTruthy();
     expect(await get(META_KEY)).toBeUndefined();
+  });
+
+  it("deletes lingering legacy records once schema-2 metadata loads cleanly", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(11));
+    await saveProject(useAppStore.getState());
+    // A kill between the schema-2 metadata write and the legacy delete leaves
+    // the monolith behind.
+    await set(LEGACY_PROJECT_KEY, { schemaVersion: 1, tracks: [] });
+    await set(LEGACY_BACKUP_KEY, { schemaVersion: 1, tracks: [] });
+
+    const loaded = await loadProject();
+
+    expect(loaded?.storageFormat).toBe("schema2");
+    expect(loaded?.missingBlobs).toBeUndefined();
+    expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
+    expect(await get(LEGACY_BACKUP_KEY)).toBeUndefined();
+    expect(await storedMeta()).toBeTruthy();
+  });
+
+  it("keeps lingering legacy records when the schema-2 load is degraded", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(12));
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    await del(meta.tracks[0].clipBlobRef);
+    await set(LEGACY_PROJECT_KEY, { schemaVersion: 1, tracks: [] });
+
+    const loaded = await loadProject();
+
+    expect(loaded?.missingBlobs?.length).toBeGreaterThan(0);
+    // The monolith's inline bytes may be the only remaining copy — keep it.
+    expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
   });
 
   it("rejects an existing-but-invalid ha:meta instead of treating it as legacy", async () => {

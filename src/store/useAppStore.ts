@@ -295,13 +295,22 @@ export const useAppStore = create<AppStore>((set) => ({
           trackId in state.project.tagReasoning
             ? omitKey(state.project.tagReasoning, trackId)
             : state.project.tagReasoning;
+        // Replacing a repair-state clip (audio unavailable) clears the mute
+        // the repair applied; a user's mute on a healthy track is kept.
+        const clearRepairMute =
+          previous?.audioStatus === "unavailable" && clip.audioStatus === "ok";
         return {
           project: {
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId
-                ? { ...track, clip, blobRevision: (track.blobRevision ?? 0) + 1 }
+                ? {
+                    ...track,
+                    clip,
+                    muted: clearRepairMute ? false : track.muted,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                  }
                 : track,
             ),
           },

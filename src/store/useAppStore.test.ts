@@ -346,6 +346,29 @@ describe("useAppStore", () => {
     revoke.mockRestore();
   });
 
+  it("re-recording over an audio-unavailable clip clears the repair mute", () => {
+    get().actions.setTrackClip(
+      0,
+      makeClip({ audioBuffer: null, audioStatus: "unavailable" }),
+    );
+    get().actions.setTrackMuted(0, true);
+    expect(get().project.tracks[0].muted).toBe(true);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].clip?.audioStatus).toBe("ok");
+    expect(get().project.tracks[0].muted).toBe(false);
+  });
+
+  it("keeps a user's own mute when replacing a healthy clip", () => {
+    get().actions.setTrackClip(0, makeClip());
+    get().actions.setTrackMuted(0, true);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/replacement" }));
+
+    expect(get().project.tracks[0].muted).toBe(true);
+  });
+
   it("setTrackClip and clearTrackClip bump the track blobRevision", () => {
     const start = get().project.tracks[0].blobRevision ?? 0;
 

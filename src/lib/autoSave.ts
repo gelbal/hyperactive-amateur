@@ -102,6 +102,8 @@ export function startAutoSave(): void {
   });
 }
 
+// Destructive pause: drops any pending debounced write on purpose. Use when
+// saving could overwrite a protected original (degraded loads, tests).
 export function stopAutoSave(): void {
   clearPendingTimer();
   dirtyWhileRecording = false;
@@ -109,6 +111,13 @@ export function stopAutoSave(): void {
     unsubscribe();
     unsubscribe = null;
   }
+}
+
+// Clean shutdown: best-effort flush of any pending debounced work, then
+// detach. Use when autosave ends without a data-safety reason to drop edits.
+export function shutdownAutoSave(): void {
+  flushPending();
+  stopAutoSave();
 }
 
 // Test-only flush of any pending debounced save.
