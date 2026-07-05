@@ -46,10 +46,15 @@ import { useAppStore } from "./store/useAppStore";
 
 const REPAIR_WARNING = "Track 1 audio unavailable — re-record to restore sound.";
 
-async function renderApp(): Promise<void> {
+async function renderApp(): Promise<HTMLElement> {
+  let container: HTMLElement = document.createElement("div");
   await act(async () => {
-    render(<App />);
+    const rendered = render(<App />);
+    container = rendered.container;
   });
+  const shell = container.firstElementChild;
+  if (!(shell instanceof HTMLElement)) throw new Error("App shell did not render");
+  return shell;
 }
 
 describe("App autosave gating", () => {
@@ -61,6 +66,20 @@ describe("App autosave gating", () => {
       degraded: false,
       warnings: [],
     });
+  });
+
+  it("keeps safe-area padding and dynamic viewport height on the shell", async () => {
+    const shell = await renderApp();
+
+    expect(shell).toHaveClass(
+      "min-h-screen",
+      "min-h-[100dvh]",
+      "box-border",
+      "pt-[env(safe-area-inset-top)]",
+      "pb-[env(safe-area-inset-bottom)]",
+      "pl-[env(safe-area-inset-left)]",
+      "pr-[env(safe-area-inset-right)]",
+    );
   });
 
   it("starts autosave after a clean load", async () => {

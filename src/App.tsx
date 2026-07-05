@@ -89,7 +89,7 @@ export function App() {
   useKeyboardTriggers();
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
         <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:gap-10 sm:px-6 sm:py-4">

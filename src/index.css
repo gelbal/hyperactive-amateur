@@ -69,15 +69,11 @@ button {
   background-color: transparent;
 }
 
-/* Safe-area insets for notched / home-indicator devices. The meta viewport
- * already has viewport-fit=cover (M1-1). Body padding handles the sticky
- * header (it sticks at the top of the padded viewport) and any bottom-anchored
- * content (StepGrid, RecordingStation controls, reconnect pill). */
-body {
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+/* Keep notched-device gutters dark; the app shell owns safe-area padding. */
+html,
+body,
+#root {
+  background-color: #09090b;
 }
 
 /* Tailwind preflight removes default focus outlines; restore as a brand-colored ring. */

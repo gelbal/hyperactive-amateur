@@ -1,16 +1,18 @@
 // ABOUTME: Regression test that the real Tailwind config emits pointer-coarse /
 // ABOUTME: any-pointer-coarse media queries; without them all mobile touch CSS is silently inert.
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import postcss from "postcss";
 import tailwindcss from "tailwindcss";
 
-// Builds utilities through the actual tailwind.config.js (config passed by
-// path so this test exercises the same file the production build uses,
+// Builds the real CSS entry through the actual tailwind.config.js (config passed
+// by path so this test exercises the same file the production build uses,
 // including its content globs over src/).
 async function builtCss(): Promise<string> {
   const result = await postcss([tailwindcss("./tailwind.config.js")]).process(
-    "@tailwind utilities;",
-    { from: undefined },
+    readFileSync("src/index.css", "utf8"),
+    { from: "src/index.css" },
   );
   return result.css;
 }
@@ -27,5 +29,13 @@ describe("tailwind pointer-coarse variants", () => {
     // 44px step cells (StepGrid) and the camera Flip button (RecordingStation).
     expect(css).toMatch(/pointer-coarse\\:h-11/);
     expect(css).toMatch(/any-pointer-coarse\\:flex/);
+  }, 20_000);
+
+  it("emits dynamic viewport sizing and the shared dark page background", async () => {
+    const css = await builtCss();
+    expect(css).toContain("min-height: 100dvh");
+    expect(css).toMatch(
+      /html,\s*body,\s*#root\s*{[^}]*background-color:\s*#09090b/i,
+    );
   }, 20_000);
 });
