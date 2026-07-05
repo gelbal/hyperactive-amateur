@@ -228,7 +228,7 @@ export function ExportButton() {
         <div
           role="dialog"
           aria-label="Export song"
-          className="absolute right-0 top-full mt-2 z-30 min-w-[18rem] rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3"
+          className="fixed inset-x-3 mt-2 z-30 w-auto max-w-[24rem] mx-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:min-w-[18rem] sm:max-w-none sm:mx-0"
         >
           {formats.length > 1 && (
             <fieldset className="flex flex-col gap-2">

@@ -7,6 +7,28 @@ import { useAppStore } from "../store/useAppStore";
 describe("FeelDisclosure", () => {
   beforeEach(() => useAppStore.getState().actions.reset());
 
+  it("clamps the popover to the mobile viewport and restores anchored layout at sm", () => {
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold"));
+
+    const popover = screen.getByRole("dialog", { name: "Feel controls" });
+    expect(popover).toHaveClass(
+      "fixed",
+      "inset-x-3",
+      "w-auto",
+      "max-w-[24rem]",
+      "mx-auto",
+      "sm:absolute",
+      "sm:inset-x-auto",
+      "sm:left-0",
+      "sm:top-full",
+      "sm:min-w-[18rem]",
+      "sm:max-w-none",
+      "sm:mx-0",
+    );
+    expect(popover.className.split(/\s+/)).not.toContain("min-w-[18rem]");
+  });
+
   it("Scratch needs a second click to confirm; Cancel keeps state", () => {
     useAppStore.getState().actions.setBpm(140);
     render(<FeelDisclosure />);

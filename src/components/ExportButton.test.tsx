@@ -108,6 +108,29 @@ describe("ExportButton format picker", () => {
     vi.restoreAllMocks();
   });
 
+  it("clamps the popover to the mobile viewport and restores right anchoring at sm", () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /export/i }));
+
+    const popover = screen.getByRole("dialog", { name: "Export song" });
+    expect(popover).toHaveClass(
+      "fixed",
+      "inset-x-3",
+      "w-auto",
+      "max-w-[24rem]",
+      "mx-auto",
+      "sm:absolute",
+      "sm:inset-x-auto",
+      "sm:right-0",
+      "sm:top-full",
+      "sm:min-w-[18rem]",
+      "sm:max-w-none",
+      "sm:mx-0",
+    );
+    expect(popover.className.split(/\s+/)).not.toContain("min-w-[18rem]");
+  });
+
   it("hides the picker when only one format is supported", () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     render(<ExportButton />);
