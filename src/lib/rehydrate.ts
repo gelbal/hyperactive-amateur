@@ -2,6 +2,7 @@
 // ABOUTME: Object URLs are recreated on every load (not persisted); degraded loads keep one backup.
 import {
   loadProject,
+  migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
   saveRecoveryBackup,
   type PersistedProject,
@@ -278,6 +279,22 @@ function normalizeProject(persisted: PersistedProject, warnings: string[]): Pers
   };
 }
 
+function collectMissingBlobTrackIds(
+  persisted: PersistedProject,
+  warnings: string[],
+): Set<number> {
+  const trackIds = new Set<number>();
+  for (const missing of persisted.missingBlobs ?? []) {
+    if (Number.isInteger(missing.trackId) && missing.trackId >= 0) {
+      trackIds.add(missing.trackId);
+    }
+  }
+  for (const trackId of Array.from(trackIds).sort((a, b) => a - b)) {
+    warn(warnings, `Track ${trackId + 1} clip could not be decoded and was dropped.`);
+  }
+  return trackIds;
+}
+
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
   // Fallback: rehydrate a plain Blob-shaped value (e.g., from fake-indexeddb)
@@ -340,10 +357,23 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const empty = createInitialState();
   const warnings: string[] = [];
   const normalized = normalizeProject(persisted, warnings);
+  const missingBlobTrackIds = collectMissingBlobTrackIds(persisted, warnings);
   let recoveryBackupWritten = false;
-  if (warnings.length > 0) {
+  if (warnings.length > 0 || persisted.storageFormat === "legacy") {
     recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
     if (!recoveryBackupWritten) {
+      useAppStore.getState().actions.setRecoveryWarnings(warnings);
+      return { ok: false, degraded: true, warnings };
+    }
+  }
+  if (persisted.storageFormat === "legacy") {
+    try {
+      await migrateLegacyProject(normalized);
+    } catch {
+      warn(
+        warnings,
+        "Saved project could not be migrated. Autosave was paused to avoid overwriting it.",
+      );
       useAppStore.getState().actions.setRecoveryWarnings(warnings);
       return { ok: false, degraded: true, warnings };
     }
@@ -352,7 +382,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const tracks: Track[] = await Promise.all(
     normalized.tracks.map(async (pt): Promise<Track> => {
       let clip: Clip | null = null;
-      if (pt.clipBlob) {
+      if (pt.clipBlob && !missingBlobTrackIds.has(pt.id)) {
         try {
           const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
           // Older saves predate posterBlob; regenerate from clipBlob so the

@@ -279,6 +279,17 @@ export async function saveProject(state: AppState): Promise<void> {
   await deleteOrphanedBlobRecords(referencedBlobKeys);
 }
 
+export async function migrateLegacyProject(project: PersistedProject): Promise<void> {
+  const { metadata, referencedBlobKeys } = await buildMetadataRecord(project, true);
+  await set(PROJECT_KEY, metadata);
+  const legacyKeys = new Set<string>([LEGACY_PROJECT_KEY, LEGACY_PROJECT_BACKUP_KEY]);
+  if (project.legacyKey && project.legacyKey !== PROJECT_KEY) {
+    legacyKeys.add(project.legacyKey);
+  }
+  await Promise.all(Array.from(legacyKeys, (key) => del(key)));
+  await deleteOrphanedBlobRecords(referencedBlobKeys);
+}
+
 function tagLegacyProject(value: Record<string, unknown>, legacyKey: string): PersistedProject {
   return {
     ...(value as unknown as PersistedProject),

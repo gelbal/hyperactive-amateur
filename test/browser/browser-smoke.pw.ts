@@ -228,6 +228,56 @@ async function seedOneClipProject(page: Page): Promise<void> {
   await expect(page.getByLabel("trigger pads")).toBeVisible();
 }
 
+async function expectSeededProjectMigrated(page: Page): Promise<void> {
+  const storage = await page.evaluate(async () => {
+    return new Promise<{
+      hasLegacy: boolean;
+      hasMeta: boolean;
+      blobKeyCount: number;
+      metaSchemaVersion: unknown;
+    }>((resolve, reject) => {
+      const request = indexedDB.open("keyval-store", 1);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction("keyval", "readonly");
+        const store = tx.objectStore("keyval");
+        const keysRequest = store.getAllKeys();
+        const metaRequest = store.get("ha:meta");
+        tx.oncomplete = () => {
+          const allKeys = keysRequest.result;
+          const meta = metaRequest.result as { schemaVersion?: unknown } | undefined;
+          db.close();
+          resolve({
+            hasLegacy: allKeys.includes("hyperactive-amateur-project"),
+            hasMeta: allKeys.includes("ha:meta"),
+            blobKeyCount: allKeys.filter(
+              (key): key is string => typeof key === "string" && key.startsWith("ha:blob:"),
+            ).length,
+            metaSchemaVersion: meta?.schemaVersion,
+          });
+        };
+        tx.onerror = () => reject(tx.error ?? new Error("IndexedDB read failed"));
+      };
+    });
+  });
+
+  expect(storage).toMatchObject({
+    hasLegacy: false,
+    hasMeta: true,
+    blobKeyCount: 2,
+    metaSchemaVersion: 2,
+  });
+  await expect(page.getByRole("button", { name: "track 1 step 1", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "tag kick for track 1" })).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+}
+
 async function hidePage(context: BrowserContext, page: Page): Promise<void> {
   try {
     const cdp = await context.newCDPSession(page);
@@ -286,6 +336,13 @@ test("surfaces export MediaRecorder failures without camera permission", async (
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await waitForApp(page);
   await seedOneClipProject(page);
+  await expectSeededProjectMigrated(page);
+  await waitForServiceWorkerControl(page);
+  await page.context().setOffline(true);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await expectSeededProjectMigrated(page);
+  await page.context().setOffline(false);
 
   await page.getByRole("button", { name: "Export" }).click();
   await expect(page.getByRole("dialog", { name: "Export song" })).toBeVisible();

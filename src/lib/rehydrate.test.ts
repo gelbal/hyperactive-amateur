@@ -1,7 +1,8 @@
 // ABOUTME: rehydrate tests — saved snapshot is restored into the store, blob decode happens.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
-import { set } from "idb-keyval";
+import * as idbKeyval from "idb-keyval";
+import { del, get, keys, set } from "idb-keyval";
 
 const audioMocks = vi.hoisted(() => ({
   fakeAudioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
@@ -20,10 +21,19 @@ vi.mock("./audio", () => ({
 vi.mock("./posterFrame", () => ({
   captureFirstFrame: vi.fn(async () => null),
 }));
+vi.mock("idb-keyval", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("idb-keyval")>();
+  return {
+    ...actual,
+    set: vi.fn(actual.set),
+  };
+});
 
 import { rehydrateFromStorage } from "./rehydrate";
 import {
+  LEGACY_PROJECT_KEY,
   PERSISTED_SCHEMA_VERSION,
+  PROJECT_BACKUP_KEY,
   PROJECT_KEY,
   clearProject,
   loadProject,
@@ -31,6 +41,11 @@ import {
   saveProject,
 } from "./persistence";
 import * as persistence from "./persistence";
+import {
+  corruptV1MonolithProject,
+  v0MonolithProject,
+  validV1MonolithProject,
+} from "./__fixtures__/persistedProjects";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
@@ -55,10 +70,46 @@ async function makeClip(): Promise<Clip> {
   };
 }
 
+function isBlobLike(value: unknown): boolean {
+  return (
+    value instanceof Blob ||
+    (typeof value === "object" &&
+      value !== null &&
+      typeof (value as Blob).arrayBuffer === "function" &&
+      typeof (value as Blob).type === "string")
+  );
+}
+
+function blobPaths(value: unknown, path = "$"): string[] {
+  if (isBlobLike(value)) return [path];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => blobPaths(item, `${path}[${index}]`));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).flatMap(([key, item]) => blobPaths(item, `${path}.${key}`));
+  }
+  return [];
+}
+
+async function storedBlobKeys(): Promise<string[]> {
+  return (await keys())
+    .filter((key): key is string => typeof key === "string" && key.startsWith("ha:blob:"))
+    .sort();
+}
+
+async function storedMeta(): Promise<Record<string, any>> {
+  const meta = await get(PROJECT_KEY);
+  expect(meta).toMatchObject({ schemaVersion: PERSISTED_SCHEMA_VERSION });
+  return meta as Record<string, any>;
+}
+
 describe("rehydrateFromStorage", () => {
   beforeEach(async () => {
     useAppStore.getState().actions.reset();
     await clearProject();
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    vi.mocked(idbKeyval.set).mockImplementation(actual.set);
+    vi.mocked(idbKeyval.set).mockClear();
     audioMocks.decodeAudioData.mockReset();
     audioMocks.decodeAudioData.mockResolvedValue(fakeAudioBuffer);
   });
@@ -117,41 +168,16 @@ describe("rehydrateFromStorage", () => {
     expect(useAppStore.getState().session.recordingStationDismissed).toBe(true);
   });
 
-  it("migrates legacy saves through validation and records degraded recovery warnings", async () => {
-    const malformed = {
-      schemaVersion: 0,
-      bpm: 999,
-      swing: -0.5,
-      cutSubdivision: "bad",
-      sameTierHoldMs: "slow",
-      subgenre: "jazz",
-      vibe: "messy",
-      stepCount: 15,
-      tagReasoning: { 0: "stale without clip", 99: "out of range" },
-      tracks: [
-        {
-          id: 0,
-          clipBlob: null,
-          audioBlob: "not a blob",
-          posterBlob: "not a blob",
-          trimStartMs: 0,
-          trimEndMs: 0,
-          durationMs: 0,
-          tag: "wrong",
-          steps: [true, "false", {}, false],
-          volume: 4,
-          muted: "no",
-          showVideo: "yes",
-        },
-      ],
-      updatedAt: "yesterday",
-    };
-    await set(PROJECT_KEY, malformed);
+  it("migrates corrupt v1 legacy saves through validation and records degraded recovery warnings", async () => {
+    await set(PROJECT_KEY, corruptV1MonolithProject());
 
     const result = await rehydrateFromStorage();
 
     expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
+    expect(result.warnings).toContain(
+      `Schema version 1 was migrated to ${PERSISTED_SCHEMA_VERSION}.`,
+    );
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
 
@@ -174,35 +200,11 @@ describe("rehydrateFromStorage", () => {
     expect(project.tagReasoning).toEqual({});
 
     expect(await loadRecoveryBackup()).not.toBeNull();
-    expect((await loadProject())?.stepCount).toBe(15);
+    expect((await loadProject())?.stepCount).toBe(16);
   });
 
   it("migrates a realistic legacy save with no schema version instead of discarding it", async () => {
-    await set(PROJECT_KEY, {
-      bpm: 111,
-      swing: 0.25,
-      cutSubdivision: "4n",
-      sameTierHoldMs: 600,
-      subgenre: "lo-fi",
-      vibe: "varied",
-      stepCount: 16,
-      tagReasoning: {},
-      tracks: Array.from({ length: 8 }, (_, id) => ({
-        id,
-        clipBlob: null,
-        audioBlob: null,
-        posterBlob: null,
-        trimStartMs: 0,
-        trimEndMs: 0,
-        durationMs: 0,
-        tag: null,
-        steps: Array.from({ length: 16 }, (_, step) => id === 0 && step === 3),
-        volume: 1,
-        muted: false,
-        showVideo: true,
-      })),
-      updatedAt: Date.now(),
-    });
+    await set(PROJECT_KEY, v0MonolithProject());
 
     const result = await rehydrateFromStorage();
 
@@ -214,6 +216,71 @@ describe("rehydrateFromStorage", () => {
     expect(useAppStore.getState().project.bpm).toBe(111);
     expect(useAppStore.getState().project.tracks[0].steps[3]).toBe(true);
     expect(await loadRecoveryBackup()).not.toBeNull();
+    expect((await loadProject())?.storageFormat).toBe("schema2");
+    expect((await storedMeta()).stepCount).toBe(16);
+  });
+
+  it("migrates a v1 monolith to schema 2 after writing a metadata-reference backup", async () => {
+    await set(LEGACY_PROJECT_KEY, await validV1MonolithProject());
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.warnings).toContain(
+      `Schema version 1 was migrated to ${PERSISTED_SCHEMA_VERSION}.`,
+    );
+    const state = useAppStore.getState();
+    expect(state.project.bpm).toBe(104);
+    expect(state.project.tracks[0].tag).toBe("kick");
+    expect(state.project.tracks[3].tag).toBe("hat");
+    expect(state.project.tracks[0].clip?.audioBuffer).toBe(fakeAudioBuffer);
+
+    const meta = await storedMeta();
+    expect(blobPaths(meta)).toEqual([]);
+    expect(meta.tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
+    expect(meta.tracks[3].posterBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
+    expect(await storedBlobKeys()).toHaveLength(6);
+    expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
+
+    const backup = await get(PROJECT_BACKUP_KEY);
+    expect(backup).toMatchObject({ schemaVersion: PERSISTED_SCHEMA_VERSION });
+    expect(blobPaths(backup)).toEqual([]);
+    expect((backup as any).tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
+    expect((backup as any).tracks[0]).not.toHaveProperty("clipBlob");
+  });
+
+  it("keeps legacy keys and pauses hydration when the schema-2 metadata write fails", async () => {
+    await set(LEGACY_PROJECT_KEY, await validV1MonolithProject());
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
+      if (key === PROJECT_KEY) throw new Error("meta write failed");
+      return actual.set(key, value);
+    });
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("could not be migrated"))).toBe(
+      true,
+    );
+    expect(useAppStore.getState().project.bpm).toBe(90);
+    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
+    expect(await get(LEGACY_PROJECT_KEY)).toMatchObject({ schemaVersion: 1 });
+    expect(await get(PROJECT_KEY)).toBeUndefined();
+  });
+
+  it("does not rewrite a clean schema-2 record during rehydrate", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    vi.mocked(idbKeyval.set).mockClear();
+
+    const result = await rehydrateFromStorage();
+
+    expect(result).toEqual({ ok: true, degraded: false, warnings: [] });
+    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
   });
 
   it("does not hydrate or risk autosave overwrite when degraded recovery backup fails", async () => {
@@ -289,6 +356,26 @@ describe("rehydrateFromStorage", () => {
       ],
       updatedAt: Date.now(),
     });
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("could not be decoded"))).toBe(true);
+    expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
+    expect(useAppStore.getState().project.tracks[0].tag).toBeNull();
+    expect(useAppStore.getState().project.tagReasoning).toEqual({});
+    expect(await loadRecoveryBackup()).not.toBeNull();
+  });
+
+  it("routes missing blob references through the pre-H4 decode-failure recovery path", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    useAppStore.getState().actions.setTrackTag(0, "kick");
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    const missingRef = meta.tracks[0].clipBlobRef;
+    await del(missingRef);
+    useAppStore.getState().actions.reset();
 
     const result = await rehydrateFromStorage();
 
