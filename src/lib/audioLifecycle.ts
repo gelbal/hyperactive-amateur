@@ -16,8 +16,8 @@ let silentSwitchHintReady = false;
 let silentSwitchHintDismissed = false;
 
 export class AudioUnavailableError extends Error {
-  constructor(message = "AudioContext did not reach running state.") {
-    super(message);
+  constructor(message = "AudioContext did not reach running state.", options?: ErrorOptions) {
+    super(message, options);
     this.name = "AudioUnavailableError";
   }
 }
@@ -111,7 +111,8 @@ export async function ensureAudioRunning(): Promise<void> {
     useAppStore.getState().actions.setAudioState("running");
   } catch (err) {
     useAppStore.getState().actions.setAudioState("resume-required");
-    throw err;
+    if (err instanceof AudioUnavailableError) throw err;
+    throw new AudioUnavailableError(undefined, { cause: err });
   }
 }
 

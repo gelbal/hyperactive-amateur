@@ -101,6 +101,20 @@ describe("ensureAudioRunning", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("wraps rejected Tone.start errors as AudioUnavailableError", async () => {
+    const cause = new Error("resume denied");
+    vi.mocked(Tone.start).mockRejectedValue(cause);
+
+    try {
+      await ensureAudioRunning();
+      throw new Error("expected ensureAudioRunning to reject");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AudioUnavailableError);
+      expect((err as AudioUnavailableError & { cause?: unknown }).cause).toBe(cause);
+    }
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+  });
+
   it("resolves early when a statechange reports running", async () => {
     vi.useFakeTimers();
 

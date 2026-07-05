@@ -3,22 +3,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({
-  getAudioContext: vi.fn(() => ({})),
+  context: {
+    state: "running" as AudioContextState,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  },
+  getAudioContext: vi.fn(() => audioMocks.context),
 }));
 
-const audioLifecycleMocks = vi.hoisted(() => {
-  class TestAudioUnavailableError extends Error {
-    constructor(message = "Audio unavailable") {
-      super(message);
-      this.name = "AudioUnavailableError";
-    }
-  }
-
-  return {
-    ensureAudioRunning: vi.fn(),
-    AudioUnavailableError: TestAudioUnavailableError,
-  };
-});
+const toneMocks = vi.hoisted(() => ({
+  start: vi.fn(),
+}));
 
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
@@ -34,9 +29,8 @@ vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
 
-vi.mock("./audioLifecycle", () => ({
-  ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
-  AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
+vi.mock("tone", () => ({
+  start: toneMocks.start,
 }));
 
 vi.mock("./media", () => ({
@@ -80,7 +74,7 @@ vi.mock("./audioBufferSlice", () => ({
 
 import { cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
-import { AudioUnavailableError } from "./audioLifecycle";
+import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -96,10 +90,12 @@ function makeStream(): MediaStream {
 
 describe("recordingFlow", () => {
   beforeEach(() => {
+    __resetAudioLifecycleForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
-    audioLifecycleMocks.ensureAudioRunning.mockReset();
-    audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
+    audioMocks.context.state = "running";
+    toneMocks.start.mockReset();
+    toneMocks.start.mockResolvedValue(undefined);
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
@@ -113,7 +109,7 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
@@ -124,19 +120,19 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
 
-  it("surfaces audio startup failure and resets recording state", async () => {
+  it("surfaces rejected Tone.start with pinned audio copy and resets recording state", async () => {
     const onError = vi.fn();
-    audioLifecycleMocks.ensureAudioRunning.mockRejectedValue(new AudioUnavailableError());
+    toneMocks.start.mockRejectedValue(new Error("resume denied"));
     mediaMocks.acquireRecordingStream.mockRejectedValue(new Error("media should not start"));
 
     await expect(recordIntoTrack(3, { onError })).resolves.toBe(false);
 
-    expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(toneMocks.start).toHaveBeenCalledTimes(1);
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
     expect(useAppStore.getState().recording.state).toBe("idle");
@@ -144,7 +140,7 @@ describe("recordingFlow", () => {
 
   it("claims countdown state before awaiting audio or media startup", async () => {
     const audioStarted = makeDeferred();
-    audioLifecycleMocks.ensureAudioRunning.mockReturnValue(audioStarted.promise);
+    toneMocks.start.mockReturnValue(audioStarted.promise);
 
     const promise = recordIntoTrack(2);
 
