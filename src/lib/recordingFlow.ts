@@ -85,6 +85,19 @@ function waitMs(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+async function waitUntilAudioTime(
+  deadlineSeconds: number,
+  audioContext: Pick<BaseAudioContext, "currentTime">,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    throwIfFlowAborted(signal, "Aborted before countdown completed");
+    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
+    if (remainingMs <= 0) return;
+    await waitMs(remainingMs, signal);
+  }
+}
+
 function makeAbortError(message: string): DOMException {
   return new DOMException(message, "AbortError");
 }
@@ -226,7 +239,7 @@ async function runFlow(
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", trackId);
 
-    await waitMs((countdownEndsAt - audioContext.currentTime) * 1000, signal);
+    await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
     actions.setRecordingState("recording", trackId);
     const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
     throwIfFlowAborted(signal, "Aborted after capture");
