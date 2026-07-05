@@ -7,8 +7,14 @@ function installFrameHarness(options: {
   width?: number;
   height?: number;
   requestVideoFrameCallback?: HTMLVideoElement["requestVideoFrameCallback"];
+  cancelVideoFrameCallback?: HTMLVideoElement["cancelVideoFrameCallback"];
 } = {}) {
-  const { width = 160, height = 90, requestVideoFrameCallback } = options;
+  const {
+    width = 160,
+    height = 90,
+    requestVideoFrameCallback,
+    cancelVideoFrameCallback,
+  } = options;
   const originalCreateElement = document.createElement.bind(document);
   const poster = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
   const video = originalCreateElement("video") as HTMLVideoElement;
@@ -22,6 +28,12 @@ function installFrameHarness(options: {
     Object.defineProperty(video, "requestVideoFrameCallback", {
       configurable: true,
       value: requestVideoFrameCallback,
+    });
+  }
+  if (cancelVideoFrameCallback) {
+    Object.defineProperty(video, "cancelVideoFrameCallback", {
+      configurable: true,
+      value: cancelVideoFrameCallback,
     });
   }
 
@@ -83,6 +95,50 @@ describe("captureFirstFrame", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     await expect(promise).resolves.toBe(poster);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/source");
+  });
+
+  it("cancels a pending requestVideoFrameCallback when loadedmetadata wins", async () => {
+    vi.useFakeTimers();
+    let frameCallback: VideoFrameRequestCallback | undefined;
+    const requestVideoFrameCallback = vi.fn((callback: VideoFrameRequestCallback) => {
+      frameCallback = callback;
+      return 42;
+    });
+    const cancelVideoFrameCallback = vi.fn();
+    const { video, poster } = installFrameHarness({
+      requestVideoFrameCallback,
+      cancelVideoFrameCallback,
+    });
+    const blob = new Blob([new Uint8Array([1])], { type: "video/webm" });
+
+    const promise = captureFirstFrame(blob, 0.05, 1000);
+    video.dispatchEvent(new Event("loadedmetadata"));
+    video.dispatchEvent(new Event("seeked"));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(poster);
+    expect(frameCallback).toBeDefined();
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(42);
+    expect(cancelVideoFrameCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a pending requestVideoFrameCallback on timeout", async () => {
+    vi.useFakeTimers();
+    const requestVideoFrameCallback = vi.fn(() => 7);
+    const cancelVideoFrameCallback = vi.fn();
+    const { revokeObjectURL } = installFrameHarness({
+      requestVideoFrameCallback,
+      cancelVideoFrameCallback,
+    });
+    const blob = new Blob([new Uint8Array([1])], { type: "video/webm" });
+
+    const promise = captureFirstFrame(blob, 0.05, 50);
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(promise).resolves.toBeNull();
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(7);
+    expect(cancelVideoFrameCallback).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/source");
   });
 

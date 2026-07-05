@@ -7,6 +7,7 @@ const JPEG_QUALITY = 0.7;
 
 type VideoWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: HTMLVideoElement["requestVideoFrameCallback"];
+  cancelVideoFrameCallback?: HTMLVideoElement["cancelVideoFrameCallback"];
 };
 
 // Capture a single frame near the start of the video and return it as a JPEG
@@ -40,6 +41,7 @@ export async function captureFirstFrame(
   return new Promise<Blob | null>((resolve) => {
     let settled = false;
     let captureStarted = false;
+    let videoFrameCallbackHandle: number | null = null;
 
     const cleanupListeners = () => {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
@@ -48,11 +50,25 @@ export async function captureFirstFrame(
       video.removeEventListener("error", onError);
     };
 
+    const cleanupVideoFrameCallback = () => {
+      if (videoFrameCallbackHandle === null) return;
+      const handle = videoFrameCallbackHandle;
+      videoFrameCallbackHandle = null;
+      const cancelVideoFrameCallback = (video as VideoWithFrameCallback).cancelVideoFrameCallback;
+      if (typeof cancelVideoFrameCallback !== "function") return;
+      try {
+        cancelVideoFrameCallback.call(video, handle);
+      } catch {
+        // Ignore — the element is already settling through another path.
+      }
+    };
+
     const finish = (result: Blob | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       cleanupListeners();
+      cleanupVideoFrameCallback();
       try {
         video.removeAttribute("src");
         video.load();
@@ -122,7 +138,8 @@ export async function captureFirstFrame(
     const requestVideoFrameCallback = (video as VideoWithFrameCallback).requestVideoFrameCallback;
     if (typeof requestVideoFrameCallback === "function") {
       try {
-        requestVideoFrameCallback.call(video, () => {
+        videoFrameCallbackHandle = requestVideoFrameCallback.call(video, () => {
+          videoFrameCallbackHandle = null;
           if (settled || captureStarted) return;
           captureStarted = true;
           void drawAndFinish();
