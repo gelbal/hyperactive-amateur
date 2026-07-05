@@ -1,6 +1,6 @@
 // ABOUTME: VariationButtons tests — disabled gating until 4+ clips & a pattern, click → varyPattern with vibe + variation.
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const varyPattern = vi.fn();
 vi.mock("../lib/aiSuggest", () => ({
@@ -10,7 +10,10 @@ vi.mock("../lib/aiSuggest", () => ({
 
 import { VariationButtons } from "./VariationButtons";
 import { useAppStore } from "../store/useAppStore";
+import { GeminiOfflineError } from "../lib/aiErrors";
 import type { Clip } from "../types";
+
+const OFFLINE_COPY = "AI needs an internet connection.";
 
 function makeClip(): Clip {
   return {
@@ -25,6 +28,14 @@ function makeClip(): Clip {
     posterUrl: null,  };
 }
 
+function unlockVariation(): void {
+  const actions = useAppStore.getState().actions;
+  act(() => {
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+  });
+}
+
 function deferredGrid() {
   let resolve!: (grid: boolean[][]) => void;
   const promise = new Promise<boolean[][]>((res) => {
@@ -37,6 +48,10 @@ describe("VariationButtons", () => {
   beforeEach(() => {
     varyPattern.mockReset();
     useAppStore.getState().actions.reset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   it("disabled until 4+ clips AND a non-empty pattern; clicking Break fires varyPattern with subgenre + vibe", async () => {
@@ -89,5 +104,52 @@ describe("VariationButtons", () => {
     );
     expect(useAppStore.getState().project.stepCount).toBe(20);
     expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
+  });
+
+  it("renders pinned offline copy when a variation transport is unavailable", async () => {
+    unlockVariation();
+    varyPattern.mockRejectedValue(new GeminiOfflineError());
+    render(<VariationButtons />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Break"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(OFFLINE_COPY));
+  });
+
+  it("keeps non-offline variation errors unchanged", async () => {
+    unlockVariation();
+    varyPattern.mockRejectedValue(new Error("Gemini proxy 500: server error"));
+    render(<VariationButtons />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Break"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Gemini proxy 500: server error"),
+    );
+  });
+
+  it("hints when offline and stays clickable", async () => {
+    unlockVariation();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    varyPattern.mockResolvedValue(
+      Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => false)),
+    );
+    render(<VariationButtons />);
+
+    const button = screen.getByLabelText("Break");
+    expect(button).toHaveAttribute("title", OFFLINE_COPY);
+    expect(button).not.toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(varyPattern).toHaveBeenCalled());
   });
 });

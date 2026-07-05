@@ -1,6 +1,6 @@
 // ABOUTME: SuggestButton tests — disabled gating + click → applyPattern + Undo.
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const suggestPattern = vi.fn();
 vi.mock("../lib/aiSuggest", () => ({
@@ -11,7 +11,10 @@ vi.mock("../lib/aiSuggest", () => ({
 
 import { SuggestButton } from "./SuggestButton";
 import { useAppStore } from "../store/useAppStore";
+import { GeminiOfflineError } from "../lib/aiErrors";
 import type { Clip } from "../types";
+
+const OFFLINE_COPY = "AI needs an internet connection.";
 
 function makeClip(): Clip {
   return {
@@ -26,6 +29,13 @@ function makeClip(): Clip {
     posterUrl: null,  };
 }
 
+function unlockAi(): void {
+  const actions = useAppStore.getState().actions;
+  act(() => {
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+  });
+}
+
 function deferredGrid() {
   let resolve!: (grid: boolean[][]) => void;
   const promise = new Promise<boolean[][]>((res) => {
@@ -38,6 +48,10 @@ describe("SuggestButton", () => {
   beforeEach(() => {
     suggestPattern.mockReset();
     useAppStore.getState().actions.reset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   it("disabled with <4 clips; click after 4 calls suggestPattern and applies the result; Undo restores", async () => {
@@ -93,5 +107,63 @@ describe("SuggestButton", () => {
     const steps = useAppStore.getState().project.tracks[0].steps;
     expect(steps[1]).toBe(true);
     expect(steps.every(Boolean)).toBe(false);
+  });
+
+  it("renders pinned offline copy when the suggestion transport is unavailable", async () => {
+    unlockAi();
+    suggestPattern.mockRejectedValue(new GeminiOfflineError());
+    render(<SuggestButton />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Suggest a beat"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(OFFLINE_COPY));
+  });
+
+  it("keeps non-offline suggestion errors unchanged", async () => {
+    unlockAi();
+    suggestPattern.mockRejectedValue(new Error("Gemini proxy 500: server error"));
+    render(<SuggestButton />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Suggest a beat"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Gemini proxy 500: server error"),
+    );
+  });
+
+  it("hints when offline and stays clickable", async () => {
+    unlockAi();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    suggestPattern.mockResolvedValue(
+      Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => false)),
+    );
+    render(<SuggestButton />);
+
+    const button = screen.getByLabelText("Suggest a beat");
+    expect(button).toHaveAttribute("title", OFFLINE_COPY);
+    expect(button).not.toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(suggestPattern).toHaveBeenCalled());
+  });
+
+  it("keeps the normal title when navigator.onLine is unavailable", () => {
+    unlockAi();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: undefined });
+    render(<SuggestButton />);
+
+    expect(screen.getByLabelText("Suggest a beat")).toHaveAttribute(
+      "title",
+      "Ask Gemini to fill the grid",
+    );
   });
 });

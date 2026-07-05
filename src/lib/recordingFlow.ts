@@ -29,6 +29,7 @@ export type RecordingCancelReason = "user" | "interrupted";
 export type AutoTagEvent =
   | { kind: "tagging" }
   | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
+  | { kind: "offline" }
   | { kind: "miss" }
   | { kind: "idle" };
 
@@ -364,6 +365,10 @@ async function runAutoTag(
 ): Promise<void> {
   onEvent?.({ kind: "tagging" });
   const result = await autoTag(audioBuffer);
+  if (result && "kind" in result) {
+    onEvent?.({ kind: "offline" });
+    return;
+  }
   if (!result) {
     onEvent?.({ kind: "miss" });
     return;

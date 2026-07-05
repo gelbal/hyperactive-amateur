@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { AI_UNLOCK_CLIPS, suggestPattern, SUBGENRES } from "../lib/aiSuggest";
+import { aiErrorMessage, aiOfflineHint } from "../lib/aiOffline";
 import type { Subgenre } from "../types";
 
 const TOAST_MS = 5000;
@@ -86,7 +87,7 @@ export function SuggestButton() {
       }
       setUndoSnapshot(before);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(aiErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -121,9 +122,10 @@ export function SuggestButton() {
         aria-label="Suggest a beat"
         disabled={disabled}
         title={
-          clipCount < AI_UNLOCK_CLIPS
+          aiOfflineHint() ??
+          (clipCount < AI_UNLOCK_CLIPS
             ? `Record at least ${AI_UNLOCK_CLIPS} clips to enable this`
-            : "Ask Gemini to fill the grid"
+            : "Ask Gemini to fill the grid")
         }
         onClick={() => void handleClick()}
         className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

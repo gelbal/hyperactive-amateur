@@ -3,6 +3,7 @@
 
 import {
   GeminiHttpError,
+  GeminiOfflineError,
   MissingApiKeyError,
   TransientGeminiError,
   UpstreamTimeoutError,
@@ -137,6 +138,9 @@ export function createHttpGeminiClient(): {
           // wrapper translates into its own AbortError before this layer.
           if (err instanceof DOMException && err.name === "TimeoutError") {
             throw new UpstreamTimeoutError();
+          }
+          if (err instanceof TypeError) {
+            throw new GeminiOfflineError();
           }
           throw err;
         }

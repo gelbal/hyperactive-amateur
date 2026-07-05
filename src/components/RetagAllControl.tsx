@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Wand2, X } from "lucide-react";
 import { retagAllClips, type RetagResult } from "../lib/retagAll";
+import { GeminiOfflineError } from "../lib/aiErrors";
+import { AI_OFFLINE_COPY, aiOfflineHint } from "../lib/aiOffline";
 
 interface Props {
   clipsCount: number;
@@ -13,6 +15,7 @@ interface Props {
 type Result =
   | { kind: "done"; tagged: number }
   | { kind: "cancelled" }
+  | { kind: "offline" }
   | { kind: "error" }
   | null;
 
@@ -45,10 +48,11 @@ export function RetagAllControl({ clipsCount, onRetag, onBusyChange }: Props) {
         ? onRetag(controller.signal)
         : retagAllClips(controller.signal));
       if (r.reason === "cancelled") setResult({ kind: "cancelled" });
+      else if (r.reason === "offline") setResult({ kind: "offline" });
       else if (r.ok) setResult({ kind: "done", tagged: r.tagged });
       else setResult({ kind: "error" });
-    } catch {
-      setResult({ kind: "error" });
+    } catch (err) {
+      setResult(err instanceof GeminiOfflineError ? { kind: "offline" } : { kind: "error" });
     } finally {
       controllerRef.current = null;
       setBusy(false);
@@ -70,6 +74,7 @@ export function RetagAllControl({ clipsCount, onRetag, onBusyChange }: Props) {
           onClick={handleClick}
           disabled={disabled}
           aria-label="Re-tag all clips holistically"
+          title={aiOfflineHint() ?? undefined}
           className={
             "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
             (disabled
@@ -107,6 +112,11 @@ export function RetagAllControl({ clipsCount, onRetag, onBusyChange }: Props) {
       {result?.kind === "error" && (
         <p className="text-xs text-red-400 text-center" role="alert">
           Re-tag failed — see console.
+        </p>
+      )}
+      {result?.kind === "offline" && (
+        <p className="text-xs text-red-400 text-center" role="alert">
+          {AI_OFFLINE_COPY}
         </p>
       )}
     </div>

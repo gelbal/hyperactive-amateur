@@ -1,6 +1,7 @@
 // ABOUTME: aiAutoTag tests — schema validation, request shape, and fail-open behavior across error branches.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { autoTag, validateAutoTag, AUTO_TAG_MODEL, type GeminiClient } from "./aiAutoTag";
+import { GeminiOfflineError } from "./aiErrors";
 import { clearLogs, getLogs } from "./logger";
 
 function fakeBuffer(): AudioBuffer {
@@ -97,5 +98,16 @@ describe("autoTag", () => {
     ).toBeNull();
     const noKey = getLogs().find((l) => l.event === "autotag.miss");
     expect((noKey?.payload as { reason?: string })?.reason).toBe("no-key");
+  });
+
+  it("returns an offline sentinel when transport is unavailable", async () => {
+    expect(
+      await autoTag(
+        fakeBuffer(),
+        makeClient(async () => {
+          throw new GeminiOfflineError();
+        }),
+      ),
+    ).toEqual({ kind: "offline" });
   });
 });

@@ -16,6 +16,7 @@ vi.mock("../lib/recordingFlow", () => ({
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
+const OFFLINE_COPY = "AI needs an internet connection.";
 
 function makeClip(audioStatus: Clip["audioStatus"] = "ok"): Clip {
   return {
@@ -64,6 +65,23 @@ describe("TrackInfo re-record overlay", () => {
       expect(useAppStore.getState().project.tracks[0].clip?.audioStatus).toBe("ok");
     });
     expect(screen.queryByText("audio unavailable — re-record")).not.toBeInTheDocument();
+  });
+
+  it("shows pinned offline copy when auto-tagging cannot reach AI", async () => {
+    recordingFlowMocks.recordIntoTrack.mockImplementation(
+      async (
+        _trackId: number,
+        options?: { onAutoTag?: (event: { kind: "offline" }) => void },
+      ) => {
+        options?.onAutoTag?.({ kind: "offline" });
+        return true;
+      },
+    );
+
+    render(<TrackInfo trackId={0} />);
+    fireEvent.click(screen.getByLabelText("record clip for track 1"));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(OFFLINE_COPY));
   });
 
   it("shows the store recording error on the active track row until a new flow starts", () => {

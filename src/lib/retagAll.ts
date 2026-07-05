@@ -2,7 +2,12 @@
 // ABOUTME: Wraps autoTagBatch + autoTag, writes tags into the store, and respects manual showVideo toggles.
 import { useAppStore } from "../store/useAppStore";
 import { autoTagBatch, type BatchAutoTagItem } from "./aiAutoTagBatch";
-import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD, type AutoTagResult } from "./aiAutoTag";
+import {
+  autoTag,
+  AUTO_TAG_CONFIDENCE_THRESHOLD,
+  type AutoTagOutcome,
+  type AutoTagOfflineResult,
+} from "./aiAutoTag";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { logger, LOG_EVENTS } from "./logger";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -11,7 +16,7 @@ import type { Tag } from "../types";
 export interface RetagResult {
   ok: boolean;
   tagged: number;
-  reason?: "no-clips" | "all-failed" | "cancelled";
+  reason?: "no-clips" | "all-failed" | "cancelled" | "offline";
 }
 
 export interface RetagDeps {
@@ -23,7 +28,7 @@ export interface RetagDeps {
     audioBuffer: AudioBuffer,
     trackId: number,
     signal?: AbortSignal,
-  ) => Promise<AutoTagResult | null>;
+  ) => Promise<AutoTagOutcome>;
 }
 
 const defaultDeps: RetagDeps = {
@@ -94,6 +99,10 @@ function completion(mode: "batch" | "per-clip", tagged: number, total: number): 
   return { ok: true, tagged };
 }
 
+function isOfflineAutoTagResult(result: AutoTagOutcome): result is AutoTagOfflineResult {
+  return result !== null && "kind" in result && result.kind === "offline";
+}
+
 export async function retagAllClipsWith(
   deps: RetagDeps,
   signal?: AbortSignal,
@@ -122,8 +131,22 @@ export async function retagAllClipsWith(
   );
   if (signal?.aborted) return cancelled(tracks.length);
   const accepted: Classification[] = [];
+  let sawOffline = false;
   for (const { trackId, result } of perClipResults) {
+    if (isOfflineAutoTagResult(result)) {
+      sawOffline = true;
+      continue;
+    }
     if (result) accepted.push({ trackId, ...result });
+  }
+  if (sawOffline && accepted.length === 0) {
+    logger.warn(LOG_EVENTS.RETAG_COMPLETE, {
+      mode: "per-clip",
+      tagged: 0,
+      total: tracks.length,
+      reason: "offline",
+    });
+    return { ok: false, tagged: 0, reason: "offline" };
   }
   return completion("per-clip", applyAcceptedTags(accepted), tracks.length);
 }

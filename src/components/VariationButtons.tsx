@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { AI_UNLOCK_CLIPS, varyPattern, type Variation } from "../lib/aiSuggest";
+import { aiErrorMessage, aiOfflineHint } from "../lib/aiOffline";
 
 const TOAST_MS = 5000;
 
@@ -83,7 +84,7 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
       }
       setUndoSnapshot({ variation, grid: before });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(aiErrorMessage(err));
     } finally {
       setPending(null);
     }
@@ -106,11 +107,12 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
             aria-label={label}
             disabled={baseDisabled}
             title={
-              clipCount < AI_UNLOCK_CLIPS
+              aiOfflineHint() ??
+              (clipCount < AI_UNLOCK_CLIPS
                 ? `Record at least ${AI_UNLOCK_CLIPS} clips first`
                 : !hasPattern
                   ? "Set a pattern first (Suggest a beat or toggle some steps)"
-                  : `${label} variation`
+                  : `${label} variation`)
             }
             onClick={() => void handleClick(variation)}
             className={

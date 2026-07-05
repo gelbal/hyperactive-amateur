@@ -1,11 +1,11 @@
 // ABOUTME: aiAutoTag — classify a single recorded clip via Gemini 3.1 Flash Lite (default thinking level — batch path uses HIGH).
-// ABOUTME: Returns null on any failure (network, schema, missing key, abort) so callers can fail open; observability via logger.
+// ABOUTME: Returns null on generic failures and an offline sentinel for transport loss; observability via logger.
 import { TAGS, type Tag } from "../types";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
 import { SchemaType } from "./aiSchemaConstants";
 import { createHttpGeminiClient } from "./aiHttpClient";
-import { MissingApiKeyError } from "./aiErrors";
+import { GeminiOfflineError, MissingApiKeyError } from "./aiErrors";
 import {
   blobToBase64,
   errMessage,
@@ -31,6 +31,12 @@ export interface AutoTagResult {
   confidence: number;
   reasoning?: string;
 }
+
+export interface AutoTagOfflineResult {
+  kind: "offline";
+}
+
+export type AutoTagOutcome = AutoTagResult | AutoTagOfflineResult | null;
 
 export interface GeminiClient {
   models: {
@@ -63,7 +69,7 @@ export async function autoTag(
   // promise-level cancellation glue, since fetch+signal doesn't reject the
   // already-returned promise once the response has begun streaming.
   signal?: AbortSignal,
-): Promise<AutoTagResult | null> {
+): Promise<AutoTagOutcome> {
   const audioMs = Math.round(audioBuffer.duration * 1000);
   try {
     if (signal?.aborted) return null;
@@ -142,6 +148,10 @@ export async function autoTag(
     if (err instanceof MissingApiKeyError) {
       logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "no-key", model: AUTO_TAG_MODEL });
       return null;
+    }
+    if (err instanceof GeminiOfflineError) {
+      logger.warn(LOG_EVENTS.AUTOTAG_MISS, { reason: "offline", model: AUTO_TAG_MODEL });
+      return { kind: "offline" };
     }
     logger.error(LOG_EVENTS.AUTOTAG_ERROR, { model: AUTO_TAG_MODEL, message: errMessage(err) });
     return null;
