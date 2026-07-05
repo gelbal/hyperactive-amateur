@@ -6,10 +6,14 @@ const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
 }));
+const toneMocks = vi.hoisted(() => ({
+  rawContext: { state: "suspended" as AudioContextState },
+}));
 
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => ({ stop: vi.fn() })),
+  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
 }));
 
 vi.mock("./audioLifecycle", () => ({
@@ -27,6 +31,7 @@ import {
   suspendMediaStream,
 } from "./streamLifecycle";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
+import { LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 
 class FakeTrack extends EventTarget {
@@ -66,6 +71,8 @@ describe("streamLifecycle", () => {
     __resetExportSessionForTesting();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
+    toneMocks.rawContext.state = "suspended";
+    vi.mocked(Tone.start).mockClear();
     useAppStore.getState().actions.reset();
   });
 
@@ -164,7 +171,8 @@ describe("streamLifecycle", () => {
       detach();
     });
 
-    it("on visible: nudges Tone.start() and leaves a suspended store alone (user must tap to reconnect)", () => {
+    it("on visible: marks audio resume required without starting Tone", () => {
+      const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
         stream: null,
         status: "suspended",
@@ -178,7 +186,11 @@ describe("streamLifecycle", () => {
       });
       document.dispatchEvent(new Event("visibilitychange"));
 
-      expect(Tone.start).toHaveBeenCalled();
+      expect(Tone.start).not.toHaveBeenCalled();
+      expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+      expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_RESUME_REQUIRED, {
+        state: "suspended",
+      });
       // Status stays suspended — auto-resume would re-light the camera.
       expect(useAppStore.getState().media.status).toBe("suspended");
       detach();
