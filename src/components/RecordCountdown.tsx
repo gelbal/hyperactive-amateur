@@ -38,7 +38,7 @@ export function RecordCountdown() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      cancelCurrentRecording();
+      cancelCurrentRecording("user");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -47,7 +47,7 @@ export function RecordCountdown() {
   if (!active) return null;
 
   const onCancel = () => {
-    cancelCurrentRecording();
+    cancelCurrentRecording("user");
   };
 
   return (

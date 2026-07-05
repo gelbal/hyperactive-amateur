@@ -86,9 +86,11 @@ describe("RecordCountdown", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
       expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledTimes(1);
+      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenNthCalledWith(1, "user");
 
       fireEvent.keyDown(window, { key: "Escape" });
       expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledTimes(2);
+      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenNthCalledWith(2, "user");
     },
   );
 

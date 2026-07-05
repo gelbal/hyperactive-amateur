@@ -21,6 +21,7 @@ export const COUNTDOWN_MS = 3000;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
 const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
+export type RecordingCancelReason = "user" | "interrupted";
 
 export type AutoTagEvent =
   | { kind: "tagging" }
@@ -46,8 +47,8 @@ export interface RecordIntoTrackOptions {
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
 
-export function cancelCurrentRecording(): void {
-  currentController?.abort();
+export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
+  currentController?.abort(reason);
 }
 
 export function isRecordingInFlight(): boolean {
@@ -84,6 +85,14 @@ function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
 
 export function allTracksUsable(stream: MediaStream): boolean {
   return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
+}
+
+function getAbortReason(signal: AbortSignal): RecordingCancelReason {
+  return signal.reason === "interrupted" ? "interrupted" : "user";
+}
+
+function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
+  return isAbortError(err) || (signal.aborted && err === signal.reason);
 }
 
 // Run the full record sequence for one track. Acquires a fresh MediaStream
@@ -204,8 +213,10 @@ async function runFlow(
     void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
-    if (isAbortError(e)) {
-      // User pressed Esc — quietly bail without saving.
+    if (isFlowAbort(e, signal)) {
+      if (getAbortReason(signal) === "interrupted") {
+        actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      }
       return false;
     }
     options.onError?.(e instanceof Error ? e.message : String(e));
