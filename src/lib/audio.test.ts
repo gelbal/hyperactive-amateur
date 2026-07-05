@@ -74,7 +74,10 @@ vi.mock("tone", () => ({
 import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import * as Tone from "tone";
-import { canStartAudibleAction } from "./audibleActionGate";
+import {
+  __resetPendingAudibleClaimForTesting,
+  canStartAudibleAction,
+} from "./audibleActionGate";
 
 function makeClip() {
   return {
@@ -117,6 +120,7 @@ describe("audio: per-step trigger logic", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    __resetPendingAudibleClaimForTesting();
   });
 
   it("clipped track: fires player + videoEngine; showVideo=false skips video; muted skips both", () => {

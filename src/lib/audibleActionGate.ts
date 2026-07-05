@@ -26,3 +26,7 @@ export function claimPendingAudible(): (() => void) | null {
     pendingAudibleClaim = false;
   };
 }
+
+export function __resetPendingAudibleClaimForTesting(): void {
+  pendingAudibleClaim = false;
+}

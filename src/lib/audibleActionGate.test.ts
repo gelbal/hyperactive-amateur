@@ -1,6 +1,10 @@
 // ABOUTME: audibleActionGate tests — one predicate shared by playback, pads, keys, recording, and export.
-import { beforeEach, describe, expect, it } from "vitest";
-import { canStartAudibleAction, claimPendingAudible } from "./audibleActionGate";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  __resetPendingAudibleClaimForTesting,
+  canStartAudibleAction,
+  claimPendingAudible,
+} from "./audibleActionGate";
 import type { AppState, PlaybackState, RecordingSlice } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
@@ -31,6 +35,10 @@ describe("canStartAudibleAction", () => {
     useAppStore.getState().actions.reset();
   });
 
+  afterEach(() => {
+    __resetPendingAudibleClaimForTesting();
+  });
+
   it("allows idle starts and blocks exports or active recording states", () => {
     expect(canStartAudibleAction(state())).toBe(true);
     expect(canStartAudibleAction(state({ isPlaying: true }))).toBe(false);
@@ -49,6 +57,15 @@ describe("canStartAudibleAction", () => {
 
     release?.();
     release?.();
+
+    expect(canStartAudibleAction(state())).toBe(true);
+  });
+
+  it("test reset seam clears a leaked pending claim", () => {
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(canStartAudibleAction(state())).toBe(false);
+
+    __resetPendingAudibleClaimForTesting();
 
     expect(canStartAudibleAction(state())).toBe(true);
   });

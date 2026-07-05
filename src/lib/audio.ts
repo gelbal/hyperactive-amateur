@@ -164,17 +164,6 @@ function syncPlayers(tracks: Track[]): void {
   }
 }
 
-export async function startPlayback(): Promise<void> {
-  const release = claimPendingAudible();
-  if (!release) return;
-
-  try {
-    await startPlaybackAfterAudioRunning();
-  } finally {
-    release();
-  }
-}
-
 function canStartAfterPendingAudible(): boolean {
   const { playback, recording } = useAppStore.getState();
   return (
