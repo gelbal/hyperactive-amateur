@@ -1,10 +1,11 @@
 // ABOUTME: recordingFlow tests — shared recording gate and early state claims.
 // ABOUTME: Keeps async capture mocked so tests can target orchestration races.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({
   context: {
     state: "running" as AudioContextState,
+    currentTime: 12,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   },
@@ -72,9 +73,12 @@ vi.mock("./audioBufferSlice", () => ({
   sliceAudioBuffer: vi.fn((buffer) => buffer),
 }));
 
-import { cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
+import { COUNTDOWN_MS, cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+
+const INTERRUPTION_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -84,8 +88,44 @@ function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-function makeStream(): MediaStream {
-  return { getTracks: () => [] } as unknown as MediaStream;
+async function flushMicrotasks(times = 3): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+function makeTrack(
+  kind: "audio" | "video",
+  overrides: Partial<Pick<MediaStreamTrack, "muted" | "readyState">> = {},
+): MediaStreamTrack {
+  return {
+    kind,
+    muted: false,
+    readyState: "live",
+    ...overrides,
+  } as MediaStreamTrack;
+}
+
+function makeStream(tracks: MediaStreamTrack[] = [makeTrack("audio"), makeTrack("video")]): MediaStream {
+  return {
+    getTracks: () => tracks,
+    getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+  } as unknown as MediaStream;
+}
+
+function makeRecordResult() {
+  return {
+    blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    durationMs: 1000,
+  };
+}
+
+async function abortPendingFlow(promise: Promise<boolean>): Promise<void> {
+  cancelCurrentRecording();
+  await vi.runOnlyPendingTimersAsync();
+  await promise.catch(() => false);
 }
 
 describe("recordingFlow", () => {
@@ -94,6 +134,7 @@ describe("recordingFlow", () => {
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     audioMocks.context.state = "running";
+    audioMocks.context.currentTime = 12;
     toneMocks.start.mockReset();
     toneMocks.start.mockResolvedValue(undefined);
     mediaMocks.acquireRecordingStream.mockReset();
@@ -101,6 +142,11 @@ describe("recordingFlow", () => {
     mediaMocks.releaseRecordingStream.mockReset();
     mediaMocks.requestMedia.mockReset();
     recorderMocks.recordClip.mockReset();
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("refuses to start recording while export is active", async () => {
@@ -138,19 +184,21 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().recording.state).toBe("idle");
   });
 
-  it("claims countdown state before awaiting audio or media startup", async () => {
+  it("claims preparing state before awaiting audio or media startup", async () => {
     const audioStarted = makeDeferred();
     toneMocks.start.mockReturnValue(audioStarted.promise);
 
     const promise = recordIntoTrack(2);
 
     expect(useAppStore.getState().recording).toEqual({
-      state: "countdown",
+      state: "preparing",
       activeTrackId: 2,
       countdownEndsAt: null,
       error: null,
     });
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
 
     cancelCurrentRecording();
     audioStarted.resolve();
@@ -159,5 +207,88 @@ describe("recordingFlow", () => {
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).not.toHaveBeenCalled();
     expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
+  it("starts countdown after audio and live tracks using the audio-clock deadline", async () => {
+    vi.useFakeTimers();
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(
+      audioMocks.context.currentTime + COUNTDOWN_MS / 1000,
+    );
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+    await abortPendingFlow(promise);
+  });
+
+  it.each([
+    ["muted audio track", makeStream([makeTrack("audio", { muted: true }), makeTrack("video")])],
+    ["no audio track", makeStream([makeTrack("video")])],
+    ["no video track", makeStream([makeTrack("audio")])],
+  ])("fails before countdown when the stream has %s", async (_label, stream) => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockResolvedValue(stream);
+
+    const promise = recordIntoTrack(4, { onError });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).toHaveBeenCalledWith(INTERRUPTION_COPY);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("flips to recording before recordClip runs and clears countdown deadline on idle", async () => {
+    vi.useFakeTimers();
+    const setRecordingState = vi.spyOn(useAppStore.getState().actions, "setRecordingState");
+
+    recorderMocks.recordClip.mockImplementation(() => {
+      expect(useAppStore.getState().recording.state).toBe("recording");
+      return Promise.resolve(makeRecordResult());
+    });
+
+    const promise = recordIntoTrack(5);
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+
+    await expect(promise).resolves.toBe(true);
+    const recordingCallOrder = setRecordingState.mock.calls.findIndex(
+      ([state]) => state === "recording",
+    );
+    expect(recordingCallOrder).toBeGreaterThanOrEqual(0);
+    expect(setRecordingState.mock.invocationCallOrder[recordingCallOrder]).toBeLessThan(
+      recorderMocks.recordClip.mock.invocationCallOrder[0],
+    );
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBeNull();
+
+    setRecordingState.mockRestore();
+  });
+
+  it("starts recording immediately when the countdown deadline has already passed", async () => {
+    vi.useFakeTimers();
+    const originalSetCountdownEndsAt = useAppStore.getState().actions.setCountdownEndsAt;
+    const setCountdownEndsAt = vi
+      .spyOn(useAppStore.getState().actions, "setCountdownEndsAt")
+      .mockImplementation((deadline) => {
+        originalSetCountdownEndsAt(deadline);
+        if (deadline !== null) audioMocks.context.currentTime = deadline + 0.5;
+      });
+
+    const promise = recordIntoTrack(6);
+    try {
+      await flushMicrotasks();
+
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+    } finally {
+      setCountdownEndsAt.mockRestore();
+      await promise.catch(() => false);
+    }
   });
 });

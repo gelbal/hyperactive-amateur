@@ -19,6 +19,8 @@ import type { Clip, Tag } from "../types";
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+const RECORDING_INTERRUPTED_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
 
 export type AutoTagEvent =
   | { kind: "tagging" }
@@ -58,10 +60,15 @@ function waitMs(ms: number, signal: AbortSignal): Promise<void> {
       reject(new DOMException("Aborted before wait started", "AbortError"));
       return;
     }
+    const delayMs = Math.max(0, ms);
+    if (delayMs === 0) {
+      resolve();
+      return;
+    }
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
-    }, ms);
+    }, delayMs);
     const onAbort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
@@ -69,6 +76,14 @@ function waitMs(ms: number, signal: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", onAbort);
   });
+}
+
+function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
+  return tracks.some((track) => track.readyState === "live" && !track.muted);
+}
+
+export function allTracksUsable(stream: MediaStream): boolean {
+  return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
 }
 
 // Run the full record sequence for one track. Acquires a fresh MediaStream
@@ -86,7 +101,7 @@ export async function recordIntoTrack(
   if (currentFlow) return false;
   const actions = useAppStore.getState().actions;
   if (!canStartAudibleAction(useAppStore.getState())) return false;
-  actions.setRecordingState("countdown", trackId);
+  actions.setRecordingState("preparing", trackId);
 
   const controller = new AbortController();
   currentController = controller;
@@ -138,10 +153,24 @@ async function runFlow(
       }
     }
     if (!stream) return false;
+    if (signal.aborted) {
+      throw new DOMException("Aborted before countdown", "AbortError");
+    }
 
-    await waitMs(COUNTDOWN_MS, signal);
+    if (!allTracksUsable(stream)) {
+      actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      options.onError?.(RECORDING_INTERRUPTED_COPY);
+      return false;
+    }
+
+    const audioContext = getAudioContext();
+    const countdownEndsAt = audioContext.currentTime + COUNTDOWN_MS / 1000;
+    actions.setCountdownEndsAt(countdownEndsAt);
+    actions.setRecordingState("countdown", trackId);
+
+    await waitMs((countdownEndsAt - audioContext.currentTime) * 1000, signal);
     actions.setRecordingState("recording", trackId);
-    const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext(), { signal });
+    const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
     const url = URL.createObjectURL(result.blob);
     const trim = autoTrim(result.audioBuffer);
     // Poster generation is best-effort — never let a poster failure block
@@ -183,6 +212,7 @@ async function runFlow(
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }
 }
