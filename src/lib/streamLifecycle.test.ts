@@ -68,8 +68,9 @@ class FakeTrack extends EventTarget {
   }
 }
 
-function makeStream(): { stream: MediaStream; tracks: FakeTrack[] } {
-  const tracks = [new FakeTrack("video"), new FakeTrack("audio")];
+function makeStream(
+  tracks: FakeTrack[] = [new FakeTrack("video"), new FakeTrack("audio")],
+): { stream: MediaStream; tracks: FakeTrack[] } {
   const stream = {
     getTracks: () => tracks,
     getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
@@ -410,6 +411,26 @@ describe("streamLifecycle", () => {
       setGrantedWithStream(stream);
 
       onMediaRecorderError(stream, new Error("muted stream"));
+
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+    });
+
+    it("transitions granted → suspended when the stream is missing a video track", () => {
+      const { stream } = makeStream([new FakeTrack("audio")]);
+      setGrantedWithStream(stream);
+
+      onMediaRecorderError(stream, new Error("missing video"));
+
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+    });
+
+    it("transitions granted → suspended when the stream is missing an audio track", () => {
+      const { stream } = makeStream([new FakeTrack("video")]);
+      setGrantedWithStream(stream);
+
+      onMediaRecorderError(stream, new Error("missing audio"));
 
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(useAppStore.getState().media.stream).toBeNull();

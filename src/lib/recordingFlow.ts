@@ -14,6 +14,7 @@ import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { allTracksUsable } from "./streamLifecycle";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -129,14 +130,6 @@ function acquireRecordingStreamUntilAbort(signal: AbortSignal): Promise<MediaStr
       },
     );
   });
-}
-
-function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
-  return tracks.some((track) => track.readyState === "live" && !track.muted);
-}
-
-export function allTracksUsable(stream: MediaStream): boolean {
-  return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
 }
 
 function getAbortReason(signal: AbortSignal): RecordingCancelReason {

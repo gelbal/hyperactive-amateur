@@ -47,7 +47,7 @@ function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
   return tracks.some((track) => track.readyState === "live" && !track.muted);
 }
 
-function requiredTracksUsable(stream: MediaStream): boolean {
+export function allTracksUsable(stream: MediaStream): boolean {
   return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
 }
 
@@ -79,7 +79,7 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
   const onEnded = () => transitionToSuspended(stream);
   const onMute = () => onTrackMuted(stream);
   const onUnmute = () => {
-    if (requiredTracksUsable(stream)) clearPendingMuteSuspension(stream);
+    if (allTracksUsable(stream)) clearPendingMuteSuspension(stream);
   };
   for (const track of tracks) {
     track.addEventListener("ended", onEnded);
@@ -164,9 +164,6 @@ export function installVisibilityListener(): () => void {
 // hit a genuine encoding error and we leave the store alone — the caller's
 // onError handler surfaces the message.
 export function onMediaRecorderError(stream: MediaStream, _err: Error): void {
-  const tracks = stream.getTracks();
-  const allTracksUsable =
-    tracks.length > 0 && tracks.every((t) => t.readyState === "live" && !t.muted);
-  if (allTracksUsable) return;
+  if (allTracksUsable(stream)) return;
   transitionToSuspended(stream);
 }
