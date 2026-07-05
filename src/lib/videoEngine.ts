@@ -52,7 +52,7 @@ let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
 let boundaryEventId: number | null = null;
-let prepareEventId: number | null = null;
+let prepareEventId: unknown | null = null;
 let prepareEventBoundaryTime: number | null = null;
 let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = null;
 let cutSubdivision: CutSubdivision = "8n";
@@ -431,11 +431,6 @@ function disposeBoundaryEvent(): void {
 
 function disposePrepareEvent(): void {
   if (prepareEventId !== null) {
-    try {
-      Tone.getTransport().clear(prepareEventId);
-    } catch {
-      // Transport may have been torn down; safe to ignore.
-    }
     prepareEventId = null;
     prepareEventBoundaryTime = null;
   }
@@ -452,7 +447,7 @@ function schedulePrepareForBoundary(boundaryTime: number): void {
 
   disposePrepareEvent();
   prepareEventBoundaryTime = boundaryTime;
-  prepareEventId = Tone.getTransport().scheduleOnce(() => {
+  prepareEventId = Tone.getDraw().schedule(() => {
     prepareEventId = null;
     prepareEventBoundaryTime = null;
     prepareUpcoming(boundaryTime);

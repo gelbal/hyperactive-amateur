@@ -354,27 +354,28 @@ describe("videoEngine integration", () => {
     expect(loserPlayback.pause).toHaveBeenCalled();
   });
 
-  it("schedules next-boundary preparation and keeps same-boundary preparation idempotent", () => {
+  it("schedules next-boundary preparation on the audio-clock Draw timeline", () => {
     useAppStore.getState().actions.setBpm(120);
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
     __markMetadataReadyForTesting(0);
     useAppStore.getState().actions.setIsPlaying(true);
-    trigger(0, 1.25);
+    trigger(0, 30.25);
     toneHarness.draw.reset();
     toneHarness.transport.scheduleOnce.mockClear();
 
     const video = document.querySelector("video") as HTMLVideoElement;
     const playback = spyVideoPlayback(video);
 
-    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.transport.fireRepeat(0, 30.0);
 
-    expect(toneHarness.transport.scheduleOnce).toHaveBeenCalledTimes(1);
-    const [, prepareAt] = toneHarness.transport.scheduleOnce.mock.calls[0];
-    expect(prepareAt).toBeCloseTo(1.17, 6);
+    expect(toneHarness.transport.scheduleOnce).not.toHaveBeenCalled();
+    expect(toneHarness.draw.pendingTimes()).toEqual([30, 30.17]);
+    toneHarness.draw.advanceTo(30.16);
+    expect(playback.seek).not.toHaveBeenCalled();
 
-    toneHarness.transport.fireOnce(0, prepareAt as number);
-    prepareUpcoming(1.25);
+    toneHarness.draw.advanceTo(30.17);
+    prepareUpcoming(30.25);
 
     expect(playback.seek).toHaveBeenCalledTimes(1);
   });
