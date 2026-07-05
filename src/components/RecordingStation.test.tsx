@@ -11,6 +11,9 @@ import { RecordingStation } from "./RecordingStation";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
+const INTERRUPTION_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
+
 function makeClip(): Clip {
   return {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
@@ -84,5 +87,16 @@ describe("RecordingStation", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("Recording for Track 1")).toBeInTheDocument();
+  });
+
+  it("shows the store recording error while the station is open", async () => {
+    useAppStore.getState().actions.setRecordingError(INTERRUPTION_COPY);
+
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
   });
 });
