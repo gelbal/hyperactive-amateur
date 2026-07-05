@@ -447,6 +447,30 @@ describe("videoEngine integration", () => {
     expect(ctx.drawImage).not.toHaveBeenCalled();
   });
 
+  it("clears an undrawable replacement once the last drawn frame expires", () => {
+    setClipForTrack(0, makeTrimmedClip());
+    setClipForTrack(1, makeClip(1));
+    const [firstVideo, secondVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    setVideoFrameState(firstVideo, { readyState: 2 });
+    setVideoFrameState(secondVideo, { readyState: 1 });
+    const pauseFirst = vi.spyOn(firstVideo, "pause");
+
+    trigger(0, 1.0);
+    const beforeEnd = makeCanvasContext();
+    drawCurrentFrame(beforeEnd, 1.1);
+    expect(beforeEnd.drawImage).toHaveBeenCalledTimes(1);
+
+    trigger(1, 1.1);
+    const afterEnd = makeCanvasContext();
+    drawCurrentFrame(afterEnd, 1.25);
+
+    expect(afterEnd.drawImage).not.toHaveBeenCalled();
+    expect(afterEnd.fillRect).toHaveBeenCalled();
+    expect(pauseFirst).toHaveBeenCalled();
+  });
+
   it("logs drawImage failures once and draws on a later ready frame", () => {
     setClipForTrack(0, makeClip(0));
     const video = document.querySelector("video") as HTMLVideoElement;

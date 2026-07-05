@@ -48,6 +48,7 @@ const metadataReady = new Map<number, boolean>();
 const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
+let lastDrawn: TriggerEvent | null = null;
 let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
@@ -368,6 +369,27 @@ function subdivisionToSeconds(value: CutSubdivision): number {
   }
 }
 
+function clearCanvas(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, width, height);
+}
+
+function clearExpiredLastDrawnFrame(
+  ctx: CanvasRenderingContext2D,
+  audioTime: number,
+  width: number,
+  height: number,
+): boolean {
+  if (!lastDrawn || lastDrawn.trimDurationMs === undefined) return false;
+  const expiresAt = lastDrawn.startTime + lastDrawn.trimDurationMs / 1000;
+  if (audioTime < expiresAt) return false;
+
+  clearCanvas(ctx, width, height);
+  pauseTrack(lastDrawn.trackId);
+  lastDrawn = null;
+  return true;
+}
+
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
@@ -377,35 +399,45 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
 
   if (displayed && trim) {
     const elapsedMs = (audioTime - displayed.startTime) * 1000;
-    if (elapsedMs < 0) return;
+    if (elapsedMs < 0) {
+      clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+      return;
+    }
   }
 
   if (!displayed || !video || !trim) {
-    ctx.fillStyle = "#0a0a0a";
-    ctx.fillRect(0, 0, w, h);
+    clearCanvas(ctx, w, h);
+    lastDrawn = null;
     return;
   }
 
   const trimDurationMs = trim.endMs - trim.startMs;
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
-    ctx.fillStyle = "#0a0a0a";
-    ctx.fillRect(0, 0, w, h);
+    clearCanvas(ctx, w, h);
     video.pause();
+    lastDrawn = null;
     return;
   }
-  if (video.readyState < HAVE_CURRENT_DATA || video.seeking) return;
+  if (video.readyState < HAVE_CURRENT_DATA || video.seeking) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+    return;
+  }
   // Cameras typically negotiate 16:9 (e.g. 1280x720) even when we ask for
   // 1:1, so the raw video is wider than tall. Center-crop a square source
   // rect so we draw without horizontal squish on the 1:1 canvas.
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  if (vw === 0 || vh === 0) return;
+  if (vw === 0 || vh === 0) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+    return;
+  }
   const side = Math.min(vw, vh);
   const sx = (vw - side) / 2;
   const sy = (vh - side) / 2;
   try {
     ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+    lastDrawn = displayed;
   } catch (err) {
     if (!drawErrorLogged) {
       drawErrorLogged = true;
@@ -483,6 +515,7 @@ export function resetPlaybackState(): void {
   disposePrepareEvent();
   pendingTriggers = [];
   currentlyDisplayed = null;
+  lastDrawn = null;
   preparedBoundary = null;
 }
 
@@ -558,6 +591,7 @@ export function __resetVideoEngineForTesting(): void {
   pendingFirstTrigger.clear();
   pendingTriggers = [];
   currentlyDisplayed = null;
+  lastDrawn = null;
   preparedBoundary = null;
   drawErrorLogged = false;
   playbackEpoch = 0;
