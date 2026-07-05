@@ -1,10 +1,23 @@
 // ABOUTME: useKeyboardTriggers tests — code → trackId mapping + suppression in inputs.
-import { render } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const triggerTrackNow = vi.fn();
+const audioLifecycleMocks = vi.hoisted(() => ({
+  AudioUnavailableError: class TestAudioUnavailableError extends Error {
+    constructor(message = "Audio unavailable") {
+      super(message);
+      this.name = "AudioUnavailableError";
+    }
+  },
+}));
+
 vi.mock("./audio", () => ({
   triggerTrackNow: (...args: unknown[]) => triggerTrackNow(...args),
+}));
+
+vi.mock("./audioLifecycle", () => ({
+  AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
 import { useKeyboardTriggers } from "./useKeyboardTriggers";
@@ -17,8 +30,13 @@ function Harness({ withInput = false }: { withInput?: boolean }) {
 
 describe("useKeyboardTriggers", () => {
   beforeEach(() => {
-    triggerTrackNow.mockClear();
+    triggerTrackNow.mockReset();
+    triggerTrackNow.mockResolvedValue(undefined);
     useAppStore.getState().actions.reset();
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it("fires on Digit3 → track 2, ignores held keys (repeat), ignores key-press inside an input", () => {
@@ -41,5 +59,15 @@ describe("useKeyboardTriggers", () => {
     useAppStore.getState().actions.setRecordingState("recording", 0);
     document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
     expect(triggerTrackNow).not.toHaveBeenCalled();
+  });
+
+  it("swallows audio-unavailable digit-trigger rejections", async () => {
+    triggerTrackNow.mockRejectedValueOnce(new audioLifecycleMocks.AudioUnavailableError());
+    render(<Harness />);
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
+
+    expect(triggerTrackNow).toHaveBeenCalledWith(2);
+    await Promise.resolve();
   });
 });

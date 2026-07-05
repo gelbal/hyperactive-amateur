@@ -5,6 +5,7 @@ import { Play, Square, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { togglePlayback } from "../lib/audio";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { runAudibleAction } from "../lib/audibleActionRunner";
 import {
   markSilentSwitchHintDismissed,
   shouldShowSilentSwitchHint,
@@ -21,7 +22,7 @@ export function PlayButton() {
     audioState === "running" && !dismissedHint && shouldShowSilentSwitchHint();
 
   const handleClick = () => {
-    void togglePlayback();
+    runAudibleAction(togglePlayback());
   };
 
   const dismissSilentSwitchHint = () => {
