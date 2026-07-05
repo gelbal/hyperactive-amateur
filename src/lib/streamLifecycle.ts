@@ -2,6 +2,7 @@
 // ABOUTME: Three event sources route through here: track.onended, visibilitychange, MediaRecorder.onerror.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
+import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
 import { stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 
@@ -54,6 +55,7 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
 export function registerStreamLifecycle(stream: MediaStream): void {
   detachLifecycle(stream);
   lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
+  noteMicHeld();
 }
 
 export function releaseMediaStream(stream: MediaStream): void {
@@ -61,6 +63,7 @@ export function releaseMediaStream(stream: MediaStream): void {
   stopTracks(stream);
   const state = useAppStore.getState();
   if (state.media.stream === stream) {
+    noteMicReleased();
     state.actions.setMedia({ stream: null, status: "granted", error: null });
   }
 }
@@ -70,6 +73,7 @@ export function suspendMediaStream(stream: MediaStream): void {
   stopTracks(stream);
   const state = useAppStore.getState();
   if (state.media.status === "granted" && state.media.stream === stream) {
+    noteMicReleased();
     state.actions.setMedia({ stream: null, status: "suspended", error: null });
   }
 }

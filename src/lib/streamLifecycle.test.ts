@@ -2,9 +2,19 @@
 // ABOUTME: Uses minimal EventTarget-based stand-ins for MediaStream / MediaStreamTrack since jsdom lacks them.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+const audioLifecycleMocks = vi.hoisted(() => ({
+  noteMicHeld: vi.fn(),
+  noteMicReleased: vi.fn(),
+}));
+
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => ({ stop: vi.fn() })),
+}));
+
+vi.mock("./audioLifecycle", () => ({
+  noteMicHeld: audioLifecycleMocks.noteMicHeld,
+  noteMicReleased: audioLifecycleMocks.noteMicReleased,
 }));
 
 import * as Tone from "tone";
@@ -12,6 +22,9 @@ import {
   attachStreamEndedListeners,
   installVisibilityListener,
   onMediaRecorderError,
+  registerStreamLifecycle,
+  releaseMediaStream,
+  suspendMediaStream,
 } from "./streamLifecycle";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
@@ -51,7 +64,38 @@ function setGrantedWithStream(stream: MediaStream) {
 describe("streamLifecycle", () => {
   beforeEach(() => {
     __resetExportSessionForTesting();
+    audioLifecycleMocks.noteMicHeld.mockClear();
+    audioLifecycleMocks.noteMicReleased.mockClear();
     useAppStore.getState().actions.reset();
+  });
+
+  describe("audio session mic ownership", () => {
+    it("marks the mic held when a stream lifecycle is registered", () => {
+      const { stream } = makeStream();
+
+      registerStreamLifecycle(stream);
+
+      expect(audioLifecycleMocks.noteMicHeld).toHaveBeenCalledTimes(1);
+      expect(audioLifecycleMocks.noteMicReleased).not.toHaveBeenCalled();
+    });
+
+    it("marks the mic released on intentional stream release", () => {
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+
+      releaseMediaStream(stream);
+
+      expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks the mic released when a stream is suspended", () => {
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+
+      suspendMediaStream(stream);
+
+      expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("attachStreamEndedListeners (track.onended)", () => {
