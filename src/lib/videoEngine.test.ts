@@ -13,6 +13,7 @@ import {
   initVideoEngine,
   setClipForTrack,
   trigger,
+  prepareUpcoming,
   pickActiveEvent,
   pickWithDucking,
   quantizeToBoundary,
@@ -58,6 +59,24 @@ function makeCanvasContext(): CanvasRenderingContext2D {
     fillRect: vi.fn(),
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D;
+}
+
+function spyVideoPlayback(video: HTMLVideoElement) {
+  let currentTime = 0;
+  const seek = vi.fn<(value: number) => void>((value) => {
+    currentTime = value;
+  });
+  Object.defineProperty(video, "currentTime", {
+    configurable: true,
+    get: () => currentTime,
+    set: seek,
+  });
+
+  return {
+    seek,
+    play: vi.spyOn(video, "play"),
+    pause: vi.spyOn(video, "pause"),
+  };
 }
 
 function setVideoFrameState(
@@ -243,6 +262,106 @@ describe("videoEngine integration", () => {
 
     toneHarness.draw.advanceTo(1.0);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("pre-seeks and plays the prepared boundary winner without changing the display", () => {
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.seek).toHaveBeenCalledWith(0);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+  });
+
+  it("commits a prepared winner at the boundary without seeking it twice", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+
+    toneHarness.draw.advanceTo(1.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves no-candidate prepares alone and pauses a prepared loser", () => {
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    __markMetadataReadyForTesting(0);
+    __markMetadataReadyForTesting(1);
+    useAppStore.getState().actions.setTrackTag(0, "hat");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    useAppStore.getState().actions.setIsPlaying(true);
+
+    const [loserVideo, winnerVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    const loserPlayback = spyVideoPlayback(loserVideo);
+    const winnerPlayback = spyVideoPlayback(winnerVideo);
+
+    prepareUpcoming(1.0);
+    expect(loserPlayback.seek).not.toHaveBeenCalled();
+    expect(loserPlayback.play).not.toHaveBeenCalled();
+    expect(winnerPlayback.seek).not.toHaveBeenCalled();
+    expect(winnerPlayback.play).not.toHaveBeenCalled();
+
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+    prepareUpcoming(1.0);
+    expect(loserPlayback.play).toHaveBeenCalledTimes(1);
+
+    initVideoEngine();
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.draw.advanceTo(1.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+    expect(loserPlayback.pause).toHaveBeenCalled();
+  });
+
+  it("schedules next-boundary preparation and keeps same-boundary preparation idempotent", () => {
+    useAppStore.getState().actions.setBpm(120);
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.25);
+    toneHarness.draw.reset();
+    toneHarness.transport.scheduleOnce.mockClear();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+
+    expect(toneHarness.transport.scheduleOnce).toHaveBeenCalledTimes(1);
+    const [, prepareAt] = toneHarness.transport.scheduleOnce.mock.calls[0];
+    expect(prepareAt).toBeCloseTo(1.17, 6);
+
+    toneHarness.transport.fireOnce(0, prepareAt as number);
+    prepareUpcoming(1.25);
+
+    expect(playback.seek).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the previous frame while video has only metadata", () => {

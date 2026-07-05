@@ -52,6 +52,9 @@ let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
 let boundaryEventId: number | null = null;
+let prepareEventId: number | null = null;
+let prepareEventBoundaryTime: number | null = null;
+let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = null;
 let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
 let activeCanvas: HTMLCanvasElement | null = null;
@@ -107,21 +110,47 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   metadataReady.set(trackId, false);
 }
 
-function startPlayback(trackId: number, when: number): void {
+function isSameBoundary(left: number, right: number): boolean {
+  return Math.abs(left - right) < 0.000001;
+}
+
+function isSameEvent(left: TriggerEvent | null, right: TriggerEvent | null): boolean {
+  return (
+    !!left &&
+    !!right &&
+    left.trackId === right.trackId &&
+    isSameBoundary(left.startTime, right.startTime)
+  );
+}
+
+function seekToTrimStart(trackId: number): boolean {
   const video = videos.get(trackId);
   const trim = trims.get(trackId);
-  if (!video || !trim) return;
+  if (!video || !trim) return false;
 
-  const seek = () => {
-    try {
-      video.currentTime = trim.startMs / 1000;
-    } catch {
-      // currentTime can throw before metadata loads; later triggers retry.
-    }
-  };
-  const play = () => {
-    void video.play().catch(() => undefined);
-  };
+  try {
+    video.currentTime = trim.startMs / 1000;
+  } catch {
+    // currentTime can throw before metadata loads; later triggers retry.
+  }
+  return true;
+}
+
+function playTrack(trackId: number): void {
+  const video = videos.get(trackId);
+  if (!video) return;
+  void video.play().catch(() => undefined);
+}
+
+function pauseTrack(trackId: number): void {
+  videos.get(trackId)?.pause();
+}
+
+function startPlayback(trackId: number, when: number): void {
+  if (!videos.has(trackId) || !trims.has(trackId)) return;
+
+  const seek = () => seekToTrimStart(trackId);
+  const play = () => playTrack(trackId);
 
   const draw = Tone.getDraw();
   const now = Tone.now();
@@ -139,6 +168,39 @@ function startPlayback(trackId: number, when: number): void {
   // then play exactly on the audio beat.
   draw.schedule(seek, when - LOOKAHEAD_S);
   draw.schedule(play, when);
+}
+
+function resolveBoundaryWinner(boundaryTime: number): TriggerEvent | null {
+  const interval = subdivisionToSeconds(cutSubdivision);
+  const contexts = readTrackContexts();
+  const result = quantizeToBoundary(
+    pendingTriggers,
+    boundaryTime - interval,
+    boundaryTime,
+    contexts,
+  );
+  const holdMs = useAppStore.getState().project.sameTierHoldMs;
+  const winner = pickWithDucking(
+    result.consumed,
+    currentlyDisplayed,
+    boundaryTime,
+    holdMs,
+    contexts,
+  );
+  return isSameEvent(winner, currentlyDisplayed) ? null : winner;
+}
+
+export function prepareUpcoming(boundaryTime: number): void {
+  if (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)) {
+    return;
+  }
+
+  const winner = resolveBoundaryWinner(boundaryTime);
+  if (!winner) return;
+  if (!seekToTrimStart(winner.trackId)) return;
+
+  playTrack(winner.trackId);
+  preparedBoundary = { boundaryTime, event: winner };
 }
 
 // Schedule the underlying video element to seek+play at the requested audio
@@ -273,6 +335,15 @@ function onCutBoundary(boundaryTime: number): void {
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
   Tone.getDraw().schedule(() => {
+    if (
+      preparedBoundary &&
+      isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)
+    ) {
+      if (!isSameEvent(preparedBoundary.event, next)) {
+        pauseTrack(preparedBoundary.event.trackId);
+      }
+      preparedBoundary = null;
+    }
     currentlyDisplayed = next;
   }, boundaryTime);
 }
@@ -358,10 +429,43 @@ function disposeBoundaryEvent(): void {
   }
 }
 
+function disposePrepareEvent(): void {
+  if (prepareEventId !== null) {
+    try {
+      Tone.getTransport().clear(prepareEventId);
+    } catch {
+      // Transport may have been torn down; safe to ignore.
+    }
+    prepareEventId = null;
+    prepareEventBoundaryTime = null;
+  }
+}
+
+function schedulePrepareForBoundary(boundaryTime: number): void {
+  if (
+    (prepareEventBoundaryTime !== null &&
+      isSameBoundary(prepareEventBoundaryTime, boundaryTime)) ||
+    (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime))
+  ) {
+    return;
+  }
+
+  disposePrepareEvent();
+  prepareEventBoundaryTime = boundaryTime;
+  prepareEventId = Tone.getTransport().scheduleOnce(() => {
+    prepareEventId = null;
+    prepareEventBoundaryTime = null;
+    prepareUpcoming(boundaryTime);
+  }, boundaryTime - LOOKAHEAD_S);
+}
+
 function scheduleBoundaryEvent(): void {
   disposeBoundaryEvent();
+  disposePrepareEvent();
   boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
+    const interval = subdivisionToSeconds(cutSubdivision);
     onCutBoundary(time);
+    schedulePrepareForBoundary(time + interval);
   }, cutSubdivision);
 }
 
@@ -374,8 +478,10 @@ export function setVideoCutSubdivision(value: CutSubdivision): void {
 // Reset transient render state — used on stop/pause so we don't carry stale
 // triggers into the next playback session.
 export function resetPlaybackState(): void {
+  disposePrepareEvent();
   pendingTriggers = [];
   currentlyDisplayed = null;
+  preparedBoundary = null;
 }
 
 // Wires the engine to the store so hidden videos stay in sync with track clips.
@@ -442,6 +548,7 @@ export function __resetVideoEngineForTesting(): void {
     cutSubdivisionUnsubscribe = null;
   }
   disposeBoundaryEvent();
+  disposePrepareEvent();
   for (const video of videos.values()) video.remove();
   videos.clear();
   trims.clear();
@@ -449,6 +556,7 @@ export function __resetVideoEngineForTesting(): void {
   pendingFirstTrigger.clear();
   pendingTriggers = [];
   currentlyDisplayed = null;
+  preparedBoundary = null;
   drawErrorLogged = false;
   if (host) {
     host.remove();
