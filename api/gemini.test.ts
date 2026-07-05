@@ -1,13 +1,17 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
+import geminiRoute, {
   __resetGeminiProxyForTesting,
   __setGeminiRateLimitStoreForTesting,
   GEMINI_TOKEN_HEADER,
   handleGeminiRequest,
   handleGeminiTokenRequest,
   MAX_BODY_BYTES,
+  withCrashBoundary,
   type GeminiRateLimitStore,
 } from "./gemini";
+import geminiTokenRoute from "./gemini-token";
 
 const ALLOWED_ORIGIN = "https://hyperactive.example";
 const SAME_ORIGIN_FETCH_HEADERS = {
@@ -815,5 +819,56 @@ describe("handleGeminiRequest", () => {
     expect(body).toMatchObject({ error: "upstream-rejected" });
     expect(JSON.stringify(body)).not.toContain("test-api-key");
     expect(JSON.stringify(body)).not.toContain("provider says");
+  });
+});
+
+describe("route entry modules", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("exports the Vercel { fetch } wrapper from both entry modules", () => {
+    expect(typeof geminiRoute.fetch).toBe("function");
+    expect(typeof geminiTokenRoute.fetch).toBe("function");
+  });
+
+  it("reaches the method guard through both entry exports", async () => {
+    const tokenRes = await geminiTokenRoute.fetch(
+      new Request(`${ALLOWED_ORIGIN}/api/gemini-token`, { method: "GET" }),
+    );
+    expect(tokenRes.status).toBe(405);
+    expect(await responseJson(tokenRes)).toMatchObject({ error: "method-not-allowed" });
+
+    const geminiRes = await geminiRoute.fetch(
+      new Request(`${ALLOWED_ORIGIN}/api/gemini`, { method: "GET" }),
+    );
+    expect(geminiRes.status).toBe(405);
+    expect(await responseJson(geminiRes)).toMatchObject({ error: "method-not-allowed" });
+  });
+
+  it("converts unexpected handler crashes into stable JSON 503s", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const crashingRoute = withCrashBoundary(async () => {
+      throw new Error("secret stack detail");
+    }, "test-route");
+
+    const res = await crashingRoute(
+      new Request(`${ALLOWED_ORIGIN}/api/gemini`, { method: "POST" }),
+    );
+    expect(res.status).toBe(503);
+    const body = await responseJson(res);
+    expect(body).toMatchObject({ error: "proxy-internal-error" });
+    expect(JSON.stringify(body)).not.toContain("secret stack detail");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(errorSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps every api route registered in vercel.json", () => {
+    const config = JSON.parse(
+      readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"),
+    ) as { functions?: Record<string, unknown> };
+    expect(Object.keys(config.functions ?? {})).toEqual(
+      expect.arrayContaining(["api/gemini.ts", "api/gemini-token.ts"]),
+    );
   });
 });

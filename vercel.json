@@ -3,6 +3,9 @@
   "functions": {
     "api/gemini.ts": {
       "maxDuration": 60
+    },
+    "api/gemini-token.ts": {
+      "maxDuration": 60
     }
   }
 }
