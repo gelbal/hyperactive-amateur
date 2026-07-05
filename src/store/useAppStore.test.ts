@@ -13,6 +13,7 @@ vi.mock("../lib/audioLifecycle", () => ({
 }));
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
+import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
 import { useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
@@ -20,6 +21,8 @@ const get = () => useAppStore.getState();
 describe("useAppStore", () => {
   beforeEach(() => {
     get().actions.setIsExporting(false);
+    window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
+    window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
     get().actions.reset();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
@@ -54,6 +57,22 @@ describe("useAppStore", () => {
     get().actions.setRecordingState("preparing", 3);
     expect(get().recording.countdownEndsAt).toBeNull();
     expect(get().recording.error).toBeNull();
+  });
+
+  it("toggleVideoFacingMode clears and unpersists the pinned video device", () => {
+    get().actions.setPreferredDevices({ video: "rear-camera-id" });
+    expect(get().media.videoDeviceId).toBe("rear-camera-id");
+    expect(window.localStorage.getItem(VIDEO_DEVICE_STORAGE_KEY)).toBe("rear-camera-id");
+
+    get().actions.toggleVideoFacingMode();
+
+    expect(get().media.videoFacingMode).toBe("environment");
+    expect(get().media.videoDeviceId).toBeNull();
+    expect(window.localStorage.getItem(VIDEO_DEVICE_STORAGE_KEY)).toBeNull();
+
+    get().actions.setPreferredDevices({ video: "front-camera-id" });
+    expect(get().media.videoDeviceId).toBe("front-camera-id");
+    expect(window.localStorage.getItem(VIDEO_DEVICE_STORAGE_KEY)).toBe("front-camera-id");
   });
 
   it("setBpm and setSameTierHoldMs clamp to their valid ranges", () => {

@@ -435,12 +435,16 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({ media: { ...state.media, videoFacingMode: mode } })),
 
     toggleVideoFacingMode: () =>
-      set((state) => ({
-        media: {
-          ...state.media,
-          videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
-        },
-      })),
+      set((state) => {
+        persistDeviceId(VIDEO_DEVICE_STORAGE_KEY, null);
+        return {
+          media: {
+            ...state.media,
+            videoDeviceId: null,
+            videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
+          },
+        };
+      }),
 
     // Re-acquire after a "suspended" transition (track ended, page resumed,
     // recorder died). media.ts ↔ useAppStore.ts is a circular import, but ESM

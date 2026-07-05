@@ -90,6 +90,35 @@ describe("RecordingStation", () => {
     expect(screen.getByText("Recording for Track 1")).toBeInTheDocument();
   });
 
+  it("dispatches camera flip and disables Flip while recording is not idle", async () => {
+    const actions = useAppStore.getState().actions;
+    await act(async () => {
+      render(<RecordingStation />);
+      await Promise.resolve();
+    });
+
+    const flipButton = screen.getByRole("button", { name: "Switch camera" });
+    expect(flipButton).not.toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(flipButton);
+      await Promise.resolve();
+    });
+    expect(useAppStore.getState().media.videoFacingMode).toBe("environment");
+
+    for (const state of ["preparing", "countdown", "recording", "reviewing"] as const) {
+      act(() => {
+        actions.setRecordingState(state, 0);
+      });
+      expect(flipButton).toBeDisabled();
+    }
+
+    act(() => {
+      actions.setRecordingState("idle", null);
+    });
+    expect(flipButton).not.toBeDisabled();
+  });
+
   it("shows the store recording error while the station is open", async () => {
     useAppStore.getState().actions.setRecordingError(INTERRUPTION_COPY);
 
