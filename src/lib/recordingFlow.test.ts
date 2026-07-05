@@ -76,22 +76,42 @@ vi.mock("./audioBufferSlice", () => ({
 import { COUNTDOWN_MS, cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { canStartAudibleAction } from "./audibleActionGate";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
 
-function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
+function makeDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value?: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value?: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function flushMicrotasks(times = 3): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await Promise.resolve();
   }
+}
+
+async function observeResolution(
+  promise: Promise<boolean>,
+): Promise<{ status: "resolved"; value: boolean } | { status: "pending" }> {
+  let result: { status: "resolved"; value: boolean } | { status: "pending" } = {
+    status: "pending",
+  };
+  void promise.then((value) => {
+    result = { status: "resolved", value };
+  });
+  await flushMicrotasks();
+  return result;
 }
 
 function makeTrack(
@@ -243,6 +263,82 @@ describe("recordingFlow", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("cancels quietly while stream acquisition is pending and reopens the gate", async () => {
+    const onError = vi.fn();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+    expect(mediaMocks.acquireRecordingStream).toHaveBeenCalledTimes(1);
+
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.resolve(makeStream());
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("releases a stream that resolves after acquisition cancellation", async () => {
+    const stream = makeStream();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0);
+    await flushMicrotasks();
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.resolve(stream);
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+    expect(mediaMocks.releaseRecordingStream).not.toHaveBeenCalled();
+
+    acquisition.resolve(stream);
+    await flushMicrotasks();
+
+    expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("swallows a rejected stream acquisition after cancellation", async () => {
+    const onError = vi.fn();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.reject(new Error("late denial"));
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+
+    acquisition.reject(new Error("late denial"));
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
   it("sets the pinned store error for interrupted cancellation during preparing", async () => {
     const onError = vi.fn();
     const audioStarted = makeDeferred();
@@ -379,7 +475,7 @@ describe("recordingFlow", () => {
 
     const promise = recordIntoTrack(6);
     try {
-      await flushMicrotasks();
+      await flushMicrotasks(5);
 
       expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
     } finally {

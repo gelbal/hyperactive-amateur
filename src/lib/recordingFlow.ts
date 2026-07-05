@@ -58,7 +58,7 @@ export function isRecordingInFlight(): boolean {
 function waitMs(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException("Aborted before wait started", "AbortError"));
+      reject(makeAbortError("Aborted before wait started"));
       return;
     }
     const delayMs = Math.max(0, ms);
@@ -73,9 +73,61 @@ function waitMs(ms: number, signal: AbortSignal): Promise<void> {
     const onAbort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-      reject(new DOMException("Aborted during wait", "AbortError"));
+      reject(makeAbortError("Aborted during wait"));
     };
     signal.addEventListener("abort", onAbort);
+  });
+}
+
+function makeAbortError(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+function throwIfFlowAborted(signal: AbortSignal, message: string): void {
+  if (signal.aborted) {
+    throw makeAbortError(message);
+  }
+}
+
+function acquireRecordingStreamUntilAbort(signal: AbortSignal): Promise<MediaStream> {
+  const acquisition = acquireRecordingStream();
+  return new Promise<MediaStream>((resolve, reject) => {
+    let settled = false;
+    const stopWatchingAbort = () => signal.removeEventListener("abort", onAbort);
+    const releaseLateStream = (stream: MediaStream) => {
+      releaseRecordingStream(stream);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      stopWatchingAbort();
+      acquisition.then(releaseLateStream, () => undefined);
+      reject(makeAbortError("Aborted during media acquisition"));
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    acquisition.then(
+      (stream) => {
+        if (settled) {
+          releaseLateStream(stream);
+          return;
+        }
+        settled = true;
+        stopWatchingAbort();
+        resolve(stream);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        stopWatchingAbort();
+        reject(err);
+      },
+    );
   });
 }
 
@@ -144,16 +196,17 @@ async function runFlow(
       // Recording can still proceed; recordClip has a decode fallback if the
       // live Web Audio tap cannot run.
     }
-    if (signal.aborted) {
-      throw new DOMException("Aborted before media acquisition", "AbortError");
-    }
+    throwIfFlowAborted(signal, "Aborted before media acquisition");
 
     if (externalStream) {
       stream = externalStream;
     } else {
       try {
-        stream = await acquireRecordingStream();
+        stream = await acquireRecordingStreamUntilAbort(signal);
       } catch (e) {
+        if (signal.aborted) {
+          throw makeAbortError("Aborted during media acquisition");
+        }
         // Permission may have been revoked since the last grant — surface the
         // viewport gate so the user can re-allow.
         void requestMedia();
@@ -162,9 +215,7 @@ async function runFlow(
       }
     }
     if (!stream) return false;
-    if (signal.aborted) {
-      throw new DOMException("Aborted before countdown", "AbortError");
-    }
+    throwIfFlowAborted(signal, "Aborted before countdown");
 
     if (!allTracksUsable(stream)) {
       actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
