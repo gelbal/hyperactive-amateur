@@ -40,9 +40,22 @@ describe("detectSupportedFormats", () => {
     expect(out.map((f) => f.extension)).toEqual(["webm", "mp4"]);
   });
 
+  it("returns an MP4 entry when only the shared h264,aac MIME is supported", () => {
+    stub(["video/mp4; codecs=h264,aac"]);
+    const out = detectSupportedFormats();
+    expect(out).toEqual([
+      {
+        mimeType: "video/mp4; codecs=h264,aac",
+        label: "MP4 (H.264)",
+        extension: "mp4",
+      },
+    ]);
+  });
+
   it("dedupes to one MP4 + one WebM even when every preference MIME is supported", () => {
     stub([
       "video/mp4; codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4; codecs=h264,aac",
       "video/mp4",
       "video/webm; codecs=vp9,opus",
       "video/webm; codecs=vp8,opus",

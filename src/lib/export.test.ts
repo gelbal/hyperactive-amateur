@@ -88,6 +88,7 @@ describe("exportSong", () => {
   class FakeMediaRecorder {
     static isTypeSupported = vi.fn(() => true);
     state: "inactive" | "recording" = "inactive";
+    mimeType = "";
     ondataavailable: ((e: BlobEvent) => void) | null = null;
     onstop: (() => void) | null = null;
     onerror: ((e: Event) => void) | null = null;
@@ -161,6 +162,31 @@ describe("exportSong", () => {
       bpm: 24000,
       mimeType: "video/mp4",
     });
+    expect(blob.type).toBe("video/mp4");
+  });
+
+  it("uses the MediaRecorder-reported MIME for the export blob when present", async () => {
+    class ReportingMediaRecorder extends FakeMediaRecorder {
+      mimeType = "video/webm";
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = ReportingMediaRecorder;
+
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm; codecs=vp9,opus",
+    });
+
+    expect(blob.type).toBe("video/webm");
+  });
+
+  it("falls back to the requested MIME when MediaRecorder reports none", async () => {
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/mp4",
+    });
+
     expect(blob.type).toBe("video/mp4");
   });
 

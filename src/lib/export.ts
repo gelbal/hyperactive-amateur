@@ -156,7 +156,7 @@ export async function exportSong(
       throw new Error("MediaRecorder finished export without producing data.");
     }
 
-    return new Blob(chunks, { type: mimeType });
+    return new Blob(chunks, { type: recorder.mimeType || mimeType });
   } finally {
     if (progressTimer) clearInterval(progressTimer);
     if (ownsExportSession) {
