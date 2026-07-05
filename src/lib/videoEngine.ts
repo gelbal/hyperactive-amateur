@@ -3,6 +3,7 @@
 import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
+import { LOG_EVENTS, logger } from "./logger";
 
 export type TagOrUntagged = Tag | "untagged";
 
@@ -35,6 +36,7 @@ export interface TriggerEvent {
 // the hard-cut shows a stale paused frame. Doing the seek slightly early
 // (and the play exactly on time) leaves the element ready to render.
 const LOOKAHEAD_S = 0.08;
+const HAVE_CURRENT_DATA = 2;
 
 let host: HTMLDivElement | null = null;
 const videos = new Map<number, HTMLVideoElement>();
@@ -46,6 +48,7 @@ const metadataReady = new Map<number, boolean>();
 const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
+let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
 let boundaryEventId: number | null = null;
@@ -303,17 +306,21 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
     if (elapsedMs < 0) return;
   }
 
-  ctx.fillStyle = "#0a0a0a";
-  ctx.fillRect(0, 0, w, h);
+  if (!displayed || !video || !trim) {
+    ctx.fillStyle = "#0a0a0a";
+    ctx.fillRect(0, 0, w, h);
+    return;
+  }
 
-  if (!displayed) return;
-  if (!video || !trim) return;
   const trimDurationMs = trim.endMs - trim.startMs;
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
+    ctx.fillStyle = "#0a0a0a";
+    ctx.fillRect(0, 0, w, h);
     video.pause();
     return;
   }
+  if (video.readyState < HAVE_CURRENT_DATA || video.seeking) return;
   // Cameras typically negotiate 16:9 (e.g. 1280x720) even when we ask for
   // 1:1, so the raw video is wider than tall. Center-crop a square source
   // rect so we draw without horizontal squish on the 1:1 canvas.
@@ -323,7 +330,21 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   const side = Math.min(vw, vh);
   const sx = (vw - side) / 2;
   const sy = (vh - side) / 2;
-  ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+  try {
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+  } catch (err) {
+    if (!drawErrorLogged) {
+      drawErrorLogged = true;
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message: unknown }).message)
+          : String(err);
+      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+        trackId: displayed.trackId,
+        message,
+      });
+    }
+  }
 }
 
 function disposeBoundaryEvent(): void {
@@ -428,6 +449,7 @@ export function __resetVideoEngineForTesting(): void {
   pendingFirstTrigger.clear();
   pendingTriggers = [];
   currentlyDisplayed = null;
+  drawErrorLogged = false;
   if (host) {
     host.remove();
     host = null;

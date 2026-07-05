@@ -24,6 +24,7 @@ import {
   type TriggerEvent,
 } from "./videoEngine";
 import { useAppStore } from "../store/useAppStore";
+import { LOG_EVENTS, logger } from "./logger";
 import type { Clip } from "../types";
 
 function makeClip(seed: number): Clip {
@@ -57,6 +58,28 @@ function makeCanvasContext(): CanvasRenderingContext2D {
     fillRect: vi.fn(),
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D;
+}
+
+function setVideoFrameState(
+  video: HTMLVideoElement,
+  state: { readyState?: number; seeking?: boolean; width?: number; height?: number },
+): void {
+  Object.defineProperty(video, "readyState", {
+    configurable: true,
+    value: state.readyState ?? 2,
+  });
+  Object.defineProperty(video, "seeking", {
+    configurable: true,
+    value: state.seeking ?? false,
+  });
+  Object.defineProperty(video, "videoWidth", {
+    configurable: true,
+    value: state.width ?? 640,
+  });
+  Object.defineProperty(video, "videoHeight", {
+    configurable: true,
+    value: state.height ?? 480,
+  });
 }
 
 describe("pickActiveEvent", () => {
@@ -222,11 +245,62 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
   });
 
+  it("keeps the previous frame while video has only metadata", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 1 });
+
+    trigger(0, 1.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.1);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the previous frame while video is seeking", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2, seeking: true });
+
+    trigger(0, 1.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.1);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("logs drawImage failures once and draws on a later ready frame", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    trigger(0, 1.0);
+    const throwingCtx = makeCanvasContext();
+    vi.mocked(throwingCtx.drawImage).mockImplementation(() => {
+      throw new DOMException("frame unavailable", "InvalidStateError");
+    });
+
+    expect(() => drawCurrentFrame(throwingCtx, 1.1)).not.toThrow();
+    expect(() => drawCurrentFrame(throwingCtx, 1.1)).not.toThrow();
+    expect(loggerSpy).toHaveBeenCalledTimes(1);
+    expect(loggerSpy).toHaveBeenCalledWith(
+      LOG_EVENTS.VIDEO_DRAW_ERROR,
+      expect.objectContaining({ message: "frame unavailable", trackId: 0 }),
+    );
+
+    const readyCtx = makeCanvasContext();
+    drawCurrentFrame(readyCtx, 1.1);
+    expect(readyCtx.drawImage).toHaveBeenCalledTimes(1);
+    loggerSpy.mockRestore();
+  });
+
   it("clears instead of drawing video after the displayed clip reaches trim end", () => {
     setClipForTrack(0, makeTrimmedClip());
     const video = document.querySelector("video") as HTMLVideoElement;
-    Object.defineProperty(video, "videoWidth", { configurable: true, value: 640 });
-    Object.defineProperty(video, "videoHeight", { configurable: true, value: 480 });
+    setVideoFrameState(video, { readyState: 2 });
     const pause = vi.spyOn(video, "pause");
 
     trigger(0, 1.0);
