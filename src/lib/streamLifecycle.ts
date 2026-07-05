@@ -5,15 +5,24 @@ import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
 import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
-import { cancelCurrentRecording, isRecordingInFlight } from "./recordingFlow";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
 }
 
+export interface RecordingInterruptHandler {
+  isActive: () => boolean;
+  interrupt: (reason: "interrupted") => void;
+}
+
 const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
 const pendingMuteSuspensions = new WeakMap<MediaStream, ReturnType<typeof setTimeout>>();
 const TRACK_MUTE_SUSPEND_DELAY_MS = 250;
+let recordingInterruptHandler: RecordingInterruptHandler | null = null;
+
+export function registerRecordingInterruptHandler(handler: RecordingInterruptHandler | null): void {
+  recordingInterruptHandler = handler;
+}
 
 function detachLifecycle(stream: MediaStream): void {
   const handle = lifecycleHandles.get(stream);
@@ -61,9 +70,10 @@ function scheduleMutedSuspension(stream: MediaStream): void {
 }
 
 function onTrackMuted(stream: MediaStream): void {
-  if (isRecordingInFlight()) {
+  const interruptHandler = recordingInterruptHandler;
+  if (interruptHandler?.isActive()) {
     clearPendingMuteSuspension(stream);
-    cancelCurrentRecording("interrupted");
+    interruptHandler.interrupt("interrupted");
     suspendMediaStream(stream);
     return;
   }

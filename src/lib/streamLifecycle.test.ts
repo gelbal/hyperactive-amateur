@@ -9,10 +9,6 @@ const audioLifecycleMocks = vi.hoisted(() => ({
 const toneMocks = vi.hoisted(() => ({
   rawContext: { state: "suspended" as AudioContextState },
 }));
-const recordingFlowMocks = vi.hoisted(() => ({
-  cancelCurrentRecording: vi.fn(),
-  isRecordingInFlight: vi.fn(() => false),
-}));
 
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
@@ -25,16 +21,12 @@ vi.mock("./audioLifecycle", () => ({
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
 }));
 
-vi.mock("./recordingFlow", () => ({
-  cancelCurrentRecording: recordingFlowMocks.cancelCurrentRecording,
-  isRecordingInFlight: recordingFlowMocks.isRecordingInFlight,
-}));
-
 import * as Tone from "tone";
 import {
   attachStreamEndedListeners,
   installVisibilityListener,
   onMediaRecorderError,
+  registerRecordingInterruptHandler,
   registerStreamLifecycle,
   releaseMediaStream,
   suspendMediaStream,
@@ -94,9 +86,7 @@ describe("streamLifecycle", () => {
     audioLifecycleMocks.noteMicReleased.mockClear();
     toneMocks.rawContext.state = "suspended";
     vi.mocked(Tone.start).mockClear();
-    recordingFlowMocks.cancelCurrentRecording.mockReset();
-    recordingFlowMocks.isRecordingInFlight.mockReset();
-    recordingFlowMocks.isRecordingInFlight.mockReturnValue(false);
+    registerRecordingInterruptHandler(null);
     useAppStore.getState().actions.reset();
   });
 
@@ -170,9 +160,10 @@ describe("streamLifecycle", () => {
     it("cancels an in-flight recording before stopping tracks when a required track mutes", () => {
       const { stream, tracks } = makeStream();
       const order: string[] = [];
-      recordingFlowMocks.isRecordingInFlight.mockReturnValue(true);
-      recordingFlowMocks.cancelCurrentRecording.mockImplementation(() => {
-        order.push("cancel");
+      const interrupt = vi.fn(() => order.push("cancel"));
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
       });
       for (const track of tracks) {
         track.stop.mockImplementation(() => {
@@ -185,12 +176,28 @@ describe("streamLifecycle", () => {
 
       tracks[1].fireMute();
 
-      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledWith("interrupted");
+      expect(interrupt).toHaveBeenCalledWith("interrupted");
       expect(order[0]).toBe("cancel");
       expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
       const media = useAppStore.getState().media;
       expect(media.status).toBe("suspended");
       expect(media.stream).toBeNull();
+    });
+
+    it("does not crash when a track mutes without a registered recording interrupt handler", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream, tracks } = makeStream();
+        setGrantedWithStream(stream);
+        attachStreamEndedListeners(stream);
+
+        expect(() => tracks[1].fireMute()).not.toThrow();
+        vi.advanceTimersByTime(250);
+
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("debounces idle preview mute before transitioning to suspended", () => {

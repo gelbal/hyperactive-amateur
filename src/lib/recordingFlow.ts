@@ -14,7 +14,7 @@ import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
-import { allTracksUsable } from "./streamLifecycle";
+import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -55,6 +55,11 @@ export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): 
 export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
 }
+
+registerRecordingInterruptHandler({
+  isActive: isRecordingInFlight,
+  interrupt: (reason) => cancelCurrentRecording(reason),
+});
 
 function waitMs(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
