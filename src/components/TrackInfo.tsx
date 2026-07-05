@@ -26,6 +26,12 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const recordingError = useAppStore((s) => s.recording.error);
+  const recordingStationShowing = useAppStore(
+    (s) =>
+      s.media.status === "granted" &&
+      s.project.tracks.some((track) => !track.clip) &&
+      !s.session.recordingStationDismissed,
+  );
   const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);
   const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
@@ -52,10 +58,13 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   }, [activeTrackId, recordingError, recordingState, trackId]);
 
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
-  const visibleError =
-    recordingError && (activeTrackId === trackId || wasLastRecordingTrackRef.current)
+  const visibleRecordingError =
+    !recordingStationShowing &&
+    recordingError &&
+    (activeTrackId === trackId || wasLastRecordingTrackRef.current)
       ? recordingError
-      : error;
+      : null;
+  const visibleError = visibleRecordingError ?? error;
 
   const scheduleToastReset = () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);

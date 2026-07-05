@@ -8,6 +8,7 @@ vi.mock("../lib/recordingFlow", () => ({
 }));
 
 import { RecordingStation } from "./RecordingStation";
+import { TrackInfo } from "./TrackInfo";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
@@ -98,5 +99,37 @@ describe("RecordingStation", () => {
     });
 
     expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
+  });
+
+  it("shows the store recording error only in the station while the station is open", async () => {
+    const actions = useAppStore.getState().actions;
+    await act(async () => {
+      render(
+        <>
+          <RecordingStation />
+          <TrackInfo trackId={0} />
+        </>,
+      );
+      await Promise.resolve();
+    });
+    act(() => {
+      actions.setMedia({
+        stream: null,
+        status: "granted",
+        error: null,
+      });
+    });
+    act(() => {
+      actions.setRecordingState("recording", 0);
+    });
+    act(() => {
+      actions.setRecordingError(INTERRUPTION_COPY);
+    });
+    act(() => {
+      actions.setRecordingState("idle", null);
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
+    expect(screen.getAllByText(INTERRUPTION_COPY)).toHaveLength(1);
   });
 });

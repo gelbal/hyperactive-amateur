@@ -29,6 +29,12 @@ describe("TrackInfo re-record overlay", () => {
   });
 
   it("shows the store recording error on the active track row until a new flow starts", () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "granted",
+      error: null,
+    });
+    useAppStore.getState().actions.dismissRecordingStation();
     render(<TrackInfo trackId={2} />);
 
     act(() => {
