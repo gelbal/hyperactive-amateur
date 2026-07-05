@@ -69,6 +69,7 @@ vi.mock("tone", () => ({
     return makePlayer();
   }),
   now: vi.fn(() => 0),
+  immediate: vi.fn(() => 0),
 }));
 
 import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
@@ -142,7 +143,7 @@ describe("audio: per-step trigger logic", () => {
     cb?.(0.25);
 
     expect(playerInstances[0].start).toHaveBeenCalledWith(0.25, 0, 1);
-    expect(videoEngineTrigger).toHaveBeenCalledWith(0, 0.25);
+    expect(videoEngineTrigger).toHaveBeenCalledWith(0, 0.25, 0.25);
     expect(playerInstances[1].start).toHaveBeenCalled();
     expect(videoEngineTrigger).toHaveBeenCalledTimes(1); // only track 0 cut
     expect(playerInstances[2].start).not.toHaveBeenCalled();
@@ -161,6 +162,18 @@ describe("audio: per-step trigger logic", () => {
     await triggerTrackNow(2);
     expect(Tone.start).toHaveBeenCalled();
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("manual clipped triggers display at Tone.immediate while audio schedules at Tone.now", async () => {
+    initTransport();
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
+    vi.mocked(Tone.now).mockReturnValueOnce(2.1);
+    vi.mocked(Tone.immediate).mockReturnValueOnce(2.0);
+
+    await triggerTrackNow(0);
+
+    expect(playerInstances[0].start).toHaveBeenCalledWith(2.1, 0, 1);
+    expect(videoEngineTrigger).toHaveBeenCalledWith(0, 2.1, 2.0);
   });
 
   it("does not mark playback playing when audio never reaches running", async () => {

@@ -210,6 +210,21 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(3);
   });
 
+  it("stopped trigger displays on the immediate audible clock despite Tone lookahead", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    toneHarness.setImmediate(2.0);
+    toneHarness.setLookahead(0.1);
+
+    trigger(0, 2.1, 2.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.startTime).toBeCloseTo(2.0, 6);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 2.0);
+    expect(ctx.drawImage).toHaveBeenCalledTimes(1);
+  });
+
   it("does not leak pendingTriggers while the transport is stopped (regression)", () => {
     setClipForTrack(0, makeClip(0));
     setClipForTrack(1, makeClip(1));

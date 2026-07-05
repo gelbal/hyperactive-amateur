@@ -208,16 +208,16 @@ export function prepareUpcoming(boundaryTime: number): void {
 // so the next boundary callback picks the visible cut; while it's stopped,
 // promote the trigger to the displayed event immediately (so pad clicks /
 // keyboard hits show video) and skip the queue (which would otherwise leak).
-export function trigger(trackId: number, when: number): void {
+export function trigger(trackId: number, when: number, displayStartTime = when): void {
   const trim = trims.get(trackId);
   if (!trim) return;
 
+  const playing = useAppStore.getState().playback.isPlaying;
   const event: TriggerEvent = {
     trackId,
-    startTime: when,
+    startTime: playing ? when : displayStartTime,
     trimDurationMs: trim.endMs - trim.startMs,
   };
-  const playing = useAppStore.getState().playback.isPlaying;
   if (playing) {
     pendingTriggers.push(event);
   } else {
