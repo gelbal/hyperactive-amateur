@@ -13,6 +13,7 @@ import type {
 } from "../types";
 import { clearProject } from "../lib/persistence";
 import { acquireRecordingStream } from "../lib/media";
+import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
   AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
@@ -545,7 +546,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }
       // Stop any held media stream so getUserMedia is re-armed cleanly.
       if (state.media.stream) {
-        for (const t of state.media.stream.getTracks()) t.stop();
+        releaseMediaStream(state.media.stream);
       }
       const next = createInitialState();
       set({
