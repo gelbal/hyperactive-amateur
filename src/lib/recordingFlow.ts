@@ -231,7 +231,7 @@ async function runFlow(
     await waitMs((countdownEndsAt - audioContext.currentTime) * 1000, signal);
     actions.setRecordingState("recording", trackId);
     const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
-    const url = URL.createObjectURL(result.blob);
+    throwIfFlowAborted(signal, "Aborted after capture");
     const trim = autoTrim(result.audioBuffer);
     // Poster generation is best-effort — never let a poster failure block
     // the clip save. captureFirstFrame returns null on any decode/timeout.
@@ -241,6 +241,8 @@ async function runFlow(
     } catch {
       posterBlob = null;
     }
+    throwIfFlowAborted(signal, "Aborted after poster extraction");
+    const url = URL.createObjectURL(result.blob);
     const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
     const newClip: Clip = {
       blob: result.blob,

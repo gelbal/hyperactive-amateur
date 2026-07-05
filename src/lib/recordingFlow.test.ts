@@ -26,6 +26,10 @@ const recorderMocks = vi.hoisted(() => ({
   recordClip: vi.fn(),
 }));
 
+const posterMocks = vi.hoisted(() => ({
+  captureFirstFrame: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
@@ -62,7 +66,7 @@ vi.mock("./applyClassifiedTag", () => ({
 }));
 
 vi.mock("./posterFrame", () => ({
-  captureFirstFrame: vi.fn().mockResolvedValue(null),
+  captureFirstFrame: posterMocks.captureFirstFrame,
 }));
 
 vi.mock("./wavEncoder", () => ({
@@ -177,6 +181,8 @@ describe("recordingFlow", () => {
     mediaMocks.requestMedia.mockReset();
     recorderMocks.recordClip.mockReset();
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
+    posterMocks.captureFirstFrame.mockReset();
+    posterMocks.captureFirstFrame.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -461,6 +467,50 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
     expect(onError).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+  });
+
+  it("keeps user cancellation quiet and discards the clip during poster extraction", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const poster = makeDeferred<Blob | null>();
+    posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+
+    const promise = recordIntoTrack(2, { onError });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+    await flushMicrotasks();
+    expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+
+    cancelCurrentRecording("user");
+    poster.resolve(null);
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps interrupted cancellation pinned and discards the clip during poster extraction", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const poster = makeDeferred<Blob | null>();
+    posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+
+    const promise = recordIntoTrack(2, { onError });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+    await flushMicrotasks();
+    expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+
+    cancelCurrentRecording("interrupted");
+    poster.resolve(null);
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("starts recording immediately when the countdown deadline has already passed", async () => {
