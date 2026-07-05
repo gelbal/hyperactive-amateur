@@ -13,7 +13,7 @@ import type {
   Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
-import { acquireRecordingStream } from "../lib/media";
+import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
   AUDIO_DEVICE_STORAGE_KEY,
@@ -505,6 +505,8 @@ export const useAppStore = create<AppStore>((set) => ({
     // On success acquireRecordingStream flips status to "granted"; on failure
     // it flips to "denied" and we let the gate take over.
     resumeMedia: async () => {
+      if (useAppStore.getState().recording.state !== "idle") return;
+      if (isAcquireInFlight()) return;
       try {
         await acquireRecordingStream();
       } catch {

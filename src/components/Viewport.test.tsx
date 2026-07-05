@@ -23,9 +23,11 @@ const videoEngineMocks = vi.hoisted(() => ({
 vi.mock("../lib/videoEngine", () => videoEngineMocks);
 
 const requestMedia = vi.fn();
+const isAcquireInFlight = vi.fn(() => false);
 const ensureAudioRunning = vi.fn();
 vi.mock("../lib/media", () => ({
   requestMedia: () => requestMedia(),
+  isAcquireInFlight: () => isAcquireInFlight(),
 }));
 vi.mock("../lib/audioLifecycle", () => ({
   ensureAudioRunning: () => ensureAudioRunning(),
@@ -61,6 +63,8 @@ describe("Viewport", () => {
     videoEngineMocks.initVideoEngine.mockReset();
     videoEngineMocks.setActiveCanvas.mockReset();
     requestMedia.mockReset();
+    isAcquireInFlight.mockReset();
+    isAcquireInFlight.mockReturnValue(false);
     ensureAudioRunning.mockReset();
     ensureAudioRunning.mockImplementation(async () => {
       useAppStore.getState().actions.setAudioState("running");
@@ -328,6 +332,32 @@ describe("Viewport", () => {
     fireEvent.click(pill);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("suspended: reconnect pill is disabled while recording or acquiring media", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+      useAppStore.getState().actions.setRecordingState("recording", 0);
+    });
+    render(<Viewport />);
+    expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeDisabled();
+    cleanup();
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("idle", null);
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+    });
+    isAcquireInFlight.mockReturnValue(true);
+    render(<Viewport />);
+    expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeDisabled();
   });
 
   it('resume-required: audio pill shows exactly "Audio interrupted — tap to resume." and stacks with reconnect pill', () => {
