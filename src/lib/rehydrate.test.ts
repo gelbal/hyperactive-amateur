@@ -113,6 +113,60 @@ async function storedMeta(): Promise<Record<string, any>> {
   return meta as Record<string, any>;
 }
 
+// Legacy monolith where track 1's clip has an invalid trim window —
+// normalization drops that clip during repair, so the pre-repair backup
+// becomes the only remaining reference to its bytes.
+async function legacyMonolithWithDroppedClip(
+  droppedBytes: number[],
+): Promise<Record<string, unknown>> {
+  const emptyTrack = (id: number) => ({
+    id,
+    clipBlob: null,
+    audioBlob: null,
+    posterBlob: null,
+    trimStartMs: 0,
+    trimEndMs: 0,
+    durationMs: 0,
+    tag: null,
+    steps: new Array(16).fill(false),
+    volume: 1,
+    muted: false,
+    showVideo: true,
+  });
+  return {
+    schemaVersion: 1,
+    bpm: 104,
+    swing: 0,
+    cutSubdivision: "8n",
+    sameTierHoldMs: 400,
+    subgenre: "trap",
+    vibe: "tight",
+    stepCount: 16,
+    tagReasoning: {},
+    tracks: [
+      {
+        ...emptyTrack(0),
+        clipBlob: await persistedBlob([1, 2, 3], "video/webm"),
+        trimStartMs: 0,
+        trimEndMs: 500,
+        durationMs: 500,
+        tag: "kick",
+      },
+      {
+        // Invalid trim window — normalization drops this clip during repair.
+        ...emptyTrack(1),
+        clipBlob: await persistedBlob(droppedBytes, "video/webm"),
+        trimStartMs: 600,
+        trimEndMs: 400,
+        durationMs: 1000,
+        tag: "snare",
+      },
+      ...Array.from({ length: 6 }, (_, id) => emptyTrack(id + 2)),
+    ],
+    updatedAt: 1_000,
+  };
+}
+
 describe("rehydrateFromStorage", () => {
   beforeEach(async () => {
     useAppStore.getState().actions.reset();
@@ -291,53 +345,7 @@ describe("rehydrateFromStorage", () => {
 
   it("migration GC keeps blob records that only the pre-repair backup references", async () => {
     const droppedBytes = [7, 8, 9];
-    const emptyTrack = (id: number) => ({
-      id,
-      clipBlob: null,
-      audioBlob: null,
-      posterBlob: null,
-      trimStartMs: 0,
-      trimEndMs: 0,
-      durationMs: 0,
-      tag: null,
-      steps: new Array(16).fill(false),
-      volume: 1,
-      muted: false,
-      showVideo: true,
-    });
-    await set(LEGACY_PROJECT_KEY, {
-      schemaVersion: 1,
-      bpm: 104,
-      swing: 0,
-      cutSubdivision: "8n",
-      sameTierHoldMs: 400,
-      subgenre: "trap",
-      vibe: "tight",
-      stepCount: 16,
-      tagReasoning: {},
-      tracks: [
-        {
-          ...emptyTrack(0),
-          clipBlob: await persistedBlob([1, 2, 3], "video/webm"),
-          trimStartMs: 0,
-          trimEndMs: 500,
-          durationMs: 500,
-          tag: "kick",
-        },
-        {
-          // Invalid trim window — normalization drops this clip during repair,
-          // so the pre-repair backup becomes its only remaining reference.
-          ...emptyTrack(1),
-          clipBlob: await persistedBlob(droppedBytes, "video/webm"),
-          trimStartMs: 600,
-          trimEndMs: 400,
-          durationMs: 1000,
-          tag: "snare",
-        },
-        ...Array.from({ length: 6 }, (_, id) => emptyTrack(id + 2)),
-      ],
-      updatedAt: 1_000,
-    });
+    await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip(droppedBytes));
     // A prior interrupted migration already wrote the dropped clip's blob record.
     const droppedRef = await contentAddressedBlobKey(droppedBytes);
     await set(droppedRef, await persistedBlob(droppedBytes, "video/webm"));
@@ -353,6 +361,53 @@ describe("rehydrateFromStorage", () => {
     // The backup is the only root left for the dropped clip — its bytes must
     // survive the migration GC and stay loadable for recovery.
     expect(isBlobLike(await get(droppedRef))).toBe(true);
+  });
+
+  it("migration writes blob records for backup-referenced media dropped by repair", async () => {
+    const droppedBytes = [7, 8, 9];
+    await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip(droppedBytes));
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
+    const droppedRef = await contentAddressedBlobKey(droppedBytes);
+    const backup = (await get(PROJECT_BACKUP_KEY)) as Record<string, any>;
+    expect(backup.tracks[1].clipBlobRef).toBe(droppedRef);
+    const meta = await storedMeta();
+    expect(meta.tracks[1].clipBlobRef).toBeUndefined();
+    // No pre-seeded record: the migration-time backup itself must have written
+    // the dropped clip's blob record, or its bytes died with the monolith.
+    const record = await get(droppedRef);
+    expect(isBlobLike(record)).toBe(true);
+    expect(new Uint8Array(await (record as Blob).arrayBuffer())).toEqual(
+      new Uint8Array(droppedBytes),
+    );
+  });
+
+  it("keeps legacy keys and pauses hydration when a backup blob write fails", async () => {
+    await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip([7, 8, 9]));
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
+      if (typeof key === "string" && key.startsWith("ha:blob:")) {
+        throw new Error("quota exceeded");
+      }
+      return actual.set(key, value);
+    });
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(false);
+    expect(result.degraded).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("autosave was paused"))).toBe(true);
+    expect(useAppStore.getState().project.bpm).toBe(90);
+    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
+    // Quota failure while persisting backup media must leave the legacy
+    // monolith untouched — no metadata, no backup, no partial deletion.
+    expect(await get(LEGACY_PROJECT_KEY)).toMatchObject({ schemaVersion: 1 });
+    expect(await get(PROJECT_KEY)).toBeUndefined();
+    expect(await get(PROJECT_BACKUP_KEY)).toBeUndefined();
   });
 
   it("keeps legacy keys and pauses hydration when the schema-2 metadata write fails", async () => {

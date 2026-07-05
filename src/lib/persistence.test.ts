@@ -14,6 +14,7 @@ import {
   snapshot,
 } from "./persistence";
 import { useAppStore } from "../store/useAppStore";
+import { validV1MonolithProject } from "./__fixtures__/persistedProjects";
 
 vi.mock("idb-keyval", async (importOriginal) => {
   const actual = await importOriginal<typeof import("idb-keyval")>();
@@ -257,6 +258,22 @@ describe("persistence", () => {
     expect((backup as any).tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
     expect((backup as any).tracks[0]).not.toHaveProperty("clipBlob");
     expect(await loadRecoveryBackup()).toEqual(backup);
+  });
+
+  it("saveRecoveryBackup writes blob records for referenced media that has none", async () => {
+    // A legacy monolith carries its media inline: none of the refs the backup
+    // will compute have blob records yet. The backup must create them — its
+    // refs may become the only surviving copy of repair-dropped media.
+    const legacy = await validV1MonolithProject();
+
+    await saveRecoveryBackup(legacy);
+
+    const backup = (await get(BACKUP_KEY)) as Record<string, any>;
+    const refs = [...mediaRefs(backup.tracks[0]), ...mediaRefs(backup.tracks[3])];
+    expect(refs).toHaveLength(6);
+    for (const ref of refs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
   });
 
   it("marks missing blob references in the loaded contract for rehydrate repair", async () => {

@@ -530,7 +530,14 @@ export async function loadProject(): Promise<PersistedProject | null> {
 }
 
 export async function saveRecoveryBackup(project: PersistedProject): Promise<void> {
-  const { metadata } = await buildMetadataRecord(project, false);
+  // The backup stores references, not bytes — but a reference must never
+  // dangle: every ref gets a real blob record before the backup is written.
+  // This matters during legacy migration, where media that normalization
+  // subsequently drops keeps its bytes reachable only through the backup refs
+  // (the backup is a GC root). For already-split projects the records exist
+  // and nothing extra is written. If a blob write fails (quota), the error
+  // propagates before any backup or migration write happens.
+  const { metadata } = await buildMetadataRecord(project, true);
   await set(PROJECT_BACKUP_KEY, metadata);
 }
 
