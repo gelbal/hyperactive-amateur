@@ -19,6 +19,7 @@ const toneMocks = vi.hoisted(() => ({
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
   releaseRecordingStream: vi.fn(),
+  invalidatePendingAcquire: vi.fn(),
   requestMedia: vi.fn(),
 }));
 
@@ -50,6 +51,7 @@ vi.mock("tone", () => ({
 vi.mock("./media", () => ({
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
+  invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
   requestMedia: mediaMocks.requestMedia,
 }));
 

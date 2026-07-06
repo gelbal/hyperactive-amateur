@@ -135,6 +135,17 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
   }
 }
 
+// Invalidate any pending acquire: bump the generation and clear the active
+// token so a later-settling getUserMedia is treated as stale — its tracks get
+// stopped and neither its stream nor its failure state is installed.
+// streamLifecycle calls this on every lifecycle suspend decision (including
+// hidden/pagehide when no stream is held), so a suspension can never be
+// undone by a late grant.
+export function invalidatePendingAcquire(): void {
+  acquireGeneration += 1;
+  activeAcquireToken = null;
+}
+
 // Release a stream returned by acquireRecordingStream. Stops every track (so
 // the camera light goes off) and clears the media slice if this was the
 // currently held stream.

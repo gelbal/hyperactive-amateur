@@ -4,6 +4,7 @@ import {
   requestMedia,
   acquireRecordingStream,
   releaseRecordingStream,
+  invalidatePendingAcquire,
   isAcquireInFlight,
   buildConstraints,
   __resetMediaForTesting,
@@ -203,6 +204,49 @@ describe("media", () => {
     expect(useAppStore.getState().media.status).toBe("granted");
     expect(useAppStore.getState().media.error).toBeNull();
     for (const track of newerStream._tracks) expect(track.stop).not.toHaveBeenCalled();
+  });
+
+  it("invalidatePendingAcquire makes a pending acquire stale: late resolve stops tracks, installs nothing", async () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "suspended",
+      error: null,
+    });
+    const pending = deferred<MediaStream>();
+    const pendingStream = makeFakeStream();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquire = acquireRecordingStream();
+    expect(isAcquireInFlight()).toBe(true);
+
+    invalidatePendingAcquire();
+    expect(isAcquireInFlight()).toBe(false);
+
+    pending.resolve(pendingStream);
+    await acquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.stream).toBeNull();
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    for (const track of pendingStream._tracks) expect(track.stop).toHaveBeenCalled();
+  });
+
+  it("invalidatePendingAcquire keeps a late acquire failure from flipping the store to denied", async () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "suspended",
+      error: null,
+    });
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquire = acquireRecordingStream();
+    invalidatePendingAcquire();
+
+    pending.reject(new DOMException("revoked", "NotAllowedError"));
+    await acquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    expect(useAppStore.getState().media.error).toBeNull();
   });
 
   it("does not install an acquire that resolves after the held stream was released", async () => {

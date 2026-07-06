@@ -32,6 +32,7 @@ import {
   releaseMediaStream,
   suspendMediaStream,
 } from "./streamLifecycle";
+import { acquireRecordingStream, __resetMediaForTesting } from "./media";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
@@ -742,6 +743,142 @@ describe("streamLifecycle", () => {
       expect(saveSpy).not.toHaveBeenCalled();
       expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(false);
       detach();
+    });
+  });
+
+  describe("pending acquire invalidation", () => {
+    let originalMediaDevices: MediaDevices | undefined;
+
+    beforeEach(() => {
+      __resetMediaForTesting();
+      originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices })
+        .mediaDevices;
+    });
+
+    afterEach(() => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+    });
+
+    function stubPendingGetUserMedia() {
+      let resolve!: (stream: MediaStream) => void;
+      const promise = new Promise<MediaStream>((res) => {
+        resolve = res;
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia: vi.fn(() => promise) },
+      });
+      return { resolve };
+    }
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])(
+      "on $name with no held stream: a pending acquire resolving later is stale",
+      async ({ dispatch }) => {
+        useAppStore.getState().actions.setMedia({
+          stream: null,
+          status: "suspended",
+          error: null,
+        });
+        const pending = stubPendingGetUserMedia();
+        const { stream: lateStream, tracks: lateTracks } = makeStream();
+        const detach = installVisibilityListener();
+
+        try {
+          const acquire = acquireRecordingStream();
+
+          dispatch();
+
+          pending.resolve(lateStream);
+          await acquire.catch(() => undefined);
+
+          const media = useAppStore.getState().media;
+          expect(media.status).toBe("suspended");
+          expect(media.stream).toBeNull();
+          expect(lateTracks[0].stop).toHaveBeenCalled();
+          expect(lateTracks[1].stop).toHaveBeenCalled();
+        } finally {
+          detach();
+        }
+      },
+    );
+
+    it("suspending the held stream (track ended) invalidates a pending acquire", async () => {
+      const { stream: held, tracks: heldTracks } = makeStream();
+      setGrantedWithStream(held);
+      attachStreamEndedListeners(held);
+      const pending = stubPendingGetUserMedia();
+      const { stream: lateStream, tracks: lateTracks } = makeStream();
+
+      const acquire = acquireRecordingStream();
+
+      heldTracks[0].fireEnded();
+      expect(useAppStore.getState().media.status).toBe("suspended");
+
+      pending.resolve(lateStream);
+      await acquire.catch(() => undefined);
+
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+      expect(lateTracks[0].stop).toHaveBeenCalled();
+      expect(lateTracks[1].stop).toHaveBeenCalled();
+    });
+
+    it("a fresh acquire after hidden invalidation still installs", async () => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+      const staleGrant = stubPendingGetUserMedia();
+      const { stream: staleStream } = makeStream();
+      const detach = installVisibilityListener();
+
+      try {
+        const staleAcquire = acquireRecordingStream();
+        Object.defineProperty(document, "hidden", {
+          value: true,
+          configurable: true,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        staleGrant.resolve(staleStream);
+        await staleAcquire.catch(() => undefined);
+
+        const { stream: freshStream, tracks: freshTracks } = makeStream();
+        Object.defineProperty(navigator, "mediaDevices", {
+          configurable: true,
+          value: { getUserMedia: vi.fn(async () => freshStream) },
+        });
+
+        await expect(acquireRecordingStream()).resolves.toBe(freshStream);
+
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("granted");
+        expect(media.stream).toBe(freshStream);
+        expect(freshTracks[0].stop).not.toHaveBeenCalled();
+      } finally {
+        detach();
+      }
     });
   });
 
