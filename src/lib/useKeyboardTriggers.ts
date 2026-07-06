@@ -34,7 +34,9 @@ export function useKeyboardTriggers(): void {
       if (isEditable(event.target)) return;
       const trackId = trackIdForCode(event.code);
       if (trackId === null) return;
-      if (!canStartAudibleAction(useAppStore.getState())) return;
+      const state = useAppStore.getState();
+      if (state.appMode !== "chop") return;
+      if (!canStartAudibleAction(state)) return;
       event.preventDefault();
       runAudibleAction(triggerTrackNow(trackId));
     };

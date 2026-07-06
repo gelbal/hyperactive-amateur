@@ -21,6 +21,7 @@ export function useSpacebarPlayToggle(): void {
       if (event.repeat) return;
       if (isEditable(event.target)) return;
       const state = useAppStore.getState();
+      if (state.appMode !== "chop") return;
       if (state.playback.isExporting) return;
       if (!state.playback.isPlaying && !canStartAudibleAction(state)) return;
       event.preventDefault();
