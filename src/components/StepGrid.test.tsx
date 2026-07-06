@@ -59,19 +59,49 @@ describe("StepGrid", () => {
     }
   });
 
-  it("column-remove is visible at reduced opacity on coarse pointers via the any-pointer-coarse: variant", () => {
-    // The default step count is 16, so canRemove is true and the buttons render.
-    // We can't measure layout in jsdom, but the any-pointer-coarse:opacity-40
-    // class is the contract — its presence is what makes the button tappable
-    // on touch devices.
+  it("renders exactly one remove control per 4-step block", () => {
+    // removeStepColumn always removes the whole 4-step block, so one control
+    // per block is the honest affordance — 16 per-column duplicates read as
+    // visual noise, especially on touch where they are always visible.
     render(<StepGrid />);
     const removeButtons = screen.getAllByLabelText(/^Remove steps \d+-\d+$/);
-    expect(removeButtons.length).toBeGreaterThan(0);
-    expect(removeButtons[0]).toHaveAttribute("aria-label", "Remove steps 1-4");
+    expect(removeButtons.length).toBe(4);
+    expect(removeButtons.map((btn) => btn.getAttribute("aria-label"))).toEqual([
+      "Remove steps 1-4",
+      "Remove steps 5-8",
+      "Remove steps 9-12",
+      "Remove steps 13-16",
+    ]);
+  });
+
+  it("column-remove stays subtle-but-tappable on coarse pointers and only turns red on hover/press", () => {
+    // Touch devices keep an always-visible affordance (no hover to reveal it),
+    // but it must read as quiet chrome, not a row of alarming red circles:
+    // neutral zinc at reduced opacity, red reserved for hover/active feedback.
+    render(<StepGrid />);
+    const removeButtons = screen.getAllByLabelText(/^Remove steps \d+-\d+$/);
     for (const btn of removeButtons) {
-      expect(btn.className).toContain("any-pointer-coarse:opacity-40");
+      expect(btn.className).toContain("any-pointer-coarse:opacity-60");
       expect(btn.className).toContain("any-pointer-coarse:pointer-events-auto");
+      expect(btn.className).toContain("bg-zinc-800");
+      expect(btn.className).toContain("hover:bg-red-500");
+      expect(btn.className).toContain("active:bg-red-500");
+      expect(btn.className).not.toContain("bg-red-500/80");
     }
+  });
+
+  it("hovering any cell of a block reveals that block's remove control on fine pointers", () => {
+    render(<StepGrid />);
+    const removeButtons = screen.getAllByLabelText(/^Remove steps \d+-\d+$/);
+    expect(removeButtons[1].className).toContain("opacity-0");
+
+    // Step 6 (index 5) lives in the second block (steps 5-8).
+    fireEvent.mouseEnter(screen.getByLabelText("track 1 step 6"));
+    expect(removeButtons[1].className).toContain("opacity-100");
+    expect(removeButtons[0].className).toContain("opacity-0");
+
+    fireEvent.mouseLeave(screen.getByLabelText("track 1 step 6"));
+    expect(removeButtons[1].className).toContain("opacity-0");
   });
 
   it("scroll container has min-w-0 so it actually scrolls instead of overflowing the parent", () => {

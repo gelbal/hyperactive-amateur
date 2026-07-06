@@ -1,14 +1,17 @@
-// ABOUTME: StepGrid — left-side track info (sticky) + scrollable column header / cell rows on the right.
-// ABOUTME: Hosts the +4 extend buttons (left and right) and per-column hover-only minus to remove a column.
+// ABOUTME: StepGrid — left-side track info (sticky) + scrollable block header / cell rows on the right.
+// ABOUTME: Hosts the +4 extend button and one remove control per 4-step block (hover-reveal on mouse, subtle-always on touch).
 import { useState } from "react";
 import { Plus, Minus } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { TrackInfo } from "./TrackInfo";
-import { MAX_STEP_COUNT } from "../store/initialState";
+import { MAX_STEP_COUNT, STEP_COUNT_INCREMENT } from "../store/initialState";
 
 const TRACK_COUNT = 8;
 const STEP_WIDTH = 40;
 const STEP_GAP = 4;
+// One header cell spans a whole removable block so its minus lines up with
+// the four columns it removes.
+const BLOCK_WIDTH = STEP_COUNT_INCREMENT * STEP_WIDTH + (STEP_COUNT_INCREMENT - 1) * STEP_GAP;
 
 interface StepCellProps {
   trackId: number;
@@ -50,34 +53,37 @@ function StepCell({ trackId, stepIndex, disabled, onHover }: StepCellProps) {
   );
 }
 
-interface ColumnHeaderProps {
-  stepIndex: number;
+interface BlockHeaderProps {
+  blockIndex: number;
   hovered: boolean;
   canRemove: boolean;
   onHover: (col: number | null) => void;
 }
 
-function ColumnHeader({ stepIndex, hovered, canRemove, onHover }: ColumnHeaderProps) {
+function BlockHeader({ blockIndex, hovered, canRemove, onHover }: BlockHeaderProps) {
   const showMinus = hovered && canRemove;
-  const blockStart = Math.floor(stepIndex / 4) * 4;
+  const blockStart = blockIndex * STEP_COUNT_INCREMENT;
   return (
     <div
-      style={{ width: STEP_WIDTH }}
+      style={{ width: BLOCK_WIDTH }}
       className="h-6 flex items-center justify-center shrink-0"
-      onMouseEnter={() => onHover(stepIndex)}
+      onMouseEnter={() => onHover(blockStart)}
       onMouseLeave={() => onHover(null)}
     >
       <button
         type="button"
-        aria-label={`Remove steps ${blockStart + 1}-${blockStart + 4}`}
-        title={`Remove steps ${blockStart + 1}-${blockStart + 4}`}
+        aria-label={`Remove steps ${blockStart + 1}-${blockStart + STEP_COUNT_INCREMENT}`}
+        title={`Remove steps ${blockStart + 1}-${blockStart + STEP_COUNT_INCREMENT}`}
         disabled={!canRemove}
-        onClick={() => useAppStore.getState().actions.removeStepColumn(stepIndex)}
+        onClick={() => useAppStore.getState().actions.removeStepColumn(blockStart)}
         className={
-          "w-5 h-5 pointer-coarse:w-8 pointer-coarse:h-8 rounded-full flex items-center justify-center transition-opacity bg-red-500/80 hover:bg-red-500 text-white " +
+          "w-5 h-5 pointer-coarse:w-8 pointer-coarse:h-8 rounded-full flex items-center justify-center transition-all " +
+          "bg-zinc-800 border border-zinc-700 text-zinc-400 " +
+          "hover:bg-red-500 hover:border-red-500 hover:text-white " +
+          "active:bg-red-500 active:border-red-500 active:text-white " +
           (showMinus
             ? "opacity-100"
-            : "opacity-0 pointer-events-none any-pointer-coarse:opacity-40 any-pointer-coarse:pointer-events-auto")
+            : "opacity-0 pointer-events-none any-pointer-coarse:opacity-60 any-pointer-coarse:pointer-events-auto")
         }
       >
         <Minus size={12} />
@@ -121,15 +127,18 @@ export function StepGrid() {
           <TrackInfo key={i} trackId={i} />
         ))}
       </div>
-      {/* Right scrollable: column header (-) buttons + 8 cell rows + trailing + button */}
+      {/* Right scrollable: per-block remove header + 8 cell rows + trailing + button */}
       <div className="flex-1 min-w-0 overflow-x-auto">
         <div className="inline-flex flex-col gap-1">
           <div className="flex items-center" style={{ gap: STEP_GAP }}>
-            {Array.from({ length: stepCount }, (_, j) => (
-              <ColumnHeader
-                key={j}
-                stepIndex={j}
-                hovered={hoveredCol === j}
+            {Array.from({ length: Math.ceil(stepCount / STEP_COUNT_INCREMENT) }, (_, b) => (
+              <BlockHeader
+                key={b}
+                blockIndex={b}
+                hovered={
+                  hoveredCol !== null &&
+                  Math.floor(hoveredCol / STEP_COUNT_INCREMENT) === b
+                }
                 canRemove={canRemove}
                 onHover={setHoveredCol}
               />
