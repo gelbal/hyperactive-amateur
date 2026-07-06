@@ -206,6 +206,45 @@ describe("media", () => {
     for (const track of newerStream._tracks) expect(track.stop).not.toHaveBeenCalled();
   });
 
+  it("a stale acquire's device fallback neither clears newer preferred devices nor retries", async () => {
+    useAppStore.getState().actions.setPreferredDevices({
+      video: "cam-old",
+      audio: "mic-old",
+    });
+    const older = deferred<MediaStream>();
+    const newer = deferred<MediaStream>();
+    const newerStream = makeFakeStream();
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValue(makeFakeStream())
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    const olderAcquire = acquireRecordingStream();
+    useAppStore.getState().actions.setPreferredDevices({
+      video: "cam-new",
+      audio: "mic-new",
+    });
+    const newerAcquire = acquireRecordingStream();
+
+    newer.resolve(newerStream);
+    await expect(newerAcquire).resolves.toBe(newerStream);
+
+    older.reject(new DOMException("device disappeared", "NotFoundError"));
+    await olderAcquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.videoDeviceId).toBe("cam-new");
+    expect(useAppStore.getState().media.audioDeviceId).toBe("mic-new");
+    // No fallback retry may fire for the stale acquire.
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().media.stream).toBe(newerStream);
+    expect(useAppStore.getState().media.status).toBe("granted");
+  });
+
   it("invalidatePendingAcquire makes a pending acquire stale: late resolve stops tracks, installs nothing", async () => {
     useAppStore.getState().actions.setMedia({
       stream: null,

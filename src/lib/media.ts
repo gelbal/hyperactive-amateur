@@ -91,11 +91,17 @@ function isStaleDeviceError(err: unknown): boolean {
   return name === "NotFoundError" || name === "OverconstrainedError";
 }
 
-async function getUserMediaWithDeviceFallback(): Promise<MediaStream> {
+// `token` scopes the destructive half of the fallback: an acquire whose token
+// was superseded while getUserMedia was pending must not clear the user's
+// newer device choices or fire the retry — it just rethrows and lets the
+// caller's stale handling run. requestMedia passes no token: its single-flight
+// guard means the fallback is always current there.
+async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStream> {
   try {
     return await navigator.mediaDevices.getUserMedia(buildConstraints());
   } catch (err) {
     if (!isStaleDeviceError(err)) throw err;
+    if (token !== undefined && token !== acquireGeneration) throw err;
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
     return navigator.mediaDevices.getUserMedia(buildConstraints());
   }
@@ -110,7 +116,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
   try {
-    const stream = await getUserMediaWithDeviceFallback();
+    const stream = await getUserMediaWithDeviceFallback(token);
     if (token !== acquireGeneration) {
       releaseMediaStream(stream);
       throw new DOMException("Stale media acquisition", "AbortError");
