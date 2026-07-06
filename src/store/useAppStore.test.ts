@@ -14,7 +14,12 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { __resetMediaForTesting } from "../lib/media";
-import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
+import { logger, LOG_EVENTS } from "../lib/logger";
+import {
+  APP_MODE_STORAGE_KEY,
+  AUDIO_DEVICE_STORAGE_KEY,
+  VIDEO_DEVICE_STORAGE_KEY,
+} from "./initialState";
 import type { Clip } from "../types";
 import { useAppStore } from "./useAppStore";
 
@@ -68,6 +73,7 @@ describe("useAppStore", () => {
     __resetMediaForTesting();
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
     get().actions.setIsExporting(false);
+    window.localStorage.removeItem(APP_MODE_STORAGE_KEY);
     window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
     window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
     get().actions.reset();
@@ -577,6 +583,134 @@ describe("useAppStore", () => {
     expect(applied).toBe(false);
     expect(get().project.tracks[0].steps.every(Boolean)).toBe(false);
     expect(get().session.projectRevision).toBeGreaterThan(revision);
+  });
+
+  describe("mood slice", () => {
+    it("defaults to Chop mode and persists the last selected mode", () => {
+      expect(get().appMode).toBe("chop");
+
+      get().actions.setAppMode("mood");
+
+      expect(get().appMode).toBe("mood");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBe("mood");
+
+      get().actions.reset();
+      expect(get().appMode).toBe("mood");
+
+      window.localStorage.setItem(APP_MODE_STORAGE_KEY, "not-a-mode");
+      get().actions.reset();
+      expect(get().appMode).toBe("chop");
+    });
+
+    it("creates an empty Mood piece with idle all-Off performance state", () => {
+      const revision = get().session.moodRevision;
+
+      get().actions.createMoodPiece("row", "click", { bpm: 132, cycleBars: 4 });
+
+      expect(get().mood.piece).toMatchObject({
+        moodSchemaVersion: 1,
+        stage: "row",
+        timeFeel: "click",
+        bpm: 132,
+        cycleBars: 4,
+        cycleSeconds: null,
+        vibe: "clean",
+        lens: "wall",
+      });
+      expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual(["mic-0", "mic-1"]);
+      expect(get().mood.hydration).toBe("ready");
+      expect(get().mood.performance).toMatchObject({
+        isPerforming: false,
+        epoch: null,
+        selections: { "mic-0": "off", "mic-1": "off" },
+        armed: { "mic-0": null, "mic-1": null },
+        dropActive: false,
+        hotMicId: null,
+        cycleCount: 0,
+      });
+      expect(get().session.moodRevision).toBe(revision + 1);
+    });
+
+    it("rejects a Click piece without positive bpm and logs an HA event", () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const revision = get().session.moodRevision;
+
+      get().actions.createMoodPiece("corners", "click", { bpm: 0 });
+
+      expect(get().mood.piece).toBeNull();
+      expect(get().session.moodRevision).toBe(revision);
+      expect(warn).toHaveBeenCalledWith(
+        LOG_EVENTS.MOOD_CLICK_BPM_REJECTED,
+        expect.objectContaining({ stage: "corners", bpm: 0 }),
+      );
+      warn.mockRestore();
+    });
+
+    it("freezes piece writers during export while performance actions remain live", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      const pieceBeforeExport = get().mood.piece;
+      const revisionBeforeExport = get().session.moodRevision;
+      get().actions.setIsExporting(true);
+
+      get().actions.createMoodPiece("stack", "pocket");
+      get().actions.scratchMoodPiece();
+      get().actions.armMoodSelection("mic-0", "take-a");
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+      get().actions.setMoodDrop(true);
+
+      expect(get().mood.piece).toBe(pieceBeforeExport);
+      expect(get().session.moodRevision).toBe(revisionBeforeExport);
+      expect(get().mood.performance.selections["mic-0"]).toBe("take-a");
+      expect(get().mood.performance.armed["mic-0"]).toBeNull();
+      expect(get().mood.performance.dropActive).toBe(true);
+      get().actions.setIsExporting(false);
+    });
+
+    it("resets transient performance state on mode switch", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      get().actions.setMoodPerforming(true, 12.5);
+      get().actions.armMoodSelection("mic-1", "take-b");
+      get().actions.setMoodDrop(true);
+      get().actions.setMoodHotMic("mic-2");
+      get().actions.setMoodCycleCount(7);
+
+      get().actions.setAppMode("mood");
+
+      expect(get().mood.performance).toEqual({
+        isPerforming: false,
+        epoch: null,
+        selections: {},
+        armed: {},
+        dropActive: false,
+        hotMicId: null,
+        cycleCount: 0,
+      });
+    });
+
+    it("bumps moodRevision for piece mutations but not performance mutations", () => {
+      const start = get().session.moodRevision;
+
+      get().actions.armMoodSelection("mic-0", "take-a");
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+      get().actions.setMoodPerforming(true, 4);
+      get().actions.setMoodDrop(true);
+      get().actions.setMoodHotMic("mic-0");
+      get().actions.setMoodCycleCount(2);
+      expect(get().session.moodRevision).toBe(start);
+
+      get().actions.createMoodPiece("row", "pocket");
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodPerforming(true, 8);
+      get().actions.scratchMoodPiece();
+      expect(get().mood.piece).not.toBeNull();
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodPerforming(false);
+      get().actions.scratchMoodPiece();
+      expect(get().mood.piece).toBeNull();
+      expect(get().session.moodRevision).toBe(start + 2);
+    });
   });
 
   describe("restoreTrackAudio", () => {

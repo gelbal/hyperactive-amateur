@@ -2,10 +2,16 @@
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
 import type {
+  AppMode,
   AppState,
   Clip,
   CutSubdivision,
   MediaStatus,
+  MoodPiece,
+  MoodSelectionCommit,
+  MoodSelectionEntry,
+  MoodStageId,
+  MoodTimeFeel,
   RecordingState,
   StorageDurability,
   Subgenre,
@@ -15,8 +21,12 @@ import type {
 import { clearProject } from "../lib/persistence";
 import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
+import { LOG_EVENTS, logger } from "../lib/logger";
+import { createEmptyMoodPiece } from "../lib/moodStages";
 import {
+  APP_MODE_STORAGE_KEY,
   AUDIO_DEVICE_STORAGE_KEY,
+  createIdleMoodPerformance,
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
@@ -29,6 +39,15 @@ function persistDeviceId(key: string, value: string | null): void {
   try {
     if (value) window.localStorage.setItem(key, value);
     else window.localStorage.removeItem(key);
+  } catch {
+    // localStorage may be disabled in private mode; persistence is best-effort.
+  }
+}
+
+function persistAppMode(mode: AppMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
   } catch {
     // localStorage may be disabled in private mode; persistence is best-effort.
   }
@@ -52,7 +71,42 @@ function bumpProjectRevision(session: AppState["session"]): AppState["session"] 
   return { ...session, projectRevision: session.projectRevision + 1 };
 }
 
+function bumpMoodRevision(session: AppState["session"]): AppState["session"] {
+  return { ...session, moodRevision: session.moodRevision + 1 };
+}
+
+function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["performance"] {
+  const selections: Record<string, MoodSelectionEntry> = {};
+  const armed: Record<string, MoodSelectionEntry | null> = {};
+  for (const mic of piece.mics) {
+    selections[mic.id] = "off";
+    armed[mic.id] = null;
+  }
+  return {
+    ...createIdleMoodPerformance(),
+    selections,
+    armed,
+  };
+}
+
+function hasPositiveBpm(bpm: number | undefined): bpm is number {
+  return typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0;
+}
+
 export interface AppActions {
+  setAppMode: (mode: AppMode) => void;
+  createMoodPiece: (
+    stage: MoodStageId,
+    timeFeel: MoodTimeFeel,
+    opts?: { bpm?: number; cycleBars?: NonNullable<MoodPiece["cycleBars"]> },
+  ) => void;
+  scratchMoodPiece: () => void;
+  setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
+  armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
+  commitMoodSelections: (dueArms: MoodSelectionCommit[]) => void;
+  setMoodDrop: (dropActive: boolean) => void;
+  setMoodHotMic: (micId: string | null) => void;
+  setMoodCycleCount: (cycleCount: number) => void;
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
   setSwing: (swing: number) => void;
@@ -120,6 +174,122 @@ export const selectClipCount = (s: AppStore): number =>
 export const useAppStore = create<AppStore>((set) => ({
   ...createInitialState(),
   actions: {
+    setAppMode: (mode) => {
+      persistAppMode(mode);
+      set((state) => ({
+        appMode: mode,
+        mood: { ...state.mood, performance: createIdleMoodPerformance() },
+      }));
+    },
+
+    createMoodPiece: (stage, timeFeel, opts) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (timeFeel === "click" && !hasPositiveBpm(opts?.bpm)) {
+          logger.warn(LOG_EVENTS.MOOD_CLICK_BPM_REJECTED, {
+            stage,
+            bpm: opts?.bpm ?? null,
+          });
+          return state;
+        }
+        const piece = createEmptyMoodPiece(stage, timeFeel, opts);
+        return {
+          mood: {
+            piece,
+            hydration: "ready",
+            performance: createMoodPerformanceForPiece(piece),
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    scratchMoodPiece: () =>
+      set((state) => {
+        if (state.playback.isExporting || state.mood.performance.isPerforming) return state;
+        if (!state.mood.piece) return state;
+        return {
+          mood: {
+            piece: null,
+            hydration: "ready",
+            performance: createIdleMoodPerformance(),
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    setMoodPerforming: (isPerforming, epoch = null) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: isPerforming
+            ? {
+                ...state.mood.performance,
+                isPerforming: true,
+                epoch,
+                dropActive: false,
+                hotMicId: null,
+                cycleCount: 0,
+              }
+            : createIdleMoodPerformance(),
+        },
+      })),
+
+    armMoodSelection: (micId, entry) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: {
+            ...state.mood.performance,
+            armed: { ...state.mood.performance.armed, [micId]: entry },
+          },
+        },
+      })),
+
+    commitMoodSelections: (dueArms) =>
+      set((state) => {
+        if (dueArms.length === 0) return state;
+        const selections = { ...state.mood.performance.selections };
+        const armed = { ...state.mood.performance.armed };
+        for (const { micId, entry } of dueArms) {
+          selections[micId] = entry;
+          armed[micId] = null;
+        }
+        return {
+          mood: {
+            ...state.mood,
+            performance: {
+              ...state.mood.performance,
+              selections,
+              armed,
+            },
+          },
+        };
+      }),
+
+    setMoodDrop: (dropActive) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: { ...state.mood.performance, dropActive },
+        },
+      })),
+
+    setMoodHotMic: (hotMicId) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: { ...state.mood.performance, hotMicId },
+        },
+      })),
+
+    setMoodCycleCount: (cycleCount) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: { ...state.mood.performance, cycleCount },
+        },
+      })),
+
     toggleStep: (trackId, stepIndex) =>
       set((state) => {
         if (state.playback.isExporting) return state;

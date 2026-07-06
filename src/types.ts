@@ -60,6 +60,8 @@ export type MoodVibeId = "clean" | "print" | "mixtape" | "blocks" | "camcorder";
 
 export type MoodPart = "lead" | "harmony" | "bass" | "beatbox" | "adlib";
 
+export type AppMode = "chop" | "mood";
+
 export interface MoodTake {
   id: string;
   // Persisted recording blobs. The video blob is immutable; trim points below
@@ -103,6 +105,31 @@ export interface MoodPiece {
   lens: MoodLens;
   mics: MoodMic[];
   updatedAt: number;
+}
+
+export type MoodSelectionEntry = string | "off";
+
+export interface MoodSelectionCommit {
+  micId: string;
+  entry: MoodSelectionEntry;
+}
+
+export interface MoodPerformanceState {
+  isPerforming: boolean;
+  epoch: number | null;
+  selections: Record<string, MoodSelectionEntry>;
+  armed: Record<string, MoodSelectionEntry | null>;
+  dropActive: boolean;
+  hotMicId: string | null;
+  cycleCount: number;
+}
+
+export type MoodHydrationState = "cold" | "hydrating" | "ready";
+
+export interface MoodSlice {
+  piece: MoodPiece | null;
+  hydration: MoodHydrationState;
+  performance: MoodPerformanceState;
 }
 
 export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
@@ -205,6 +232,9 @@ export interface SessionSlice {
   // Monotonic in-memory counter for edits that make pending AI pattern
   // responses stale. Not persisted; reloads start a fresh active project.
   projectRevision: number;
+  // Monotonic in-memory counter for Mood piece edits that make async
+  // refinements stale. Performance-only state does not bump it.
+  moodRevision: number;
   // Browser storage durability for this session. Not persisted because it is
   // a property of the current browser bucket, not the project.
   storageDurability: StorageDurability;
@@ -221,7 +251,9 @@ export interface SessionSlice {
 }
 
 export interface AppState {
+  appMode: AppMode;
   project: ProjectState;
+  mood: MoodSlice;
   playback: PlaybackState;
   recording: RecordingSlice;
   ui: UiState;
