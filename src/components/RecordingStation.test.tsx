@@ -10,6 +10,7 @@ vi.mock("../lib/recordingFlow", () => ({
 import { RecordingStation } from "./RecordingStation";
 import { TrackInfo } from "./TrackInfo";
 import { __resetInstallForTesting, captureInstallPrompt } from "../lib/install";
+import { __resetMediaForTesting } from "../lib/media";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
@@ -56,6 +57,7 @@ function stubMatchMedia({
 describe("RecordingStation", () => {
   beforeEach(() => {
     __resetInstallForTesting();
+    __resetMediaForTesting();
     recordIntoTrack.mockReset();
     useAppStore.getState().actions.reset();
     window.matchMedia = originalMatchMedia;
@@ -194,6 +196,82 @@ describe("RecordingStation", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
     expect(screen.getAllByText(INTERRUPTION_COPY)).toHaveLength(1);
+  });
+
+  it("does not let a preview acquire that fails after unmount mark media as denied", async () => {
+    // Playback starting unmounts the station mid-acquire; the user did not
+    // deny anything, so a late getUserMedia failure must not flip the gate
+    // to the blocked state.
+    useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+    let rejectAcquire: (err: Error) => void = () => undefined;
+    const originalMediaDevices = navigator.mediaDevices;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(
+          () =>
+            new Promise<MediaStream>((_, reject) => {
+              rejectAcquire = reject;
+            }),
+        ),
+      },
+    });
+    try {
+      const { unmount } = render(<RecordingStation />);
+      unmount();
+      await act(async () => {
+        rejectAcquire(new DOMException("device busy", "NotReadableError"));
+        await Promise.resolve();
+      });
+      expect(useAppStore.getState().media.status).toBe("granted");
+      expect(useAppStore.getState().media.error).toBeNull();
+    } finally {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+    }
+  });
+
+  it("releases a preview stream that resolves after unmount instead of installing it", async () => {
+    useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+    const stops = [vi.fn(), vi.fn()];
+    const fakeStream = {
+      getTracks: () => [{ stop: stops[0] }, { stop: stops[1] }],
+      getVideoTracks: () => [{ stop: stops[0] }],
+      getAudioTracks: () => [{ stop: stops[1] }],
+    } as unknown as MediaStream;
+    let resolveAcquire: (stream: MediaStream) => void = () => undefined;
+    const originalMediaDevices = navigator.mediaDevices;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(
+          () =>
+            new Promise<MediaStream>((resolve) => {
+              resolveAcquire = resolve;
+            }),
+        ),
+      },
+    });
+    try {
+      const { unmount } = render(<RecordingStation />);
+      unmount();
+      await act(async () => {
+        resolveAcquire(fakeStream);
+        await Promise.resolve();
+      });
+      // The camera light goes back off and nothing was installed.
+      expect(stops[0]).toHaveBeenCalled();
+      expect(stops[1]).toHaveBeenCalled();
+      expect(useAppStore.getState().media.stream).toBeNull();
+      expect(useAppStore.getState().media.status).toBe("granted");
+    } finally {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+    }
   });
 
   it("shows the manual install hint before clips under feature signals without reading an iOS UA", async () => {
