@@ -8,9 +8,11 @@ import type {
   CutSubdivision,
   MediaStatus,
   MoodPiece,
+  MoodPart,
   MoodSelectionCommit,
   MoodSelectionEntry,
   MoodStageId,
+  MoodTake,
   MoodTimeFeel,
   RecordingState,
   StorageDurability,
@@ -22,7 +24,13 @@ import { clearProject } from "../lib/persistence";
 import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
 import { LOG_EVENTS, logger } from "../lib/logger";
-import { createEmptyMoodPiece } from "../lib/moodStages";
+import {
+  createEmptyMoodPiece,
+  establishCycleFromClick,
+  establishCycleFromTake,
+  MAX_TAKES_PER_MIC,
+  STAGE_DESCRIPTORS,
+} from "../lib/moodStages";
 import {
   APP_MODE_STORAGE_KEY,
   AUDIO_DEVICE_STORAGE_KEY,
@@ -93,6 +101,44 @@ function hasPositiveBpm(bpm: number | undefined): bpm is number {
   return typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0;
 }
 
+function establishCycleForTake(piece: MoodPiece, take: MoodTake): number {
+  if (piece.timeFeel === "click" && piece.bpm !== null && piece.cycleBars !== null) {
+    return establishCycleFromClick(piece.bpm, piece.cycleBars);
+  }
+  return establishCycleFromTake(take.durationSeconds);
+}
+
+function revokeMoodTakeObjectUrls(take: MoodTake): void {
+  if (take.url) URL.revokeObjectURL(take.url);
+  if (take.posterUrl) URL.revokeObjectURL(take.posterUrl);
+}
+
+function clearMoodTakePerformanceRefs(
+  performance: AppState["mood"]["performance"],
+  takeId: string,
+): AppState["mood"]["performance"] {
+  let selections = performance.selections;
+  let armed = performance.armed;
+
+  for (const [micId, entry] of Object.entries(performance.selections)) {
+    if (entry === takeId) {
+      if (selections === performance.selections) selections = { ...performance.selections };
+      selections[micId] = "off";
+    }
+  }
+
+  for (const [micId, entry] of Object.entries(performance.armed)) {
+    if (entry === takeId) {
+      if (armed === performance.armed) armed = { ...performance.armed };
+      armed[micId] = "off";
+    }
+  }
+
+  return selections === performance.selections && armed === performance.armed
+    ? performance
+    : { ...performance, selections, armed };
+}
+
 export interface AppActions {
   setAppMode: (mode: AppMode) => void;
   createMoodPiece: (
@@ -107,6 +153,27 @@ export interface AppActions {
   setMoodDrop: (dropActive: boolean) => void;
   setMoodHotMic: (micId: string | null) => void;
   setMoodCycleCount: (cycleCount: number) => void;
+  setMoodTake: (micId: string, take: MoodTake) => void;
+  attachMoodTakePoster: (
+    micId: string,
+    takeId: string,
+    posterBlob: Blob | null,
+    posterUrl: string | null,
+  ) => void;
+  deleteMoodTake: (micId: string, takeId: string) => void;
+  applyMoodSyncOffsetIfCurrent: (
+    micId: string,
+    takeId: string,
+    offsetMs: number,
+    expectedRevision: number,
+  ) => boolean;
+  applyMoodPartIfCurrent: (
+    micId: string,
+    takeId: string,
+    part: MoodPart | null,
+    source: "ai" | "user",
+    expectedRevision: number,
+  ) => boolean;
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
   setSwing: (swing: number) => void;
@@ -289,6 +356,201 @@ export const useAppStore = create<AppStore>((set) => ({
           performance: { ...state.mood.performance, cycleCount },
         },
       })),
+
+    setMoodTake: (micId, take) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        const micIndex = piece.mics.findIndex((mic) => mic.id === micId);
+        if (micIndex === -1) return state;
+        const mic = piece.mics[micIndex];
+        if (mic.takes.length >= MAX_TAKES_PER_MIC) {
+          logger.warn(LOG_EVENTS.MOOD_TAKE_LIMIT_REJECTED, {
+            micId,
+            takeId: take.id,
+            maxTakes: MAX_TAKES_PER_MIC,
+          });
+          return state;
+        }
+
+        let mics = piece.mics.map((candidate, index) =>
+          index === micIndex ? { ...candidate, takes: [...candidate.takes, take] } : candidate,
+        );
+        let performance = state.mood.performance;
+        const descriptor = STAGE_DESCRIPTORS[piece.stage];
+        if (
+          descriptor.linearAxis &&
+          mics.length < descriptor.maxMics &&
+          mics.every((candidate) => candidate.takes.length > 0)
+        ) {
+          const nextMicId = `mic-${mics.length}`;
+          mics = [...mics, { id: nextMicId, takes: [] }];
+          performance = {
+            ...performance,
+            selections: { ...performance.selections, [nextMicId]: "off" },
+            armed: { ...performance.armed, [nextMicId]: null },
+          };
+        }
+
+        const cyclePatch =
+          piece.cycleSeconds === null
+            ? {
+                cycleSeconds: establishCycleForTake(piece, take),
+                oneMicId: micId,
+                oneTakeId: take.id,
+              }
+            : {};
+
+        return {
+          mood: {
+            ...state.mood,
+            piece: {
+              ...piece,
+              ...cyclePatch,
+              mics,
+              updatedAt: Date.now(),
+            },
+            performance,
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    attachMoodTakePoster: (micId, takeId, posterBlob, posterUrl) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let attached = false;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.map((take) => {
+            if (take.id !== takeId) return take;
+            attached = true;
+            if (take.posterUrl && take.posterUrl !== posterUrl) {
+              URL.revokeObjectURL(take.posterUrl);
+            }
+            return { ...take, posterBlob, posterUrl };
+          });
+          return attached ? { ...mic, takes } : mic;
+        });
+        if (!attached) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: { ...piece, mics, updatedAt: Date.now() },
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    deleteMoodTake: (micId, takeId) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let deleted: MoodTake | null = null;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.filter((take) => {
+            if (take.id !== takeId) return true;
+            deleted = take;
+            return false;
+          });
+          return takes.length === mic.takes.length ? mic : { ...mic, takes };
+        });
+        if (!deleted) return state;
+
+        revokeMoodTakeObjectUrls(deleted);
+        const remainingTakeCount = mics.reduce((count, mic) => count + mic.takes.length, 0);
+        const deletedTheOne = piece.oneMicId === micId && piece.oneTakeId === takeId;
+        const onePatch =
+          remainingTakeCount === 0
+            ? { cycleSeconds: null, oneMicId: null, oneTakeId: null }
+            : deletedTheOne
+              ? { oneMicId: null, oneTakeId: null }
+              : {};
+
+        return {
+          mood: {
+            ...state.mood,
+            piece: {
+              ...piece,
+              ...onePatch,
+              mics,
+              updatedAt: Date.now(),
+            },
+            performance: clearMoodTakePerformanceRefs(state.mood.performance, takeId),
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    applyMoodSyncOffsetIfCurrent: (micId, takeId, offsetMs, expectedRevision) => {
+      let applied = false;
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (state.session.moodRevision !== expectedRevision) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let found = false;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.map((take) => {
+            if (take.id !== takeId) return take;
+            found = true;
+            return { ...take, syncOffsetMs: offsetMs };
+          });
+          return found ? { ...mic, takes } : mic;
+        });
+        if (!found) return state;
+        applied = true;
+        return {
+          mood: {
+            ...state.mood,
+            piece: { ...piece, mics, updatedAt: Date.now() },
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      });
+      return applied;
+    },
+
+    applyMoodPartIfCurrent: (micId, takeId, part, source, expectedRevision) => {
+      let applied = false;
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (state.session.moodRevision !== expectedRevision) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let found = false;
+        let blockedByManualPart = false;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.map((take) => {
+            if (take.id !== takeId) return take;
+            found = true;
+            if (source === "ai" && take.partSource === "user") {
+              blockedByManualPart = true;
+              return take;
+            }
+            return { ...take, part, partSource: source };
+          });
+          return found && !blockedByManualPart ? { ...mic, takes } : mic;
+        });
+        if (!found || blockedByManualPart) return state;
+        applied = true;
+        return {
+          mood: {
+            ...state.mood,
+            piece: { ...piece, mics, updatedAt: Date.now() },
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      });
+      return applied;
+    },
 
     toggleStep: (trackId, stepIndex) =>
       set((state) => {
