@@ -71,6 +71,12 @@ export interface AppActions {
   markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
   setTrackPoster: (trackId: number, posterBlob: Blob | null, expectedClip?: Clip) => void;
+  restoreTrackAudio: (
+    trackId: number,
+    audioBuffer: AudioBuffer,
+    audioBlob?: Blob | null,
+    expectedClip?: Clip,
+  ) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (
     trackId: number,
@@ -348,6 +354,45 @@ export const useAppStore = create<AppStore>((set) => ({
                 : track,
             ),
           },
+        };
+      }),
+
+    // Heal a repair-state clip whose audio decoded successfully after the
+    // fact (see lib/audioRepair.ts). Mirrors setTrackClip's repair-mute rule:
+    // only a repair-owned mute is released; user mutes stay.
+    restoreTrackAudio: (trackId, audioBuffer, audioBlob, expectedClip) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const track = state.project.tracks[trackId];
+        const clip = track?.clip;
+        if (!clip || clip.audioStatus !== "unavailable") return state;
+        // A repair decoded from a clip that has since been replaced must not
+        // graft its audio onto the newer clip.
+        if (expectedClip && clip !== expectedClip) return state;
+        const nextClip: Clip = {
+          ...clip,
+          audioBuffer,
+          audioStatus: "ok",
+          audioBlob: audioBlob !== undefined ? audioBlob : (clip.audioBlob ?? null),
+        };
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((t) =>
+              t.id === trackId
+                ? {
+                    ...t,
+                    clip: nextClip,
+                    muted: t.mutedByRepair ? false : t.muted,
+                    mutedByRepair: false,
+                    // The audio sidecar reference may have changed — invalidate
+                    // the persistence blob-reference cache for this track.
+                    blobRevision: (t.blobRevision ?? 0) + 1,
+                  }
+                : t,
+            ),
+          },
+          session: bumpProjectRevision(state.session),
         };
       }),
 

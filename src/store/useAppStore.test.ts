@@ -578,4 +578,64 @@ describe("useAppStore", () => {
     expect(get().project.tracks[0].steps.every(Boolean)).toBe(false);
     expect(get().session.projectRevision).toBeGreaterThan(revision);
   });
+
+  describe("restoreTrackAudio", () => {
+    const healedBuffer = { duration: 0.7, sampleRate: 48000 } as AudioBuffer;
+
+    it("heals an unavailable clip in place and releases a repair-owned mute", () => {
+      get().actions.setTrackClip(0, makeClip({ audioBuffer: null, audioStatus: "unavailable" }));
+      useAppStore.setState((state) => ({
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.map((t) =>
+            t.id === 0 ? { ...t, muted: true, mutedByRepair: true } : t,
+          ),
+        },
+      }));
+      const sidecar = new Blob([new Uint8Array([7])], { type: "audio/wav" });
+      const beforeRevision = get().session.projectRevision;
+      const beforeBlobRevision = get().project.tracks[0].blobRevision ?? 0;
+
+      get().actions.restoreTrackAudio(0, healedBuffer, sidecar);
+
+      const track = get().project.tracks[0];
+      expect(track.clip?.audioStatus).toBe("ok");
+      expect(track.clip?.audioBuffer).toBe(healedBuffer);
+      expect(track.clip?.audioBlob).toBe(sidecar);
+      expect(track.muted).toBe(false);
+      expect(track.mutedByRepair).toBe(false);
+      // The audio sidecar reference changed, so the content-address cache
+      // must be invalidated through a blobRevision bump.
+      expect(track.blobRevision).toBe(beforeBlobRevision + 1);
+      expect(get().session.projectRevision).toBeGreaterThan(beforeRevision);
+    });
+
+    it("keeps a user-owned mute when healing", () => {
+      get().actions.setTrackClip(0, makeClip({ audioBuffer: null, audioStatus: "unavailable" }));
+      get().actions.setTrackMuted(0, true);
+
+      get().actions.restoreTrackAudio(0, healedBuffer);
+
+      const track = get().project.tracks[0];
+      expect(track.clip?.audioStatus).toBe("ok");
+      expect(track.muted).toBe(true);
+      expect(track.mutedByRepair).toBe(false);
+    });
+
+    it("no-ops for healthy clips, empty tracks, and during export", () => {
+      const healthy = makeClip();
+      get().actions.setTrackClip(0, healthy);
+      get().actions.restoreTrackAudio(0, healedBuffer);
+      expect(get().project.tracks[0].clip).toBe(healthy);
+
+      get().actions.restoreTrackAudio(3, healedBuffer);
+      expect(get().project.tracks[3].clip).toBeNull();
+
+      get().actions.setTrackClip(1, makeClip({ audioBuffer: null, audioStatus: "unavailable" }));
+      get().actions.setIsExporting(true);
+      get().actions.restoreTrackAudio(1, healedBuffer);
+      expect(get().project.tracks[1].clip?.audioStatus).toBe("unavailable");
+      get().actions.setIsExporting(false);
+    });
+  });
 });
