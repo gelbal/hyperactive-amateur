@@ -3,6 +3,7 @@
 import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
+import { LOG_EVENTS, logger } from "./logger";
 
 export type TagOrUntagged = Tag | "untagged";
 
@@ -25,6 +26,8 @@ export interface TriggerEvent {
   trackId: number;
   // Audio context seconds (Tone.now base) when the trigger fired.
   startTime: number;
+  // Trimmed visual duration in milliseconds, when known for displayed events.
+  trimDurationMs?: number;
 }
 
 // Pre-seek lookahead. A real <video> element needs a few render frames
@@ -33,6 +36,7 @@ export interface TriggerEvent {
 // the hard-cut shows a stale paused frame. Doing the seek slightly early
 // (and the play exactly on time) leaves the element ready to render.
 const LOOKAHEAD_S = 0.08;
+const HAVE_CURRENT_DATA = 2;
 
 let host: HTMLDivElement | null = null;
 const videos = new Map<number, HTMLVideoElement>();
@@ -44,12 +48,17 @@ const metadataReady = new Map<number, boolean>();
 const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
+let pendingCommit: TriggerEvent | null = null;
+let lastDrawn: TriggerEvent | null = null;
+let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
 let boundaryEventId: number | null = null;
+let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = null;
 let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
 let activeCanvas: HTMLCanvasElement | null = null;
+let playbackEpoch = 0;
 
 export function setActiveCanvas(canvas: HTMLCanvasElement | null): void {
   activeCanvas = canvas;
@@ -102,21 +111,53 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   metadataReady.set(trackId, false);
 }
 
-function startPlayback(trackId: number, when: number): void {
+function isSameBoundary(left: number, right: number): boolean {
+  return Math.abs(left - right) < 0.000001;
+}
+
+function isSameEvent(left: TriggerEvent | null, right: TriggerEvent | null): boolean {
+  return (
+    !!left &&
+    !!right &&
+    left.trackId === right.trackId &&
+    isSameBoundary(left.startTime, right.startTime)
+  );
+}
+
+function seekToTrimStart(trackId: number): boolean {
   const video = videos.get(trackId);
   const trim = trims.get(trackId);
-  if (!video || !trim) return;
+  if (!video || !trim) return false;
 
-  const seek = () => {
-    try {
-      video.currentTime = trim.startMs / 1000;
-    } catch {
-      // currentTime can throw before metadata loads; later triggers retry.
-    }
-  };
-  const play = () => {
-    void video.play().catch(() => undefined);
-  };
+  try {
+    video.currentTime = trim.startMs / 1000;
+  } catch {
+    // currentTime can throw before metadata loads; later triggers retry.
+  }
+  return true;
+}
+
+function playTrack(trackId: number): void {
+  const video = videos.get(trackId);
+  if (!video) return;
+  void video.play().catch(() => undefined);
+}
+
+function pauseTrack(trackId: number): void {
+  videos.get(trackId)?.pause();
+}
+
+function clearPreparedState(): void {
+  if (!preparedBoundary) return;
+  pauseTrack(preparedBoundary.event.trackId);
+  preparedBoundary = null;
+}
+
+function startPlayback(trackId: number, when: number): void {
+  if (!videos.has(trackId) || !trims.has(trackId)) return;
+
+  const seek = () => seekToTrimStart(trackId);
+  const play = () => playTrack(trackId);
 
   const draw = Tone.getDraw();
   const now = Tone.now();
@@ -136,20 +177,62 @@ function startPlayback(trackId: number, when: number): void {
   draw.schedule(play, when);
 }
 
+function resolveBoundaryWinner(boundaryTime: number): TriggerEvent | null {
+  const interval = subdivisionToSeconds(cutSubdivision);
+  const contexts = readTrackContexts();
+  const result = quantizeToBoundary(
+    pendingTriggers,
+    boundaryTime - interval,
+    boundaryTime,
+    contexts,
+  );
+  const holdMs = useAppStore.getState().project.sameTierHoldMs;
+  const winner = pickWithDucking(
+    result.consumed,
+    currentlyDisplayed,
+    boundaryTime,
+    holdMs,
+    contexts,
+  );
+  return isSameEvent(winner, currentlyDisplayed) ? null : winner;
+}
+
+export function prepareUpcoming(
+  boundaryTime: number,
+  winner: TriggerEvent | null = resolveBoundaryWinner(boundaryTime),
+  current: TriggerEvent | null = currentlyDisplayed,
+): void {
+  if (!winner || isSameEvent(winner, current)) return;
+  if (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)) {
+    if (isSameEvent(preparedBoundary.event, winner)) return;
+  }
+  clearPreparedState();
+
+  if (!seekToTrimStart(winner.trackId)) return;
+
+  playTrack(winner.trackId);
+  preparedBoundary = { boundaryTime, event: winner };
+}
+
 // Schedule the underlying video element to seek+play at the requested audio
 // time. While the Transport is running, push the event onto the pending queue
 // so the next boundary callback picks the visible cut; while it's stopped,
 // promote the trigger to the displayed event immediately (so pad clicks /
 // keyboard hits show video) and skip the queue (which would otherwise leak).
-export function trigger(trackId: number, when: number): void {
+export function trigger(trackId: number, when: number, displayStartTime = when): void {
   const trim = trims.get(trackId);
   if (!trim) return;
 
   const playing = useAppStore.getState().playback.isPlaying;
+  const event: TriggerEvent = {
+    trackId,
+    startTime: playing ? when : displayStartTime,
+    trimDurationMs: trim.endMs - trim.startMs,
+  };
   if (playing) {
-    pendingTriggers.push({ trackId, startTime: when });
+    pendingTriggers.push(event);
   } else {
-    currentlyDisplayed = { trackId, startTime: when };
+    currentlyDisplayed = event;
   }
 
   if (metadataReady.get(trackId)) {
@@ -205,15 +288,21 @@ export function pickWithDucking(
 ): TriggerEvent | null {
   const winner = pickActiveEvent(candidates, contexts);
   if (!winner) return current;
-  if (!current) return winner;
+  const activeCurrent =
+    current &&
+    current.trimDurationMs !== undefined &&
+    audioTime >= current.startTime + current.trimDurationMs / 1000
+      ? null
+      : current;
+  if (!activeCurrent) return winner;
 
   const winnerTier = tagScore(winner.trackId, contexts);
-  const currentTier = tagScore(current.trackId, contexts);
+  const currentTier = tagScore(activeCurrent.trackId, contexts);
   if (winnerTier > currentTier) return winner;
 
-  const elapsedMs = (audioTime - current.startTime) * 1000;
+  const elapsedMs = (audioTime - activeCurrent.startTime) * 1000;
   if (winnerTier === currentTier && elapsedMs < sameTierHoldMs) {
-    return current;
+    return activeCurrent;
   }
   return winner;
 }
@@ -255,8 +344,28 @@ function onCutBoundary(boundaryTime: number): void {
   pendingTriggers = result.remaining;
 
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
-  const next = pickWithDucking(result.consumed, currentlyDisplayed, boundaryTime, holdMs, contexts);
-  currentlyDisplayed = next;
+  const effectiveCurrent = pendingCommit ?? currentlyDisplayed;
+  const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
+  const epoch = playbackEpoch;
+  pendingCommit = next;
+  prepareUpcoming(boundaryTime, next, effectiveCurrent);
+  Tone.getDraw().schedule(() => {
+    if (epoch !== playbackEpoch) {
+      if (isSameEvent(pendingCommit, next)) pendingCommit = null;
+      return;
+    }
+    if (
+      preparedBoundary &&
+      isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)
+    ) {
+      if (!isSameEvent(preparedBoundary.event, next)) {
+        pauseTrack(preparedBoundary.event.trackId);
+      }
+      preparedBoundary = null;
+    }
+    currentlyDisplayed = next;
+    if (isSameEvent(pendingCommit, next)) pendingCommit = null;
+  }, boundaryTime);
 }
 
 function subdivisionToSeconds(value: CutSubdivision): number {
@@ -276,21 +385,58 @@ function subdivisionToSeconds(value: CutSubdivision): number {
   }
 }
 
+function clearCanvas(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, width, height);
+}
+
+function clearExpiredLastDrawnFrame(
+  ctx: CanvasRenderingContext2D,
+  audioTime: number,
+  width: number,
+  height: number,
+): boolean {
+  if (!lastDrawn || lastDrawn.trimDurationMs === undefined) return false;
+  const expiresAt = lastDrawn.startTime + lastDrawn.trimDurationMs / 1000;
+  if (audioTime < expiresAt) return false;
+
+  clearCanvas(ctx, width, height);
+  pauseTrack(lastDrawn.trackId);
+  lastDrawn = null;
+  return true;
+}
+
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
+  const displayed = currentlyDisplayed;
+  const video = displayed ? videos.get(displayed.trackId) : null;
+  const trim = displayed ? trims.get(displayed.trackId) : null;
 
-  ctx.fillStyle = "#0a0a0a";
-  ctx.fillRect(0, 0, w, h);
+  if (displayed && trim) {
+    const elapsedMs = (audioTime - displayed.startTime) * 1000;
+    if (elapsedMs < 0) {
+      clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+      return;
+    }
+  }
 
-  if (!currentlyDisplayed) return;
-  const video = videos.get(currentlyDisplayed.trackId);
-  const trim = trims.get(currentlyDisplayed.trackId);
-  if (!video || !trim) return;
+  if (!displayed || !video || !trim) {
+    clearCanvas(ctx, w, h);
+    lastDrawn = null;
+    return;
+  }
+
   const trimDurationMs = trim.endMs - trim.startMs;
-  const elapsedMs = (audioTime - currentlyDisplayed.startTime) * 1000;
+  const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
+    clearCanvas(ctx, w, h);
     video.pause();
+    lastDrawn = null;
+    return;
+  }
+  if (video.readyState < HAVE_CURRENT_DATA || video.seeking) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
     return;
   }
   // Cameras typically negotiate 16:9 (e.g. 1280x720) even when we ask for
@@ -298,11 +444,29 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   // rect so we draw without horizontal squish on the 1:1 canvas.
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  if (vw === 0 || vh === 0) return;
+  if (vw === 0 || vh === 0) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+    return;
+  }
   const side = Math.min(vw, vh);
   const sx = (vw - side) / 2;
   const sy = (vh - side) / 2;
-  ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+  try {
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+    lastDrawn = displayed;
+  } catch (err) {
+    if (!drawErrorLogged) {
+      drawErrorLogged = true;
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message: unknown }).message)
+          : String(err);
+      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+        trackId: displayed.trackId,
+        message,
+      });
+    }
+  }
 }
 
 function disposeBoundaryEvent(): void {
@@ -317,7 +481,10 @@ function disposeBoundaryEvent(): void {
 }
 
 function scheduleBoundaryEvent(): void {
+  playbackEpoch += 1;
+  pendingCommit = null;
   disposeBoundaryEvent();
+  clearPreparedState();
   boundaryEventId = Tone.getTransport().scheduleRepeat((time) => {
     onCutBoundary(time);
   }, cutSubdivision);
@@ -332,8 +499,12 @@ export function setVideoCutSubdivision(value: CutSubdivision): void {
 // Reset transient render state — used on stop/pause so we don't carry stale
 // triggers into the next playback session.
 export function resetPlaybackState(): void {
+  playbackEpoch += 1;
   pendingTriggers = [];
+  pendingCommit = null;
   currentlyDisplayed = null;
+  lastDrawn = null;
+  clearPreparedState();
 }
 
 // Wires the engine to the store so hidden videos stay in sync with track clips.
@@ -406,7 +577,12 @@ export function __resetVideoEngineForTesting(): void {
   metadataReady.clear();
   pendingFirstTrigger.clear();
   pendingTriggers = [];
+  pendingCommit = null;
   currentlyDisplayed = null;
+  lastDrawn = null;
+  clearPreparedState();
+  drawErrorLogged = false;
+  playbackEpoch = 0;
   if (host) {
     host.remove();
     host = null;

@@ -1,28 +1,21 @@
-// ABOUTME: videoEngine tests — the pure decision helpers plus one integration check.
-// ABOUTME: Tone is mocked deterministically; the canvas-draw path isn't exercised (jsdom can't render video frames).
+// ABOUTME: videoEngine tests — the pure decision helpers plus integration checks.
+// ABOUTME: Tone is mocked through a controllable audio clock and Draw scheduler.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// `Tone.Draw.schedule` is the audio-aligned playback scheduler. Inside
-// the videoEngine each trigger lands two scheduled callbacks (seek, play)
-// which we run immediately so the integration tests still observe the
-// post-trigger displayed state deterministically.
-const drawSchedule = vi.fn((cb: () => void, _time: number) => {
-  cb();
-  return 1;
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return { toneHarness: createToneHarness() };
 });
-vi.mock("tone", () => ({
-  now: vi.fn(() => 0),
-  getTransport: vi.fn(() => ({
-    clear: vi.fn(),
-    scheduleRepeat: vi.fn(() => 1),
-  })),
-  getDraw: vi.fn(() => ({ schedule: drawSchedule })),
-}));
+vi.mock("tone", () => toneHarness.createToneModule());
 
 import {
   drawCurrentFrame,
+  initVideoEngine,
+  resetPlaybackState,
   setClipForTrack,
+  setVideoCutSubdivision,
   trigger,
+  prepareUpcoming,
   pickActiveEvent,
   pickWithDucking,
   quantizeToBoundary,
@@ -34,6 +27,7 @@ import {
   type TriggerEvent,
 } from "./videoEngine";
 import { useAppStore } from "../store/useAppStore";
+import { LOG_EVENTS, logger } from "./logger";
 import type { Clip } from "../types";
 
 function makeClip(seed: number): Clip {
@@ -67,6 +61,46 @@ function makeCanvasContext(): CanvasRenderingContext2D {
     fillRect: vi.fn(),
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D;
+}
+
+function spyVideoPlayback(video: HTMLVideoElement) {
+  let currentTime = 0;
+  const seek = vi.fn<(value: number) => void>((value) => {
+    currentTime = value;
+  });
+  Object.defineProperty(video, "currentTime", {
+    configurable: true,
+    get: () => currentTime,
+    set: seek,
+  });
+
+  return {
+    seek,
+    play: vi.spyOn(video, "play"),
+    pause: vi.spyOn(video, "pause"),
+  };
+}
+
+function setVideoFrameState(
+  video: HTMLVideoElement,
+  state: { readyState?: number; seeking?: boolean; width?: number; height?: number },
+): void {
+  Object.defineProperty(video, "readyState", {
+    configurable: true,
+    value: state.readyState ?? 2,
+  });
+  Object.defineProperty(video, "seeking", {
+    configurable: true,
+    value: state.seeking ?? false,
+  });
+  Object.defineProperty(video, "videoWidth", {
+    configurable: true,
+    value: state.width ?? 640,
+  });
+  Object.defineProperty(video, "videoHeight", {
+    configurable: true,
+    value: state.height ?? 480,
+  });
 }
 
 describe("pickActiveEvent", () => {
@@ -121,6 +155,24 @@ describe("pickWithDucking", () => {
         ?.trackId,
     ).toBe(0);
   });
+
+  it("lets a same-tier candidate cut once the current trim has expired", () => {
+    const current = { trackId: 0, startTime: 1.0, trimDurationMs: 200 };
+
+    expect(
+      pickWithDucking([{ trackId: 1, startTime: 1.25 }], current, 1.25, 400, contexts)
+        ?.trackId,
+    ).toBe(1);
+  });
+
+  it("holds a same-tier candidate while the current trim is still visible", () => {
+    const current = { trackId: 0, startTime: 1.0, trimDurationMs: 600 };
+
+    expect(
+      pickWithDucking([{ trackId: 1, startTime: 1.25 }], current, 1.25, 400, contexts)
+        ?.trackId,
+    ).toBe(0);
+  });
 });
 
 describe("quantizeToBoundary", () => {
@@ -147,7 +199,10 @@ describe("videoEngine integration", () => {
   beforeEach(() => {
     __resetVideoEngineForTesting();
     useAppStore.getState().actions.reset();
-    drawSchedule.mockClear();
+    toneHarness.setNow(0);
+    toneHarness.setLookahead(0);
+    toneHarness.draw.reset();
+    toneHarness.transport.reset();
   });
 
   it("live trigger while not playing immediately becomes the displayed event (so pad clicks show video)", () => {
@@ -155,6 +210,21 @@ describe("videoEngine integration", () => {
     expect(useAppStore.getState().playback.isPlaying).toBe(false);
     trigger(3, 0.5);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(3);
+  });
+
+  it("stopped trigger displays on the immediate audible clock despite Tone lookahead", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    toneHarness.setImmediate(2.0);
+    toneHarness.setLookahead(0.1);
+
+    trigger(0, 2.1, 2.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.startTime).toBeCloseTo(2.0, 6);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 2.0);
+    expect(ctx.drawImage).toHaveBeenCalledTimes(1);
   });
 
   it("does not leak pendingTriggers while the transport is stopped (regression)", () => {
@@ -172,27 +242,345 @@ describe("videoEngine integration", () => {
   it("far-future triggers split seek+play across the lookahead; near-now triggers collapse to one", () => {
     setClipForTrack(4, makeClip(4));
     __markMetadataReadyForTesting(4);
-    drawSchedule.mockClear();
+    toneHarness.draw.reset();
     // Far-future: seek at 0.92, play at 1.0.
     trigger(4, 1.0);
-    const farTimes = drawSchedule.mock.calls.map((c) => c[1] as number).sort((a, b) => a - b);
+    const farTimes = toneHarness.draw.schedule.mock.calls
+      .map((c) => c[1] as number)
+      .sort((a, b) => a - b);
     expect(farTimes.length).toBe(2);
     expect(farTimes[0]).toBeCloseTo(0.92, 6);
     expect(farTimes[1]).toBeCloseTo(1.0, 6);
     // Near-now: single combined task at when.
     setClipForTrack(5, makeClip(5));
     __markMetadataReadyForTesting(5);
-    drawSchedule.mockClear();
+    toneHarness.draw.reset();
     trigger(5, 0.05);
-    expect(drawSchedule.mock.calls.length).toBe(1);
-    expect(drawSchedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
+    expect(toneHarness.draw.schedule.mock.calls.length).toBe(1);
+    expect(toneHarness.draw.schedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
+  });
+
+  it("defers cut-boundary display changes until Draw reaches the audible boundary", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("ducks the next fast boundary against the pending committed clip", () => {
+    useAppStore.getState().actions.setBpm(250);
+    initVideoEngine();
+    setVideoCutSubdivision("16n");
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    setClipForTrack(2, makeClip(2));
+    useAppStore.getState().actions.setTrackTag(0, "vocal");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    useAppStore.getState().actions.setTrackTag(2, "vocal");
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    trigger(2, 1.06);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.transport.fireRepeat(0, 1.06);
+    toneHarness.draw.advanceTo(1.06);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("ignores a stale Draw-scheduled boundary commit after reset", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+
+    trigger(0, 0.5);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    resetPlaybackState();
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+  });
+
+  it("clears a Transport-prepared winner and ignores its commit after reset", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    toneHarness.setImmediate(0.9);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+
+    resetPlaybackState();
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+
+    toneHarness.draw.advanceTo(1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("pre-seeks and plays the prepared boundary winner without changing the display", () => {
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.seek).toHaveBeenCalledWith(0);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+  });
+
+  it("pauses prepared hidden video state on reset and subdivision reschedule", () => {
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+    resetPlaybackState();
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+
+    trigger(0, 1.0);
+    prepareUpcoming(1.0);
+    setVideoCutSubdivision("16n");
+    expect(playback.pause).toHaveBeenCalledTimes(2);
+  });
+
+  it("pauses an old prepared boundary before preparing a different one", () => {
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    __markMetadataReadyForTesting(0);
+    __markMetadataReadyForTesting(1);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+
+    const [firstVideo, secondVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    const firstPlayback = spyVideoPlayback(firstVideo);
+    const secondPlayback = spyVideoPlayback(secondVideo);
+
+    prepareUpcoming(1.0);
+    trigger(1, 1.25);
+    prepareUpcoming(1.25);
+
+    expect(firstPlayback.pause).toHaveBeenCalledTimes(1);
+    expect(secondPlayback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("commits a prepared winner at the boundary without seeking it twice", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+
+    toneHarness.draw.advanceTo(1.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves no-candidate prepares alone and pauses a prepared loser", () => {
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    __markMetadataReadyForTesting(0);
+    __markMetadataReadyForTesting(1);
+    useAppStore.getState().actions.setTrackTag(0, "hat");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    useAppStore.getState().actions.setIsPlaying(true);
+
+    const [loserVideo, winnerVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    const loserPlayback = spyVideoPlayback(loserVideo);
+    const winnerPlayback = spyVideoPlayback(winnerVideo);
+
+    prepareUpcoming(1.0);
+    expect(loserPlayback.seek).not.toHaveBeenCalled();
+    expect(loserPlayback.play).not.toHaveBeenCalled();
+    expect(winnerPlayback.seek).not.toHaveBeenCalled();
+    expect(winnerPlayback.play).not.toHaveBeenCalled();
+
+    trigger(0, 1.0);
+    toneHarness.draw.reset();
+    prepareUpcoming(1.0);
+    expect(loserPlayback.play).toHaveBeenCalledTimes(1);
+
+    initVideoEngine();
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.draw.advanceTo(1.0);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+    expect(loserPlayback.pause).toHaveBeenCalled();
+  });
+
+  it("pre-seeks the boundary winner in the Transport callback before Draw commits", () => {
+    useAppStore.getState().actions.setBpm(120);
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    __markMetadataReadyForTesting(0);
+    useAppStore.getState().actions.setIsPlaying(true);
+    const target = 30.25;
+    trigger(0, target);
+    toneHarness.draw.reset();
+    toneHarness.transport.scheduleOnce.mockClear();
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(target - 0.1);
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    const playback = spyVideoPlayback(video);
+
+    toneHarness.transport.fireRepeat(0, target);
+
+    expect(toneHarness.transport.scheduleOnce).not.toHaveBeenCalled();
+    expect(__getPendingTriggerCountForTesting()).toBe(0);
+    expect(__getCurrentlyDisplayedForTesting()).toBeNull();
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.seek).toHaveBeenCalledWith(0);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(toneHarness.draw.pendingTimes()).toEqual([target]);
+
+    toneHarness.draw.advanceTo(target);
+
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the previous frame while video has only metadata", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 1 });
+
+    trigger(0, 1.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.1);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the previous frame while video is seeking", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2, seeking: true });
+
+    trigger(0, 1.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.1);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("clears an undrawable replacement once the last drawn frame expires", () => {
+    setClipForTrack(0, makeTrimmedClip());
+    setClipForTrack(1, makeClip(1));
+    const [firstVideo, secondVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    setVideoFrameState(firstVideo, { readyState: 2 });
+    setVideoFrameState(secondVideo, { readyState: 1 });
+    const pauseFirst = vi.spyOn(firstVideo, "pause");
+
+    trigger(0, 1.0);
+    const beforeEnd = makeCanvasContext();
+    drawCurrentFrame(beforeEnd, 1.1);
+    expect(beforeEnd.drawImage).toHaveBeenCalledTimes(1);
+
+    trigger(1, 1.1);
+    const afterEnd = makeCanvasContext();
+    drawCurrentFrame(afterEnd, 1.25);
+
+    expect(afterEnd.drawImage).not.toHaveBeenCalled();
+    expect(afterEnd.fillRect).toHaveBeenCalled();
+    expect(pauseFirst).toHaveBeenCalled();
+  });
+
+  it("logs drawImage failures once and draws on a later ready frame", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    trigger(0, 1.0);
+    const throwingCtx = makeCanvasContext();
+    vi.mocked(throwingCtx.drawImage).mockImplementation(() => {
+      throw new DOMException("frame unavailable", "InvalidStateError");
+    });
+
+    expect(() => drawCurrentFrame(throwingCtx, 1.1)).not.toThrow();
+    expect(() => drawCurrentFrame(throwingCtx, 1.1)).not.toThrow();
+    expect(loggerSpy).toHaveBeenCalledTimes(1);
+    expect(loggerSpy).toHaveBeenCalledWith(
+      LOG_EVENTS.VIDEO_DRAW_ERROR,
+      expect.objectContaining({ message: "frame unavailable", trackId: 0 }),
+    );
+
+    const readyCtx = makeCanvasContext();
+    drawCurrentFrame(readyCtx, 1.1);
+    expect(readyCtx.drawImage).toHaveBeenCalledTimes(1);
+    loggerSpy.mockRestore();
   });
 
   it("clears instead of drawing video after the displayed clip reaches trim end", () => {
     setClipForTrack(0, makeTrimmedClip());
     const video = document.querySelector("video") as HTMLVideoElement;
-    Object.defineProperty(video, "videoWidth", { configurable: true, value: 640 });
-    Object.defineProperty(video, "videoHeight", { configurable: true, value: 480 });
+    setVideoFrameState(video, { readyState: 2 });
     const pause = vi.spyOn(video, "pause");
 
     trigger(0, 1.0);
@@ -205,5 +593,19 @@ describe("videoEngine integration", () => {
     expect(afterEnd.drawImage).not.toHaveBeenCalled();
     expect(afterEnd.fillRect).toHaveBeenCalled();
     expect(pause).toHaveBeenCalled();
+  });
+
+  it("keeps the previous frame when the displayed event has not reached its start time", () => {
+    setClipForTrack(0, makeClip(0));
+    const video = document.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "videoWidth", { configurable: true, value: 640 });
+    Object.defineProperty(video, "videoHeight", { configurable: true, value: 480 });
+
+    trigger(0, 2.0);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.99);
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
   });
 });

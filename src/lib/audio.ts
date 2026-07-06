@@ -86,9 +86,9 @@ function onStep(stepIndex: number, time: number): void {
   }
 }
 
-// Unified trigger entry point used by the Transport, the keyboard hook, and
-// the on-screen pads. Fires audio + video at the same audio-context time.
-export function triggerTrack(trackId: number, when: number): void {
+// Unified trigger entry point used by the Transport, keyboard hook, and pads.
+// Stopped pad/key visuals can use a separate audible display time.
+export function triggerTrack(trackId: number, when: number, displayStartTime = when): void {
   const track = useAppStore.getState().project.tracks[trackId];
   if (!track || track.muted) return;
 
@@ -101,7 +101,7 @@ export function triggerTrack(trackId: number, when: number): void {
     } catch {
       // Player can reject restart-too-soon at the same time slot; safe to swallow.
     }
-    if (track.showVideo) videoEngine.trigger(trackId, when);
+    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
     useAppStore.getState().actions.markTriggered(trackId);
     return;
   }
@@ -118,7 +118,7 @@ export async function triggerTrackNow(trackId: number): Promise<void> {
   try {
     await ensureAudioRunning();
     if (!canStartAfterPendingAudible()) return;
-    triggerTrack(trackId, nowSeconds());
+    triggerTrack(trackId, nowSeconds(), Tone.immediate());
   } finally {
     release();
   }
