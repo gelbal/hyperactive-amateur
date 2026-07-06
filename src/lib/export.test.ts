@@ -44,7 +44,11 @@ vi.mock("./audioLifecycle", () => ({
 }));
 
 import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
-import { abortActiveExport, __resetExportSessionForTesting } from "./exportSession";
+import {
+  abortActiveExport,
+  getActiveExportSession,
+  __resetExportSessionForTesting,
+} from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
 import { AudioUnavailableError } from "./audioLifecycle";
 
@@ -66,6 +70,40 @@ function makeAudioContext() {
   } as unknown as AudioContext;
 }
 
+interface WakeLockSentinelStub extends EventTarget {
+  released: boolean;
+  release: () => Promise<void>;
+}
+
+interface WakeLockStub {
+  request: (type: "screen") => Promise<WakeLockSentinelStub>;
+}
+
+type NavigatorWithWakeLock = Navigator & { wakeLock?: WakeLockStub };
+
+function installWakeLockStub(onRequest?: () => void): {
+  request: ReturnType<typeof vi.fn<(type: "screen") => Promise<WakeLockSentinelStub>>>;
+  sentinels: WakeLockSentinelStub[];
+} {
+  const sentinels: WakeLockSentinelStub[] = [];
+  const request = vi.fn(async (_type: "screen") => {
+    onRequest?.();
+    const sentinel = new EventTarget() as WakeLockSentinelStub;
+    sentinel.released = false;
+    sentinel.release = vi.fn(async () => {
+      sentinel.released = true;
+      sentinel.dispatchEvent(new Event("release"));
+    });
+    sentinels.push(sentinel);
+    return sentinel;
+  });
+  Object.defineProperty(navigator, "wakeLock", {
+    configurable: true,
+    value: { request },
+  });
+  return { request, sentinels };
+}
+
 describe("buildExportStream", () => {
   beforeEach(() => {
     toneMocks.destinationConnect.mockClear();
@@ -84,16 +122,20 @@ describe("buildExportStream", () => {
 
 describe("exportSong", () => {
   let originalRecorder: typeof MediaRecorder | undefined;
+  let originalWakeLock: WakeLockStub | undefined;
 
   class FakeMediaRecorder {
     static isTypeSupported = vi.fn(() => true);
+    static startSpy = vi.fn();
     state: "inactive" | "recording" = "inactive";
+    mimeType = "";
     ondataavailable: ((e: BlobEvent) => void) | null = null;
     onstop: (() => void) | null = null;
     onerror: ((e: Event) => void) | null = null;
     constructor(_stream: MediaStream, _opts: MediaRecorderOptions) {}
     start() {
       this.state = "recording";
+      FakeMediaRecorder.startSpy();
     }
     requestData() {}
     stop() {
@@ -109,7 +151,9 @@ describe("exportSong", () => {
 
   beforeEach(() => {
     originalRecorder = (globalThis as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
+    originalWakeLock = (navigator as NavigatorWithWakeLock).wakeLock;
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
+    FakeMediaRecorder.startSpy.mockReset();
     toneMocks.transport.start.mockClear();
     toneMocks.transport.stop.mockClear();
     toneMocks.transport.position = 0;
@@ -123,6 +167,14 @@ describe("exportSong", () => {
 
   afterEach(() => {
     (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+    if (originalWakeLock) {
+      Object.defineProperty(navigator, "wakeLock", {
+        configurable: true,
+        value: originalWakeLock,
+      });
+    } else {
+      Reflect.deleteProperty(navigator, "wakeLock");
+    }
     __resetExportSessionForTesting();
     vi.useRealTimers();
   });
@@ -162,6 +214,107 @@ describe("exportSong", () => {
       mimeType: "video/mp4",
     });
     expect(blob.type).toBe("video/mp4");
+  });
+
+  it("uses the MediaRecorder-reported MIME for the export blob when present", async () => {
+    class ReportingMediaRecorder extends FakeMediaRecorder {
+      mimeType = "video/webm";
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = ReportingMediaRecorder;
+
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm; codecs=vp9,opus",
+    });
+
+    expect(blob.type).toBe("video/webm");
+  });
+
+  it("falls back to the requested MIME when MediaRecorder reports none", async () => {
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/mp4",
+    });
+
+    expect(blob.type).toBe("video/mp4");
+  });
+
+  it("requests a screen wake lock after session registration and before rendering", async () => {
+    const order: string[] = [];
+    FakeMediaRecorder.startSpy.mockImplementation(() => order.push("render"));
+    const { request, sentinels } = installWakeLockStub(() => {
+      order.push("wake-lock");
+      expect(getActiveExportSession()).not.toBeNull();
+      expect(useAppStore.getState().playback.isExporting).toBe(true);
+    });
+
+    await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+
+    expect(request).toHaveBeenCalledWith("screen");
+    expect(order).toEqual(["wake-lock", "render"]);
+    expect(sentinels[0]?.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the screen wake lock when an active export is aborted", async () => {
+    vi.useFakeTimers();
+    const { sentinels } = installWakeLockStub();
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 8,
+      bpm: 60,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sentinels).toHaveLength(1);
+    expect(abortActiveExport("page hidden")).toBe(true);
+
+    await rejection;
+    expect(sentinels[0]?.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not require wakeLock support to render", async () => {
+    Reflect.deleteProperty(navigator, "wakeLock");
+
+    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it("re-requests the screen wake lock on visible while an export is still rendering", async () => {
+    vi.useFakeTimers();
+    const { request, sentinels } = installWakeLockStub();
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 8,
+      bpm: 60,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(request).toHaveBeenCalledTimes(1);
+    await sentinels[0]?.release();
+    Object.defineProperty(document, "hidden", {
+      value: false,
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(abortActiveExport("page hidden")).toBe(true);
+    await rejection;
+    expect(sentinels[1]?.release).toHaveBeenCalledTimes(1);
   });
 
   it("rejects and clears export session when audio startup is unavailable", async () => {
@@ -249,8 +402,7 @@ describe("exportSong", () => {
 });
 
 describe("downloadBlob", () => {
-  it("delays object URL revocation until after the synthetic click has been dispatched", () => {
-    vi.useFakeTimers();
+  it("returns the created object URL and leaves revocation to the caller", () => {
     const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/download");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const click = vi
@@ -258,16 +410,13 @@ describe("downloadBlob", () => {
       .mockImplementation(() => undefined);
 
     try {
-      downloadBlob(new Blob(["x"], { type: "video/webm" }), "beat.webm");
+      const url = downloadBlob(new Blob(["x"], { type: "video/webm" }), "beat.webm");
 
       expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(url).toBe("blob:test/download");
       expect(click).toHaveBeenCalledTimes(1);
       expect(revokeObjectURL).not.toHaveBeenCalled();
-
-      vi.runOnlyPendingTimers();
-      expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/download");
     } finally {
-      vi.useRealTimers();
       createObjectURL.mockRestore();
       revokeObjectURL.mockRestore();
       click.mockRestore();

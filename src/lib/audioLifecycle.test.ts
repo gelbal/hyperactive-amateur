@@ -280,6 +280,57 @@ describe("ensureAudioRunning", () => {
     });
   });
 
+  it("does not claim the export abort reason when the page is hidden", () => {
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const visibilityStateDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "visibilityState",
+    );
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    useAppStore.getState().actions.setIsPlaying(true);
+    useAppStore.getState().actions.setIsExporting(true);
+    detachAudioLifecycle = initAudioLifecycle();
+
+    try {
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      Object.defineProperty(document, "visibilityState", {
+        value: "hidden",
+        configurable: true,
+      });
+
+      audioContextStub.setState("interrupted");
+
+      expect(exportSessionMocks.abortActiveExport).not.toHaveBeenCalled();
+      expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
+      expect(audioMocks.stopPlayback).toHaveBeenCalledWith({ allowExportStop: true });
+      expect(useAppStore.getState().playback.isPlaying).toBe(false);
+      expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+      expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_INTERRUPTED, {
+        state: "interrupted",
+        wasExporting: true,
+        wasPlaying: true,
+      });
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      if (visibilityStateDescriptor) {
+        Object.defineProperty(
+          document,
+          "visibilityState",
+          visibilityStateDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "visibilityState");
+      }
+    }
+  });
+
   it("does not clear resume-required from a running statechange alone", () => {
     useAppStore.getState().actions.setAudioState("resume-required");
     detachAudioLifecycle = initAudioLifecycle();

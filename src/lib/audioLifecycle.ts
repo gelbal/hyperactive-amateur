@@ -26,6 +26,11 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isDocumentHidden(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.visibilityState === "hidden" || document.hidden;
+}
+
 function setSessionType(type: AudioSessionLike["type"]): void {
   if (typeof navigator === "undefined" || !navigator.audioSession) return;
   try {
@@ -131,7 +136,9 @@ export function initAudioLifecycle(): () => void {
     });
 
     if (playback.isExporting) {
-      abortActiveExport(EXPORT_AUDIO_INTERRUPTED_REASON);
+      if (!isDocumentHidden()) {
+        abortActiveExport(EXPORT_AUDIO_INTERRUPTED_REASON);
+      }
       stopPlayback({ allowExportStop: true });
     } else if (playback.isPlaying) {
       stopPlayback();
