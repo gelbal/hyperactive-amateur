@@ -550,6 +550,8 @@ export async function saveRecoveryBackup(project: PersistedProject): Promise<voi
   await set(PROJECT_BACKUP_KEY, metadata);
 }
 
+// No app code path restores from the backup yet — it is write-only insurance
+// (and a GC root for protected bytes) pending the export/import roadmap item.
 export async function loadRecoveryBackup(): Promise<unknown | null> {
   return (await get(PROJECT_BACKUP_KEY)) ?? null;
 }
