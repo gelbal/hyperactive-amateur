@@ -1,6 +1,7 @@
 // ABOUTME: streamLifecycle tests — track.ended, visibilitychange, and recorder.onerror funnel through one module.
 // ABOUTME: Uses minimal EventTarget-based stand-ins for MediaStream / MediaStreamTrack since jsdom lacks them.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import "fake-indexeddb/auto";
 
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
@@ -32,8 +33,10 @@ import {
   suspendMediaStream,
 } from "./streamLifecycle";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
-import { LOG_EVENTS, logger } from "./logger";
+import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
+import { startAutoSave, stopAutoSave } from "./autoSave";
+import { clearProject, loadProject } from "./persistence";
 
 class FakeTrack extends EventTarget {
   kind: "video" | "audio";
@@ -80,14 +83,23 @@ function setGrantedWithStream(stream: MediaStream) {
 }
 
 describe("streamLifecycle", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     __resetExportSessionForTesting();
+    stopAutoSave();
+    clearLogs();
+    await clearProject();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
     toneMocks.rawContext.state = "suspended";
     vi.mocked(Tone.start).mockClear();
     registerRecordingInterruptHandler(null);
     useAppStore.getState().actions.reset();
+  });
+
+  afterEach(() => {
+    stopAutoSave();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   describe("audio session mic ownership", () => {
@@ -379,6 +391,77 @@ describe("streamLifecycle", () => {
       expect(tracks[1].stop).toHaveBeenCalled();
       detach();
       unregister();
+    });
+
+    it("fires the export abort callback once when hidden and pagehide both arrive", () => {
+      const abort = vi.fn();
+      const unregister = registerExportSession({ abort });
+      if (!unregister) throw new Error("unexpected active export session");
+      const detach = installVisibilityListener();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+
+      expect(abort).toHaveBeenCalledTimes(1);
+      detach();
+      unregister();
+    });
+
+    it("on hidden: flushes a pending autosave best-effort", async () => {
+      startAutoSave();
+      useAppStore.getState().actions.setBpm(134);
+      const detach = installVisibilityListener();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      await vi.waitFor(async () => {
+        expect((await loadProject())?.bpm).toBe(134);
+      });
+      expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(true);
+      detach();
+    });
+
+    it("on pagehide: flushes a pending autosave and suspends held media like hidden", async () => {
+      startAutoSave();
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+      useAppStore.getState().actions.setBpm(137);
+      const detach = installVisibilityListener();
+
+      window.dispatchEvent(new Event("pagehide"));
+
+      await vi.waitFor(async () => {
+        expect((await loadProject())?.bpm).toBe(137);
+      });
+      expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(true);
+      // Suspend-path parity: R5.2 names pagehide alongside visibilitychange.
+      expect(useAppStore.getState().media.status).toBe("suspended");
+      expect(useAppStore.getState().media.stream).toBeNull();
+      detach();
+    });
+
+    it("on hidden: does not log or save when autosave is clean", async () => {
+      const saveSpy = vi.spyOn(await import("./persistence"), "saveProject");
+      const detach = installVisibilityListener();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+
+      expect(saveSpy).not.toHaveBeenCalled();
+      expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(false);
+      detach();
     });
   });
 

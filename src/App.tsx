@@ -9,6 +9,7 @@ import { SuggestButton } from "./components/SuggestButton";
 import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { RecoveryBanner } from "./components/RecoveryBanner";
+import { StorageDurabilityChip } from "./components/StorageDurabilityChip";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
@@ -19,9 +20,9 @@ import { initAudioLifecycle } from "./lib/audioLifecycle";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
-import { startAutoSave, stopAutoSave } from "./lib/autoSave";
+import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
 import { installVisibilityListener } from "./lib/streamLifecycle";
-import { captureInstallPrompt, persistStorage } from "./lib/install";
+import { captureInstallPrompt, getStorageDurability } from "./lib/install";
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
@@ -32,14 +33,34 @@ export function App() {
   useEffect(() => {
     initTransport();
     const detachInstallPrompt = captureInstallPrompt();
-    void persistStorage();
     const detachAudioLifecycle = initAudioLifecycle();
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
     let allowAutoSave = true;
+    let resumeAutoSaveUnsubscribe: (() => void) | null = null;
+    void getStorageDurability().then((storageDurability) => {
+      if (!cancelled) {
+        useAppStore.getState().actions.setStorageDurability(storageDurability);
+      }
+    });
     rehydrateFromStorage()
       .then((result) => {
-        allowAutoSave = !(result.degraded && !result.ok);
+        allowAutoSave = !result.degraded;
+        if (cancelled || !result.degraded || !result.ok) return;
+        // A degraded-but-hydrated load keeps autosave paused so the repaired
+        // state cannot overwrite the protected original. Dismissing the
+        // recovery notice is the user's acknowledgment — the explicit
+        // recovery action that re-enables saving.
+        resumeAutoSaveUnsubscribe = useAppStore.subscribe((state, prev) => {
+          if (
+            prev.ui.recoveryWarnings.length > 0 &&
+            state.ui.recoveryWarnings.length === 0
+          ) {
+            resumeAutoSaveUnsubscribe?.();
+            resumeAutoSaveUnsubscribe = null;
+            startAutoSave();
+          }
+        });
       })
       .catch(() => {
         allowAutoSave = false;
@@ -60,7 +81,8 @@ export function App() {
       detachInstallPrompt();
       detachAudioLifecycle();
       detachVisibility();
-      stopAutoSave();
+      resumeAutoSaveUnsubscribe?.();
+      shutdownAutoSave();
     };
   }, []);
   useSpacebarPlayToggle();
@@ -131,6 +153,7 @@ export function App() {
         ) : (
           <>
             <RecoveryBanner />
+            <StorageDurabilityChip />
             <Viewport />
             {hasAnyClips ? (
               <PadGrid />

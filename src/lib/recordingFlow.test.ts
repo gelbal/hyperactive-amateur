@@ -30,6 +30,14 @@ const posterMocks = vi.hoisted(() => ({
   captureFirstFrame: vi.fn(),
 }));
 
+const autoSaveMocks = vi.hoisted(() => ({
+  saveNow: vi.fn(),
+}));
+
+const installMocks = vi.hoisted(() => ({
+  requestPersistence: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
@@ -77,11 +85,25 @@ vi.mock("./audioBufferSlice", () => ({
   sliceAudioBuffer: vi.fn((buffer) => buffer),
 }));
 
-import { COUNTDOWN_MS, cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
+vi.mock("./autoSave", () => ({
+  saveNow: autoSaveMocks.saveNow,
+}));
+
+vi.mock("./install", () => ({
+  requestPersistence: installMocks.requestPersistence,
+}));
+
+import {
+  COUNTDOWN_MS,
+  __resetPersistenceRequestForTesting,
+  cancelCurrentRecording,
+  recordIntoTrack,
+} from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { registerStreamLifecycle } from "./streamLifecycle";
+import { clearLogs } from "./logger";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
@@ -219,6 +241,12 @@ describe("recordingFlow", () => {
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     posterMocks.captureFirstFrame.mockReset();
     posterMocks.captureFirstFrame.mockResolvedValue(null);
+    autoSaveMocks.saveNow.mockReset();
+    autoSaveMocks.saveNow.mockResolvedValue(undefined);
+    installMocks.requestPersistence.mockReset();
+    installMocks.requestPersistence.mockResolvedValue("best-effort");
+    __resetPersistenceRequestForTesting();
+    clearLogs();
   });
 
   afterEach(() => {
@@ -560,6 +588,128 @@ describe("recordingFlow", () => {
       await promise.catch(() => false);
       setTrackPoster.mockRestore();
     }
+  });
+
+  it("awaits saveNow after storing the clip before returning idle", async () => {
+    vi.useFakeTimers();
+    const save = makeDeferred();
+    autoSaveMocks.saveNow.mockReturnValue(save.promise);
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await flushMicrotasks();
+
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    await expect(observeResolution(promise)).resolves.toEqual({ status: "pending" });
+    expect(posterMocks.captureFirstFrame).not.toHaveBeenCalled();
+
+    save.resolve();
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests persistent storage once after the first successful clip save", async () => {
+    vi.useFakeTimers();
+    installMocks.requestPersistence.mockResolvedValue("persistent");
+
+    const first = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(first).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+    await flushMicrotasks();
+    expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+
+    const second = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(second).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers the persistence request to the next successful save after a failed first save", async () => {
+    vi.useFakeTimers();
+    autoSaveMocks.saveNow.mockRejectedValueOnce(new Error("quota exceeded"));
+
+    const first = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(first).resolves.toBe(true);
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
+
+    const second = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(second).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an unresolved persistence request on later successful saves until settled", async () => {
+    vi.useFakeTimers();
+    installMocks.requestPersistence.mockResolvedValueOnce("unknown");
+    installMocks.requestPersistence.mockResolvedValueOnce("persistent");
+
+    for (const trackId of [0, 1, 2]) {
+      const flow = recordIntoTrack(trackId);
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(flow).resolves.toBe(true);
+      await flushMicrotasks();
+    }
+
+    // First save asks and gets no answer; the second retry is granted; the
+    // third save must not ask again.
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+  });
+
+  it("coalesces persistence requests while one is still pending", async () => {
+    vi.useFakeTimers();
+    const pending = makeDeferred<string>();
+    installMocks.requestPersistence.mockReturnValue(pending.promise);
+
+    // Two successful clip saves land while the first persist() is unresolved:
+    // the second must coalesce into it, not issue an overlapping call.
+    for (const trackId of [0, 1]) {
+      const flow = recordIntoTrack(trackId);
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(flow).resolves.toBe(true);
+      await flushMicrotasks();
+    }
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+
+    pending.resolve("unknown");
+    await flushMicrotasks();
+
+    // An "unknown" outcome stays retryable once the in-flight request clears.
+    const third = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(third).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the clip and returns idle when saveNow rejects", async () => {
+    vi.useFakeTimers();
+    autoSaveMocks.saveNow.mockRejectedValue(new Error("quota exceeded"));
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
   });
 
   it("discards a late poster when the clip was replaced before it resolves", async () => {

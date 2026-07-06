@@ -6,17 +6,26 @@ export interface ActiveExportSession {
 }
 
 let activeSession: ActiveExportSession | null = null;
+// One abort per session: visibilitychange → hidden and pagehide can both
+// arrive before the export's cleanup unregisters, and the abort callback
+// must not fire twice for the same session.
+let activeSessionAborted = false;
 
 export function registerExportSession(session: ActiveExportSession): (() => void) | null {
   if (activeSession) return null;
   activeSession = session;
+  activeSessionAborted = false;
   return () => {
-    if (activeSession === session) activeSession = null;
+    if (activeSession === session) {
+      activeSession = null;
+      activeSessionAborted = false;
+    }
   };
 }
 
 export function abortActiveExport(reason: string): boolean {
-  if (!activeSession) return false;
+  if (!activeSession || activeSessionAborted) return false;
+  activeSessionAborted = true;
   activeSession.abort(reason);
   return true;
 }
@@ -27,4 +36,5 @@ export function getActiveExportSession(): ActiveExportSession | null {
 
 export function __resetExportSessionForTesting(): void {
   activeSession = null;
+  activeSessionAborted = false;
 }

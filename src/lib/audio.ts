@@ -106,6 +106,12 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
     return;
   }
 
+  if (track.clip) {
+    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
+    useAppStore.getState().actions.markTriggered(trackId);
+    return;
+  }
+
   const synth = metronomeSynths[trackId];
   if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when, track.volume);
   useAppStore.getState().actions.markTriggered(trackId);
@@ -154,7 +160,7 @@ function syncPlayers(tracks: Track[]): void {
       players.delete(track.id);
     }
 
-    if (track.clip) {
+    if (track.clip?.audioBuffer) {
       const player = new Tone.Player(track.clip.audioBuffer).toDestination();
       applyPlayerVolume(player, track.volume);
       players.set(track.id, player);

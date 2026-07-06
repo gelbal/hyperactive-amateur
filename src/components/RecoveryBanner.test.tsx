@@ -35,4 +35,18 @@ describe("RecoveryBanner", () => {
 
     expect(screen.getByText("2 more recovery fixes were applied.")).toBeInTheDocument();
   });
+
+  it("summarizes tracks repaired with unavailable audio", () => {
+    useAppStore.getState().actions.setRecoveryWarnings([
+      "Track 1 audio unavailable — re-record to restore sound.",
+      "Track 3 audio unavailable — re-record to restore sound.",
+      "bpm was clamped",
+    ]);
+
+    render(<RecoveryBanner />);
+
+    expect(
+      screen.getByText("2 tracks have audio unavailable and need re-recording."),
+    ).toBeInTheDocument();
+  });
 });

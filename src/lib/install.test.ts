@@ -4,17 +4,21 @@ import { renderHook, act } from "@testing-library/react";
 import {
   captureInstallPrompt,
   canInstall,
+  getStorageDurability,
+  requestPersistence,
   subscribeInstall,
   triggerInstall,
   useCanInstall,
   isStandalone,
-  persistStorage,
   __resetInstallForTesting,
 } from "./install";
 
 describe("install", () => {
   beforeEach(() => __resetInstallForTesting());
-  afterEach(() => __resetInstallForTesting());
+  afterEach(() => {
+    __resetInstallForTesting();
+    Reflect.deleteProperty(navigator, "storage");
+  });
 
   it("captureInstallPrompt: firing beforeinstallprompt flips canInstall to true and notifies subscribers", () => {
     const detach = captureInstallPrompt();
@@ -87,22 +91,41 @@ describe("install", () => {
     }
   });
 
-  it("persistStorage: calls navigator.storage.persist if present; swallows rejection", async () => {
+  it("getStorageDurability maps persisted storage status to app durability states", async () => {
+    const persistedFn = vi.fn(async () => true);
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: { persisted: persistedFn },
+    });
+    await expect(getStorageDurability()).resolves.toBe("persistent");
+    expect(persistedFn).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: { persisted: vi.fn(async () => false) },
+    });
+    await expect(getStorageDurability()).resolves.toBe("best-effort");
+
+    Reflect.deleteProperty(navigator, "storage");
+    await expect(getStorageDurability()).resolves.toBe("unknown");
+  });
+
+  it("requestPersistence calls persist and returns the resulting durability", async () => {
     const persistFn = vi.fn(async () => true);
     Object.defineProperty(navigator, "storage", {
       configurable: true,
       value: { persist: persistFn },
     });
-    await persistStorage();
-    expect(persistFn).toHaveBeenCalled();
+    await expect(requestPersistence()).resolves.toBe("persistent");
+    expect(persistFn).toHaveBeenCalledTimes(1);
 
-    const failingPersist = vi.fn(async () => {
-      throw new Error("nope");
-    });
     Object.defineProperty(navigator, "storage", {
       configurable: true,
-      value: { persist: failingPersist },
+      value: { persist: vi.fn(async () => false) },
     });
-    await expect(persistStorage()).resolves.toBeUndefined();
+    await expect(requestPersistence()).resolves.toBe("best-effort");
+
+    Reflect.deleteProperty(navigator, "storage");
+    await expect(requestPersistence()).resolves.toBe("unknown");
   });
 });

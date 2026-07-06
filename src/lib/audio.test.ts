@@ -75,21 +75,24 @@ vi.mock("tone", () => ({
 import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import * as Tone from "tone";
+import type { Clip } from "../types";
 import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
 } from "./audibleActionGate";
 
-function makeClip() {
+function makeClip(): Clip {
   return {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
     url: "blob:test/1",
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 1000,
     durationMs: 1000,
     posterBlob: null,
-    posterUrl: null,  };
+    posterUrl: null,
+  };
 }
 
 function deferred<T = void>() {
@@ -155,6 +158,27 @@ describe("audio: per-step trigger logic", () => {
     const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
     cb?.(0);
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("does not create a player or fallback click for clips with unavailable audio", () => {
+    initTransport();
+    const a = useAppStore.getState().actions;
+    a.setTrackClip(0, makeClip());
+    a.setTrackClip(1, {
+      ...makeClip(),
+      audioBuffer: null,
+      audioStatus: "unavailable",
+    });
+    a.toggleStep(0, 0);
+    a.toggleStep(1, 0);
+
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+    cb?.(0.5);
+
+    expect(playerInstances).toHaveLength(1);
+    expect(playerInstances[0].start).toHaveBeenCalledWith(0.5, 0, 1);
+    expect(synthInstances[1].triggerAttackRelease).not.toHaveBeenCalled();
+    expect(videoEngineTrigger).toHaveBeenCalledWith(1, 0.5, 0.5);
   });
 
   it("manual triggers unlock the audio context before firing", async () => {

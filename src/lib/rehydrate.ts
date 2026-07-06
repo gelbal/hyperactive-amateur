@@ -1,7 +1,9 @@
 // ABOUTME: rehydrate — load, validate, decode, and dispatch persisted project state.
 // ABOUTME: Object URLs are recreated on every load (not persisted); degraded loads keep one backup.
 import {
+  InvalidMetadataError,
   loadProject,
+  migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
   saveRecoveryBackup,
   type PersistedProject,
@@ -146,10 +148,12 @@ function emptyPersistedTrack(id: number, stepCount: number): PersistedTrack {
     trimStartMs: 0,
     trimEndMs: 0,
     durationMs: 0,
+    audioStatus: "ok",
     tag: null,
     steps: new Array(stepCount).fill(false),
     volume: 1,
     muted: false,
+    mutedByRepair: false,
     showVideo: true,
   };
 }
@@ -158,19 +162,53 @@ function normalizeClipFields(
   warnings: string[],
   trackId: number,
   raw: Record<string, unknown>,
-): Pick<PersistedTrack, "clipBlob" | "audioBlob" | "posterBlob" | "trimStartMs" | "trimEndMs" | "durationMs"> {
+): Pick<
+  PersistedTrack,
+  | "clipBlob"
+  | "audioBlob"
+  | "posterBlob"
+  | "trimStartMs"
+  | "trimEndMs"
+  | "durationMs"
+  | "audioStatus"
+> {
+  const audioStatus = raw.audioStatus === "unavailable" ? "unavailable" : "ok";
   if (raw.clipBlob === null || raw.clipBlob === undefined) {
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
   if (!isBlob(raw.clipBlob)) {
     warn(warnings, `Track ${trackId + 1} clip blob was invalid and dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   const durationMs = finiteNumber(raw.durationMs);
   if (durationMs === null || durationMs <= 0) {
     warn(warnings, `Track ${trackId + 1} duration was invalid and its clip was dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   const startRaw = finiteNumber(raw.trimStartMs) ?? 0;
@@ -182,7 +220,15 @@ function normalizeClipFields(
   }
   if (trimEndMs <= trimStartMs) {
     warn(warnings, `Track ${trackId + 1} trim window was invalid and its clip was dropped.`);
-    return { clipBlob: null, audioBlob: null, posterBlob: null, trimStartMs: 0, trimEndMs: 0, durationMs: 0 };
+    return {
+      clipBlob: null,
+      audioBlob: null,
+      posterBlob: null,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      durationMs: 0,
+      audioStatus: "ok",
+    };
   }
 
   return {
@@ -192,6 +238,7 @@ function normalizeClipFields(
     trimStartMs,
     trimEndMs,
     durationMs,
+    audioStatus,
   };
 }
 
@@ -216,6 +263,7 @@ function normalizeTrack(
     steps: normalizeSteps(warnings, trackId, rawTrack.steps, stepCount),
     volume: normalizeNumber(warnings, `Track ${trackId + 1} volume`, rawTrack.volume, 0, 1, 1),
     muted: typeof rawTrack.muted === "boolean" ? rawTrack.muted : false,
+    mutedByRepair: typeof rawTrack.mutedByRepair === "boolean" ? rawTrack.mutedByRepair : false,
     showVideo: typeof rawTrack.showVideo === "boolean" ? rawTrack.showVideo : true,
   };
 }
@@ -278,6 +326,37 @@ function normalizeProject(persisted: PersistedProject, warnings: string[]): Pers
   };
 }
 
+function audioUnavailableWarning(trackId: number): string {
+  return `Track ${trackId + 1} audio unavailable — re-record to restore sound.`;
+}
+
+function warnAudioUnavailable(warnings: string[], trackId: number): void {
+  const message = audioUnavailableWarning(trackId);
+  if (!warnings.includes(message)) warn(warnings, message);
+}
+
+function collectAudioRepairTrackIds(
+  persisted: PersistedProject,
+  warnings: string[],
+): Set<number> {
+  const trackIds = new Set<number>();
+  for (const missing of persisted.missingBlobs ?? []) {
+    if (Number.isInteger(missing.trackId) && missing.trackId >= 0) {
+      if (missing.field === "audioBlob") {
+        trackIds.add(missing.trackId);
+      } else if (missing.field === "clipBlob") {
+        warn(warnings, `Track ${missing.trackId + 1} clip video was missing and was dropped.`);
+      } else if (missing.field === "posterBlob") {
+        warn(warnings, `Track ${missing.trackId + 1} poster was missing and regenerated.`);
+      }
+    }
+  }
+  for (const trackId of Array.from(trackIds).sort((a, b) => a - b)) {
+    warnAudioUnavailable(warnings, trackId);
+  }
+  return trackIds;
+}
+
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
   // Fallback: rehydrate a plain Blob-shaped value (e.g., from fake-indexeddb)
@@ -299,6 +378,36 @@ async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise
     }
   }
   return decodeBlob(clipBlob);
+}
+
+async function restorePosterBlob(clipBlob: Blob, posterBlob: Blob | null): Promise<Blob | null> {
+  if (posterBlob) return posterBlob;
+  try {
+    return await captureFirstFrame(clipBlob);
+  } catch {
+    return null;
+  }
+}
+
+async function rehydrateClip(
+  track: PersistedTrack,
+  clipBlob: Blob,
+  audioBuffer: AudioBuffer | null,
+  audioStatus: Clip["audioStatus"],
+): Promise<Clip> {
+  const posterBlob = await restorePosterBlob(clipBlob, track.posterBlob ?? null);
+  return {
+    blob: clipBlob,
+    url: URL.createObjectURL(clipBlob),
+    audioBuffer,
+    audioStatus,
+    audioBlob: audioStatus === "ok" ? (track.audioBlob ?? null) : null,
+    trimStartMs: track.trimStartMs,
+    trimEndMs: track.trimEndMs,
+    durationMs: track.durationMs,
+    posterBlob,
+    posterUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
+  };
 }
 
 async function trySaveRecoveryBackup(
@@ -328,9 +437,13 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   let persisted: Awaited<ReturnType<typeof loadProject>>;
   try {
     persisted = await loadProject();
-  } catch {
+  } catch (err) {
+    // Invalid current metadata is its own failure, not a legacy migration
+    // candidate: the record and the last good backup stay untouched.
     const warnings = [
-      "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
+      err instanceof InvalidMetadataError
+        ? "Saved project metadata was invalid. Autosave was paused to avoid overwriting it."
+        : "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
     ];
     useAppStore.getState().actions.setRecoveryWarnings(warnings);
     return { ok: false, degraded: true, warnings };
@@ -340,10 +453,23 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const empty = createInitialState();
   const warnings: string[] = [];
   const normalized = normalizeProject(persisted, warnings);
+  const audioRepairTrackIds = collectAudioRepairTrackIds(persisted, warnings);
   let recoveryBackupWritten = false;
-  if (warnings.length > 0) {
+  if (warnings.length > 0 || persisted.storageFormat === "legacy") {
     recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
     if (!recoveryBackupWritten) {
+      useAppStore.getState().actions.setRecoveryWarnings(warnings);
+      return { ok: false, degraded: true, warnings };
+    }
+  }
+  if (persisted.storageFormat === "legacy") {
+    try {
+      await migrateLegacyProject(normalized);
+    } catch {
+      warn(
+        warnings,
+        "Saved project could not be migrated. Autosave was paused to avoid overwriting it.",
+      );
       useAppStore.getState().actions.setRecoveryWarnings(warnings);
       return { ok: false, degraded: true, warnings };
     }
@@ -353,41 +479,33 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     normalized.tracks.map(async (pt): Promise<Track> => {
       let clip: Clip | null = null;
       if (pt.clipBlob) {
-        try {
-          const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
-          // Older saves predate posterBlob; regenerate from clipBlob so the
-          // <img> thumbnails have something to show. Best-effort — null on fail.
-          let posterBlob: Blob | null = pt.posterBlob ?? null;
-          if (!posterBlob) {
-            try {
-              posterBlob = await captureFirstFrame(pt.clipBlob);
-            } catch {
-              posterBlob = null;
-            }
+        if (pt.audioStatus === "unavailable" || audioRepairTrackIds.has(pt.id)) {
+          warnAudioUnavailable(warnings, pt.id);
+          clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
+        } else {
+          try {
+            const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
+            clip = await rehydrateClip(pt, pt.clipBlob, audioBuffer, "ok");
+          } catch {
+            warnAudioUnavailable(warnings, pt.id);
+            clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
           }
-          clip = {
-            blob: pt.clipBlob,
-            url: URL.createObjectURL(pt.clipBlob),
-            audioBuffer,
-            audioBlob: pt.audioBlob ?? null,
-            trimStartMs: pt.trimStartMs,
-            trimEndMs: pt.trimEndMs,
-            durationMs: pt.durationMs,
-            posterBlob,
-            posterUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
-          };
-        } catch (err) {
-          // Decode failed — drop the clip rather than stranding the track.
-          warn(warnings, `Track ${pt.id + 1} clip could not be decoded and was dropped.`);
-          clip = null;
         }
       }
+      const audioUnavailable = clip?.audioStatus === "unavailable";
+      const wasMutedByRepair = pt.mutedByRepair ?? false;
       return {
         id: pt.id,
         clip,
+        blobRevision: 0,
         steps: [...pt.steps],
         volume: pt.volume,
-        muted: pt.muted,
+        muted: audioUnavailable ? true : pt.muted,
+        // The repair owns the mute when it flipped it on; a mute the user
+        // already held (or re-applied after a repair) stays user-owned.
+        mutedByRepair: audioUnavailable
+          ? (pt.muted ? wasMutedByRepair : true)
+          : wasMutedByRepair,
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
       };

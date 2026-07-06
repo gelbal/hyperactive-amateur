@@ -7,6 +7,7 @@ import type {
   CutSubdivision,
   MediaStatus,
   RecordingState,
+  StorageDurability,
   Subgenre,
   Tag,
   Vibe,
@@ -83,6 +84,7 @@ export interface AppActions {
     source?: "user" | "system",
   ) => void;
   setRecoveryWarnings: (warnings: string[]) => void;
+  setStorageDurability: (durability: StorageDurability) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setVideoFacingMode: (mode: "user" | "environment") => void;
@@ -246,7 +248,9 @@ export const useAppStore = create<AppStore>((set) => ({
           project: {
             ...state.project,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, muted } : track,
+              // A user mute toggle owns the state from then on: it clears any
+              // repair-applied marker so re-record won't override the intent.
+              track.id === trackId ? { ...track, muted, mutedByRepair: false } : track,
             ),
           },
         };
@@ -275,7 +279,8 @@ export const useAppStore = create<AppStore>((set) => ({
     setTrackClip: (trackId, clip) =>
       set((state) => {
         if (state.playback.isExporting) return state;
-        const previous = state.project.tracks[trackId]?.clip;
+        const previousTrack = state.project.tracks[trackId];
+        const previous = previousTrack?.clip;
         if (previous && previous.url && previous.url !== clip.url) {
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
@@ -293,12 +298,25 @@ export const useAppStore = create<AppStore>((set) => ({
           trackId in state.project.tagReasoning
             ? omitKey(state.project.tagReasoning, trackId)
             : state.project.tagReasoning;
+        // Re-recording clears a mute only when the repair applied it (marked
+        // mutedByRepair). A mute the user owns — on a healthy track or
+        // re-applied after a repair — is kept.
+        const clearRepairMute =
+          previousTrack?.mutedByRepair === true && clip.audioStatus === "ok";
         return {
           project: {
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip } : track,
+              track.id === trackId
+                ? {
+                    ...track,
+                    clip,
+                    muted: clearRepairMute ? false : track.muted,
+                    mutedByRepair: false,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                  }
+                : track,
             ),
           },
           session: bumpProjectRevision(state.session),
@@ -322,7 +340,11 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId
-                ? { ...track, clip: { ...current, posterBlob, posterUrl } }
+                ? {
+                    ...track,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                    clip: { ...current, posterBlob, posterUrl },
+                  }
                 : track,
             ),
           },
@@ -344,7 +366,9 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip: null } : track,
+              track.id === trackId
+                ? { ...track, clip: null, blobRevision: (track.blobRevision ?? 0) + 1 }
+                : track,
             ),
           },
           // Re-recording a track means the user wants the station back. Without
@@ -432,6 +456,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setRecoveryWarnings: (warnings) =>
       set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
+
+    setStorageDurability: (storageDurability) =>
+      set((state) => ({ session: { ...state.session, storageDurability } })),
 
     setMedia: (next) =>
       set((state) => ({
@@ -521,8 +548,15 @@ export const useAppStore = create<AppStore>((set) => ({
         // (and its permission gate) on reload until they explicitly opt back
         // in via "Record more" or "Re-record".
         const hasAnyClip = project.tracks.some((t) => t.clip);
+        const normalizedProject = {
+          ...project,
+          tracks: project.tracks.map((track) => ({
+            ...track,
+            blobRevision: track.blobRevision ?? 0,
+          })),
+        };
         return {
-          project,
+          project: normalizedProject,
           session: hasAnyClip
             ? { ...bumpProjectRevision(state.session), recordingStationDismissed: true }
             : bumpProjectRevision(state.session),

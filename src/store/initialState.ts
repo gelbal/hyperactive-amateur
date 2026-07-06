@@ -25,6 +25,7 @@ function createEmptyTrack(id: number, stepCount: number): Track {
   return {
     id,
     clip: null,
+    blobRevision: 0,
     steps: new Array(stepCount).fill(false),
     volume: 1,
     muted: false,
@@ -77,6 +78,7 @@ export function createInitialState(): AppState {
     },
     session: {
       projectRevision: 0,
+      storageDurability: "unknown",
       manuallyToggledShowVideo: [],
       manuallyTagged: [],
       recordingStationDismissed: false,

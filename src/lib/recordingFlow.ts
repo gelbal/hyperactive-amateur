@@ -15,6 +15,8 @@ import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
+import { saveNow } from "./autoSave";
+import { requestPersistence } from "./install";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
@@ -47,6 +49,34 @@ export interface RecordIntoTrackOptions {
 // cancelCurrentRecording() to abort the active flow.
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
+
+// Durable-storage request state. The request anchors to the first SUCCESSFUL
+// clip save and retries on later successful saves until the browser answers
+// (granted or definitively denied); an "unknown" outcome stays retryable.
+// Requests are single-flight: saves that land while one is still pending
+// coalesce into it instead of issuing overlapping persist() calls.
+let persistenceRequestSettled = false;
+let persistenceRequestPending = false;
+
+function requestPersistenceAfterClipSave(): void {
+  if (persistenceRequestSettled || persistenceRequestPending) return;
+  if (useAppStore.getState().session.storageDurability === "persistent") {
+    persistenceRequestSettled = true;
+    return;
+  }
+  persistenceRequestPending = true;
+  void requestPersistence().then((storageDurability) => {
+    persistenceRequestPending = false;
+    if (storageDurability !== "unknown") persistenceRequestSettled = true;
+    useAppStore.getState().actions.setStorageDurability(storageDurability);
+  });
+}
+
+// Test-only — clears the settled persistence-request state between cases.
+export function __resetPersistenceRequestForTesting(): void {
+  persistenceRequestSettled = false;
+  persistenceRequestPending = false;
+}
 
 export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
   currentController?.abort(reason);
@@ -283,6 +313,7 @@ async function runFlow(
       blob: result.blob,
       url,
       audioBuffer: result.audioBuffer,
+      audioStatus: "ok",
       audioBlob: audioBufferToWav(result.audioBuffer),
       trimStartMs,
       trimEndMs,
@@ -291,6 +322,13 @@ async function runFlow(
       posterUrl: null,
     };
     actions.setTrackClip(trackId, newClip);
+    try {
+      await saveNow();
+      requestPersistenceAfterClipSave();
+    } catch {
+      // saveNow logs autosave.error; durability failure is not a recording failure.
+    }
+    throwIfFlowAborted(signal, "Aborted after clip durability save");
     // Poster generation is best-effort and intentionally not awaited: the clip
     // save is the durability boundary, and the poster can attach later.
     attachPosterWhenReady(trackId, newClip, result.blob, signal);

@@ -24,6 +24,7 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
     url: "blob:test/clip",
     audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 800,
     durationMs: 1000,
@@ -48,6 +49,16 @@ describe("useAppStore", () => {
 
     get().actions.setAudioState("resume-required");
     expect(get().playback.audioState).toBe("resume-required");
+  });
+
+  it("tracks storage durability in the transient session slice", () => {
+    expect(get().session.storageDurability).toBe("unknown");
+
+    get().actions.setStorageDurability("best-effort");
+    expect(get().session.storageDurability).toBe("best-effort");
+
+    get().actions.setStorageDurability("persistent");
+    expect(get().session.storageDurability).toBe("persistent");
   });
 
   it("tracks transient recording countdown deadline and explicit error state", () => {
@@ -169,10 +180,11 @@ describe("useAppStore", () => {
 
   it("scratch revokes object URLs on every clip and resets state", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/x",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -231,10 +243,11 @@ describe("useAppStore", () => {
   it("ignores output-affecting project mutations while export is active", () => {
     const before = get().project;
     const sessionBefore = get().session;
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/export-clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -263,10 +276,11 @@ describe("useAppStore", () => {
 
   it("clearTrackClip revokes both blob URL and poster URL and re-opens the recording station", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const clip = {
+    const clip: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/clip",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -288,10 +302,11 @@ describe("useAppStore", () => {
 
   it("setTrackClip revokes the previous clip's poster URL when replaced", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    const first = {
+    const first: Clip = {
       blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       url: "blob:test/a",
       audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
       trimStartMs: 0,
       trimEndMs: 800,
       durationMs: 1000,
@@ -312,20 +327,89 @@ describe("useAppStore", () => {
     create.mockReturnValueOnce("blob:test/poster-a").mockReturnValueOnce("blob:test/poster-b");
     get().actions.setTrackClip(0, makeClip());
     const revision = get().session.projectRevision;
+    const blobRevision = get().project.tracks[0].blobRevision ?? 0;
     const firstPoster = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
     const secondPoster = new Blob([new Uint8Array([10])], { type: "image/jpeg" });
 
     get().actions.setTrackPoster(0, firstPoster);
     expect(get().project.tracks[0].clip?.posterBlob).toBe(firstPoster);
     expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-a");
+    expect(get().project.tracks[0].blobRevision).toBe(blobRevision + 1);
 
     get().actions.setTrackPoster(0, secondPoster);
     expect(get().project.tracks[0].clip?.posterBlob).toBe(secondPoster);
     expect(get().project.tracks[0].clip?.posterUrl).toBe("blob:test/poster-b");
     expect(revoke).toHaveBeenCalledWith("blob:test/poster-a");
+    expect(get().project.tracks[0].blobRevision).toBe(blobRevision + 2);
     expect(get().session.projectRevision).toBe(revision);
     create.mockRestore();
     revoke.mockRestore();
+  });
+
+  // Mirrors how repair state reaches the store in production: rehydrate
+  // constructs the repaired track (auto-muted, marked) and hydrates it.
+  function hydrateRepairMutedTrack(trackId: number) {
+    get().actions.setTrackClip(
+      trackId,
+      makeClip({ audioBuffer: null, audioStatus: "unavailable" }),
+    );
+    get().actions.hydrateProject({
+      ...get().project,
+      tracks: get().project.tracks.map((track) =>
+        track.id === trackId ? { ...track, muted: true, mutedByRepair: true } : track,
+      ),
+    });
+    expect(get().project.tracks[trackId].muted).toBe(true);
+  }
+
+  it("re-recording over a repair-muted clip clears the repair mute", () => {
+    hydrateRepairMutedTrack(0);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].clip?.audioStatus).toBe("ok");
+    expect(get().project.tracks[0].muted).toBe(false);
+    expect(get().project.tracks[0].mutedByRepair).toBe(false);
+  });
+
+  it("clears a repair mute when re-recording after the repaired clip was cleared", () => {
+    hydrateRepairMutedTrack(0);
+
+    get().actions.clearTrackClip(0);
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].muted).toBe(false);
+  });
+
+  it("keeps a user's re-mute on a repaired track when re-recording", () => {
+    hydrateRepairMutedTrack(0);
+    // The user toggles the mute themselves — their intent now owns the state.
+    get().actions.setTrackMuted(0, false);
+    get().actions.setTrackMuted(0, true);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/re-record" }));
+
+    expect(get().project.tracks[0].clip?.audioStatus).toBe("ok");
+    expect(get().project.tracks[0].muted).toBe(true);
+  });
+
+  it("keeps a user's own mute when replacing a healthy clip", () => {
+    get().actions.setTrackClip(0, makeClip());
+    get().actions.setTrackMuted(0, true);
+
+    get().actions.setTrackClip(0, makeClip({ url: "blob:test/replacement" }));
+
+    expect(get().project.tracks[0].muted).toBe(true);
+  });
+
+  it("setTrackClip and clearTrackClip bump the track blobRevision", () => {
+    const start = get().project.tracks[0].blobRevision ?? 0;
+
+    get().actions.setTrackClip(0, makeClip());
+    expect(get().project.tracks[0].blobRevision).toBe(start + 1);
+
+    get().actions.clearTrackClip(0);
+    expect(get().project.tracks[0].blobRevision).toBe(start + 2);
   });
 
   it("setTrackPoster no-ops while exporting or when the track has no clip", () => {
@@ -384,6 +468,7 @@ describe("useAppStore", () => {
               blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
               url: "blob:test/hydr",
               audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+              audioStatus: "ok" as const,
               trimStartMs: 0,
               trimEndMs: 800,
               durationMs: 1000,

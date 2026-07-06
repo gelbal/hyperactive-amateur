@@ -39,17 +39,20 @@ interface PopulatedTrack {
 function populatedTracks(): PopulatedTrack[] {
   return useAppStore
     .getState()
-    .project.tracks.filter((t) => t.clip != null)
-    .map((t) => ({
-      trackId: t.id,
-      // Trim around the actual sound — silence on either side dilutes the
-      // classifier and inflates the inline payload size estimate.
-      audioBuffer: sliceAudioBuffer(
-        t.clip!.audioBuffer,
-        t.clip!.trimStartMs,
-        t.clip!.trimEndMs,
-      ),
-    }));
+    .project.tracks.flatMap((t) => {
+      const clip = t.clip;
+      if (!clip?.audioBuffer) return [];
+      return [{
+        trackId: t.id,
+        // Trim around the actual sound — silence on either side dilutes the
+        // classifier and inflates the inline payload size estimate.
+        audioBuffer: sliceAudioBuffer(
+          clip.audioBuffer,
+          clip.trimStartMs,
+          clip.trimEndMs,
+        ),
+      }];
+    });
 }
 
 function cancelled(total: number): RetagResult {
