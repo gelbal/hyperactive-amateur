@@ -55,6 +55,31 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+@media (pointer: coarse) {
+  input[type="range"] {
+    height: 2rem;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+  }
+
+  input[type="range"]::-moz-range-track {
+    height: 6px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 1.5rem;
+    height: 1.5rem;
+    margin-top: -9px;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -69,15 +94,11 @@ button {
   background-color: transparent;
 }
 
-/* Safe-area insets for notched / home-indicator devices. The meta viewport
- * already has viewport-fit=cover (M1-1). Body padding handles the sticky
- * header (it sticks at the top of the padded viewport) and any bottom-anchored
- * content (StepGrid, RecordingStation controls, reconnect pill). */
-body {
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+/* Keep notched-device gutters dark; the app shell owns safe-area padding. */
+html,
+body,
+#root {
+  background-color: #09090b;
 }
 
 /* Tailwind preflight removes default focus outlines; restore as a brand-colored ring. */
@@ -96,8 +117,8 @@ textarea:focus-visible,
 
 /* Fullscreen presentation mode for the viewport: the wrapper fills the
  * screen with the brand neutral, and the canvas grows to fill the shorter
- * dimension while staying square. The canvas DOM node is unchanged so the
- * rAF render loop keeps drawing without interruption. */
+ * dimension while staying square. The render canvas DOM node is unchanged so
+ * export capture keeps drawing without interruption. */
 .ha-viewport-frame:fullscreen {
   width: 100vw;
   height: 100vh;
@@ -106,7 +127,7 @@ textarea:focus-visible,
   align-items: center;
   justify-content: center;
 }
-.ha-viewport-frame:fullscreen .ha-canvas {
+.ha-viewport-frame:fullscreen .ha-display-canvas {
   width: 100vmin !important;
   height: 100vmin !important;
   border-radius: 0;

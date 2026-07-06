@@ -1,6 +1,7 @@
 // ABOUTME: install — capture beforeinstallprompt, gate the install affordance, request persistent storage.
 // ABOUTME: Persistence matters because the entire project (clip blobs) lives in IndexedDB.
 import { useSyncExternalStore } from "react";
+import type { StorageDurability } from "../types";
 
 // Chromium-only event shape; iOS Safari has no programmatic install API.
 type InstallPromptEvent = Event & {
@@ -68,18 +69,37 @@ export function isStandalone(): boolean {
   return nav.standalone === true;
 }
 
-// Best-effort request for eviction-resistant storage. Granted persistence
-// makes the IndexedDB-backed project safe across long idle gaps; the user
-// is never prompted (browsers grant or deny based on signals like installed-
-// PWA or frequent use). Swallow failures — UI must not block on this.
-export async function persistStorage(): Promise<void> {
-  if (typeof navigator === "undefined") return;
+export function hasCoarsePointer(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(pointer: coarse)").matches === true;
+}
+
+export function isManualInstallHintContext(installable = canInstall()): boolean {
+  return !isStandalone() && !installable && hasCoarsePointer();
+}
+
+export async function getStorageDurability(): Promise<StorageDurability> {
+  if (typeof navigator === "undefined") return "unknown";
   const storage = navigator.storage;
-  if (!storage?.persist) return;
+  if (!storage?.persisted) return "unknown";
   try {
-    await storage.persist();
+    return (await storage.persisted()) ? "persistent" : "best-effort";
   } catch {
-    // Best-effort; nothing to recover.
+    return "unknown";
+  }
+}
+
+// Best-effort request for eviction-resistant storage. Granted persistence
+// makes the IndexedDB-backed project safer across long idle gaps; browsers
+// grant or deny based on signals like installed-PWA or frequent use.
+export async function requestPersistence(): Promise<StorageDurability> {
+  if (typeof navigator === "undefined") return "unknown";
+  const storage = navigator.storage;
+  if (!storage?.persist) return "unknown";
+  try {
+    return (await storage.persist()) ? "persistent" : "best-effort";
+  } catch {
+    return "unknown";
   }
 }
 

@@ -8,8 +8,9 @@ export interface Clip {
   blob: Blob;
   // Object URL for the blob; recreated on rehydrate (not persisted).
   url: string;
-  // Decoded audio side of the clip; reused on every playback to avoid decode latency.
-  audioBuffer: AudioBuffer;
+  // Decoded audio side of the clip; null only for repair-state clips.
+  audioBuffer: AudioBuffer | null;
+  audioStatus: "ok" | "unavailable";
   // Persisted playback sidecar. Present for new recordings so reload does not
   // depend on decoding a mixed video container as audio.
   audioBlob?: Blob | null;
@@ -30,18 +31,24 @@ export interface Track {
   // 0-7 — track index in the sequencer.
   id: number;
   clip: Clip | null;
+  // In-memory media revision. Bumped when clip/poster blob references change.
+  blobRevision?: number;
   // Length-16 array of step toggles (one bar of 16th notes).
   steps: boolean[];
   // 0..1 linear volume.
   volume: number;
   muted: boolean;
+  // True when `muted` was applied by the audio-repair path rather than the
+  // user. Re-recording clears the mute only while this is set; any user mute
+  // toggle claims ownership of the state and clears it. Defaults to false.
+  mutedByRepair?: boolean;
   tag: Tag | null;
   // When false, the track fires audio but does not cause a viewport cut.
   // Hats/ghost notes typically benefit from this. Default true.
   showVideo: boolean;
 }
 
-export type RecordingState = "idle" | "countdown" | "recording" | "reviewing";
+export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
 
 export interface ActiveTrigger {
   trackId: number;
@@ -89,8 +96,12 @@ export interface ProjectState {
   tracks: Track[];
 }
 
+export type AudioState = "unknown" | "running" | "resume-required";
+
 export interface PlaybackState {
   isPlaying: boolean;
+  // Transient AudioContext health for resume-required UI; never persisted.
+  audioState: AudioState;
   // True while a real-time export render owns the Transport. User playback
   // controls are ignored so they cannot silently corrupt the captured output.
   isExporting: boolean;
@@ -105,6 +116,8 @@ export interface PlaybackState {
 
 export interface RecordingSlice {
   activeTrackId: number | null;
+  countdownEndsAt: number | null;
+  error: string | null;
   state: RecordingState;
 }
 
@@ -129,10 +142,15 @@ export interface MediaSlice {
   videoFacingMode: "user" | "environment";
 }
 
+export type StorageDurability = "persistent" | "best-effort" | "unknown";
+
 export interface SessionSlice {
   // Monotonic in-memory counter for edits that make pending AI pattern
   // responses stale. Not persisted; reloads start a fresh active project.
   projectRevision: number;
+  // Browser storage durability for this session. Not persisted because it is
+  // a property of the current browser bucket, not the project.
+  storageDurability: StorageDurability;
   // Track ids whose showVideo has been manually toggled in this session.
   // Transient — not persisted, cleared on reset and on page load.
   manuallyToggledShowVideo: number[];

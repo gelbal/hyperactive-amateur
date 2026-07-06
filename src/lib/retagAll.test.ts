@@ -28,6 +28,7 @@ function fakeClip(): Clip {
     blob: new Blob(["x"], { type: "audio/wav" }),
     url: "blob:test",
     audioBuffer: buffer,
+    audioStatus: "ok",
     trimStartMs: 0,
     trimEndMs: 2000,
     durationMs: 2000,
@@ -107,6 +108,15 @@ describe("retagAllClipsWith", () => {
       single: vi.fn(async () => null),
     };
     expect(await retagAllClipsWith(deps)).toEqual({ ok: false, tagged: 0, reason: "all-failed" });
+  });
+
+  it("returns offline when per-clip fallback sees an offline classifier result", async () => {
+    seedTracks([0, 1]);
+    const deps: RetagDeps = {
+      batch: vi.fn(async () => null),
+      single: vi.fn(async () => ({ kind: "offline" as const })),
+    };
+    expect(await retagAllClipsWith(deps)).toEqual({ ok: false, tagged: 0, reason: "offline" });
   });
 
   it("returns all-failed on the batch path when every returned item is below the confidence threshold", async () => {

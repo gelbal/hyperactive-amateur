@@ -2,7 +2,8 @@
 // ABOUTME: Drives the countdown → record → trim → store → auto-tag pipeline; module-level controller serializes flows + carries Esc cancellation.
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
-import { ensureAudioStarted, getAudioContext } from "./audio";
+import { getAudioContext } from "./audio";
+import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -13,14 +14,22 @@ import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
+import { saveNow } from "./autoSave";
+import { requestPersistence } from "./install";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
+const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+const RECORDING_INTERRUPTED_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
+export type RecordingCancelReason = "user" | "interrupted";
 
 export type AutoTagEvent =
   | { kind: "tagging" }
   | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
+  | { kind: "offline" }
   | { kind: "miss" }
   | { kind: "idle" };
 
@@ -42,31 +51,173 @@ export interface RecordIntoTrackOptions {
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
 
-export function cancelCurrentRecording(): void {
-  currentController?.abort();
+// Durable-storage request state. The request anchors to the first SUCCESSFUL
+// clip save and retries on later successful saves until the browser answers
+// (granted or definitively denied); an "unknown" outcome stays retryable.
+// Requests are single-flight: saves that land while one is still pending
+// coalesce into it instead of issuing overlapping persist() calls.
+let persistenceRequestSettled = false;
+let persistenceRequestPending = false;
+
+function requestPersistenceAfterClipSave(): void {
+  if (persistenceRequestSettled || persistenceRequestPending) return;
+  if (useAppStore.getState().session.storageDurability === "persistent") {
+    persistenceRequestSettled = true;
+    return;
+  }
+  persistenceRequestPending = true;
+  void requestPersistence().then((storageDurability) => {
+    persistenceRequestPending = false;
+    if (storageDurability !== "unknown") persistenceRequestSettled = true;
+    useAppStore.getState().actions.setStorageDurability(storageDurability);
+  });
+}
+
+// Test-only — clears the settled persistence-request state between cases.
+export function __resetPersistenceRequestForTesting(): void {
+  persistenceRequestSettled = false;
+  persistenceRequestPending = false;
+}
+
+export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
+  currentController?.abort(reason);
 }
 
 export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function attachPosterWhenReady(
+  trackId: number,
+  clip: Clip,
+  sourceBlob: Blob,
+  signal: AbortSignal,
+): void {
+  void (async () => {
+    let posterBlob: Blob | null = null;
+    try {
+      posterBlob = await captureFirstFrame(sourceBlob);
+    } catch (err) {
+      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+        phase: "poster",
+        message: errorMessage(err),
+      });
+      posterBlob = null;
+    }
+    try {
+      throwIfFlowAborted(signal, "Aborted after poster extraction");
+    } catch (err) {
+      if (isFlowAbort(err, signal)) return;
+      throw err;
+    }
+    useAppStore.getState().actions.setTrackPoster(trackId, posterBlob, clip);
+  })();
+}
+
+registerRecordingInterruptHandler({
+  isActive: isRecordingInFlight,
+  interrupt: (reason) => cancelCurrentRecording(reason),
+});
+
 function waitMs(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException("Aborted before wait started", "AbortError"));
+      reject(makeAbortError("Aborted before wait started"));
+      return;
+    }
+    const delayMs = Math.max(0, ms);
+    if (delayMs === 0) {
+      resolve();
       return;
     }
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
-    }, ms);
+    }, delayMs);
     const onAbort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-      reject(new DOMException("Aborted during wait", "AbortError"));
+      reject(makeAbortError("Aborted during wait"));
     };
     signal.addEventListener("abort", onAbort);
   });
+}
+
+async function waitUntilAudioTime(
+  deadlineSeconds: number,
+  audioContext: Pick<BaseAudioContext, "currentTime">,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    throwIfFlowAborted(signal, "Aborted before countdown completed");
+    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
+    if (remainingMs <= 0) return;
+    await waitMs(remainingMs, signal);
+  }
+}
+
+function makeAbortError(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+function throwIfFlowAborted(signal: AbortSignal, message: string): void {
+  if (signal.aborted) {
+    throw makeAbortError(message);
+  }
+}
+
+function acquireRecordingStreamUntilAbort(signal: AbortSignal): Promise<MediaStream> {
+  const acquisition = acquireRecordingStream();
+  return new Promise<MediaStream>((resolve, reject) => {
+    let settled = false;
+    const stopWatchingAbort = () => signal.removeEventListener("abort", onAbort);
+    const releaseLateStream = (stream: MediaStream) => {
+      releaseRecordingStream(stream);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      stopWatchingAbort();
+      acquisition.then(releaseLateStream, () => undefined);
+      reject(makeAbortError("Aborted during media acquisition"));
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    acquisition.then(
+      (stream) => {
+        if (settled) {
+          releaseLateStream(stream);
+          return;
+        }
+        settled = true;
+        stopWatchingAbort();
+        resolve(stream);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        stopWatchingAbort();
+        reject(err);
+      },
+    );
+  });
+}
+
+function getAbortReason(signal: AbortSignal): RecordingCancelReason {
+  return signal.reason === "interrupted" ? "interrupted" : "user";
+}
+
+function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
+  return isAbortError(err) || (signal.aborted && err === signal.reason);
 }
 
 // Run the full record sequence for one track. Acquires a fresh MediaStream
@@ -84,7 +235,7 @@ export async function recordIntoTrack(
   if (currentFlow) return false;
   const actions = useAppStore.getState().actions;
   if (!canStartAudibleAction(useAppStore.getState())) return false;
-  actions.setRecordingState("countdown", trackId);
+  actions.setRecordingState("preparing", trackId);
 
   const controller = new AbortController();
   currentController = controller;
@@ -109,21 +260,26 @@ async function runFlow(
 
   try {
     try {
-      await ensureAudioStarted();
-    } catch {
+      await ensureAudioRunning();
+    } catch (e) {
+      if (e instanceof AudioUnavailableError) {
+        options.onError?.(AUDIO_UNAVAILABLE_COPY);
+        return false;
+      }
       // Recording can still proceed; recordClip has a decode fallback if the
       // live Web Audio tap cannot run.
     }
-    if (signal.aborted) {
-      throw new DOMException("Aborted before media acquisition", "AbortError");
-    }
+    throwIfFlowAborted(signal, "Aborted before media acquisition");
 
     if (externalStream) {
       stream = externalStream;
     } else {
       try {
-        stream = await acquireRecordingStream();
+        stream = await acquireRecordingStreamUntilAbort(signal);
       } catch (e) {
+        if (signal.aborted) {
+          throw makeAbortError("Aborted during media acquisition");
+        }
         // Permission may have been revoked since the last grant — surface the
         // viewport gate so the user can re-allow.
         void requestMedia();
@@ -132,51 +288,73 @@ async function runFlow(
       }
     }
     if (!stream) return false;
+    throwIfFlowAborted(signal, "Aborted before countdown");
 
-    await waitMs(COUNTDOWN_MS, signal);
-    actions.setRecordingState("recording", trackId);
-    const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext(), { signal });
-    const url = URL.createObjectURL(result.blob);
-    const trim = autoTrim(result.audioBuffer);
-    // Poster generation is best-effort — never let a poster failure block
-    // the clip save. captureFirstFrame returns null on any decode/timeout.
-    let posterBlob: Blob | null = null;
-    try {
-      posterBlob = await captureFirstFrame(result.blob);
-    } catch {
-      posterBlob = null;
+    if (!allTracksUsable(stream)) {
+      actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      options.onError?.(RECORDING_INTERRUPTED_COPY);
+      return false;
     }
-    const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
+
+    const audioContext = getAudioContext();
+    const countdownEndsAt = audioContext.currentTime + COUNTDOWN_MS / 1000;
+    actions.setCountdownEndsAt(countdownEndsAt);
+    actions.setRecordingState("countdown", trackId);
+
+    await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
+    actions.setRecordingState("recording", trackId);
+    const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
+    throwIfFlowAborted(signal, "Aborted after capture");
+    const trim = autoTrim(result.audioBuffer);
+    const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
+    const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
+    const trimEndMs = Math.max(trimStartMs, Math.min(trim.trimEndMs, bufferDurationMs));
+    const url = URL.createObjectURL(result.blob);
     const newClip: Clip = {
       blob: result.blob,
       url,
       audioBuffer: result.audioBuffer,
+      audioStatus: "ok",
       audioBlob: audioBufferToWav(result.audioBuffer),
-      trimStartMs: trim.trimStartMs,
-      trimEndMs: trim.trimEndMs,
+      trimStartMs,
+      trimEndMs,
       durationMs: result.durationMs,
-      posterBlob,
-      posterUrl,
+      posterBlob: null,
+      posterUrl: null,
     };
     actions.setTrackClip(trackId, newClip);
+    try {
+      // saveNow resolves false when the degraded-load autosave pause skipped
+      // the write — no persistence request should anchor to a skipped save.
+      if (await saveNow()) requestPersistenceAfterClipSave();
+    } catch {
+      // saveNow logs autosave.error; durability failure is not a recording failure.
+    }
+    throwIfFlowAborted(signal, "Aborted after clip durability save");
+    // Poster generation is best-effort and intentionally not awaited: the clip
+    // save is the durability boundary, and the poster can attach later.
+    attachPosterWhenReady(trackId, newClip, result.blob, signal);
     // Send only the trimmed window to the AI tagger — the raw recording
     // is ~2 s and is mostly silence on either side of the actual sound.
     const trimmedForTagging = sliceAudioBuffer(
       result.audioBuffer,
-      trim.trimStartMs,
-      trim.trimEndMs,
+      trimStartMs,
+      trimEndMs,
     );
     void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
-    if (isAbortError(e)) {
-      // User pressed Esc — quietly bail without saving.
+    if (isFlowAbort(e, signal)) {
+      if (getAbortReason(signal) === "interrupted") {
+        actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      }
       return false;
     }
     options.onError?.(e instanceof Error ? e.message : String(e));
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }
 }
@@ -188,6 +366,10 @@ async function runAutoTag(
 ): Promise<void> {
   onEvent?.({ kind: "tagging" });
   const result = await autoTag(audioBuffer);
+  if (result && "kind" in result) {
+    onEvent?.({ kind: "offline" });
+    return;
+  }
   if (!result) {
     onEvent?.({ kind: "miss" });
     return;

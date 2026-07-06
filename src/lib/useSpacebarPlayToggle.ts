@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { togglePlayback } from "./audio";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { runAudibleAction } from "./audibleActionRunner";
 import { useAppStore } from "../store/useAppStore";
 
 function isEditable(target: EventTarget | null): boolean {
@@ -23,7 +24,7 @@ export function useSpacebarPlayToggle(): void {
       if (state.playback.isExporting) return;
       if (!state.playback.isPlaying && !canStartAudibleAction(state)) return;
       event.preventDefault();
-      void togglePlayback();
+      runAudibleAction(togglePlayback());
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

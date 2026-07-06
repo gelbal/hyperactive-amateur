@@ -28,6 +28,16 @@ export class UpstreamTimeoutError extends Error {
   }
 }
 
+// Browser fetch rejects with TypeError when the network is unavailable or the
+// request cannot be made at all. Keep that distinct from HTTP statuses so UI
+// can say what happened instead of surfacing "Failed to fetch".
+export class GeminiOfflineError extends Error {
+  constructor(message = "AI needs an internet connection.") {
+    super(message);
+    this.name = "GeminiOfflineError";
+  }
+}
+
 // 429 + non-timeout 5xx: worth one retry. The .transient marker is what
 // the retry wrapper in aiSuggest reads to decide whether to back off and
 // try again.

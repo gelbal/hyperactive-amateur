@@ -106,11 +106,11 @@ describe("recordClip", () => {
     vi.useRealTimers();
   });
 
-  it("resolves with blob, audioBuffer, and the input duration", async () => {
+  it("resolves with blob, audioBuffer, and the decoded audio duration", async () => {
     const ctx = makeAudioContext(async () => fakeAudioBuffer);
     const stream = {} as MediaStream;
     const result = await recordClip(stream, 20, ctx);
-    expect(result.durationMs).toBe(20);
+    expect(result.durationMs).toBe(1000);
     expect(result.audioBuffer).toBe(fakeAudioBuffer);
     expect(result.blob.size).toBeGreaterThan(0);
     expect(result.blob.type).toContain("webm");
@@ -136,12 +136,21 @@ describe("recordClip", () => {
       ],
     } as unknown as MediaStream;
 
+    const samples = new Float32Array(720);
+    samples.set([0.25, -0.5, 0.75]);
+
     const promise = recordClip(stream, 20, ctx);
-    fireAudioProcess(new Float32Array([0.25, -0.5, 0.75]));
+    fireAudioProcess(samples);
     const result = await promise;
 
     expect(ctx.decodeAudioData).not.toHaveBeenCalled();
-    expect(Array.from(result.audioBuffer.getChannelData(0))).toEqual([0.25, -0.5, 0.75]);
+    expect(result.durationMs).toBe(15);
+    expect(result.audioBuffer.length).toBe(720);
+    expect(Array.from(result.audioBuffer.getChannelData(0).slice(0, 3))).toEqual([
+      0.25,
+      -0.5,
+      0.75,
+    ]);
   });
 
   it("throws a clear error if decode fails", async () => {

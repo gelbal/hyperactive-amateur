@@ -2,7 +2,8 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { canStartAudibleAction } from "./audibleActionGate";
+import { claimPendingAudible } from "./audibleActionGate";
+import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
 import type { Clip, Track } from "../types";
@@ -23,10 +24,6 @@ let stepCounter = 0;
 
 export function getAudioContext(): AudioContext {
   return Tone.getContext().rawContext as AudioContext;
-}
-
-export async function ensureAudioStarted(): Promise<void> {
-  await Tone.start();
 }
 
 // Wires up Tone.Transport with a 16th-note loop callback. Idempotent — safe to call
@@ -89,9 +86,9 @@ function onStep(stepIndex: number, time: number): void {
   }
 }
 
-// Unified trigger entry point used by the Transport, the keyboard hook, and
-// the on-screen pads. Fires audio + video at the same audio-context time.
-export function triggerTrack(trackId: number, when: number): void {
+// Unified trigger entry point used by the Transport, keyboard hook, and pads.
+// Stopped pad/key visuals can use a separate audible display time.
+export function triggerTrack(trackId: number, when: number, displayStartTime = when): void {
   const track = useAppStore.getState().project.tracks[trackId];
   if (!track || track.muted) return;
 
@@ -104,7 +101,13 @@ export function triggerTrack(trackId: number, when: number): void {
     } catch {
       // Player can reject restart-too-soon at the same time slot; safe to swallow.
     }
-    if (track.showVideo) videoEngine.trigger(trackId, when);
+    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
+    useAppStore.getState().actions.markTriggered(trackId);
+    return;
+  }
+
+  if (track.clip) {
+    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
     useAppStore.getState().actions.markTriggered(trackId);
     return;
   }
@@ -115,9 +118,16 @@ export function triggerTrack(trackId: number, when: number): void {
 }
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
-  if (!canStartAudibleAction(useAppStore.getState())) return;
-  await ensureAudioStarted();
-  triggerTrack(trackId, nowSeconds());
+  const release = claimPendingAudible();
+  if (!release) return;
+
+  try {
+    await ensureAudioRunning();
+    if (!canStartAfterPendingAudible()) return;
+    triggerTrack(trackId, nowSeconds(), Tone.immediate());
+  } finally {
+    release();
+  }
 }
 
 export function nowSeconds(): number {
@@ -150,7 +160,7 @@ function syncPlayers(tracks: Track[]): void {
       players.delete(track.id);
     }
 
-    if (track.clip) {
+    if (track.clip?.audioBuffer) {
       const player = new Tone.Player(track.clip.audioBuffer).toDestination();
       applyPlayerVolume(player, track.volume);
       players.set(track.id, player);
@@ -160,14 +170,25 @@ function syncPlayers(tracks: Track[]): void {
   }
 }
 
-export async function startPlayback(): Promise<void> {
-  if (!canStartAudibleAction(useAppStore.getState())) return;
-  await ensureAudioStarted();
+function canStartAfterPendingAudible(): boolean {
+  const { playback, recording } = useAppStore.getState();
+  return (
+    !playback.isPlaying &&
+    !playback.isExporting &&
+    recording.state === "idle"
+  );
+}
+
+async function startPlaybackAfterAudioRunning(): Promise<boolean> {
+  await ensureAudioRunning();
+  if (!canStartAfterPendingAudible()) return false;
+
   stepCounter = 0;
   Tone.getTransport().position = 0;
   videoEngine.resetPlaybackState();
   useAppStore.getState().actions.setCurrentStep(0);
   Tone.getTransport().start();
+  return true;
 }
 
 export function stopPlayback(options: { allowExportStop?: boolean } = {}): void {
@@ -189,9 +210,15 @@ export async function togglePlayback(): Promise<void> {
   if (isPlaying) {
     stopPlayback();
   } else {
-    if (!canStartAudibleAction(state)) return;
-    await startPlayback();
-    useAppStore.getState().actions.setIsPlaying(true);
+    const release = claimPendingAudible();
+    if (!release) return;
+
+    try {
+      const started = await startPlaybackAfterAudioRunning();
+      if (started) useAppStore.getState().actions.setIsPlaying(true);
+    } finally {
+      release();
+    }
   }
 }
 

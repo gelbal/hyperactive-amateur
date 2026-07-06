@@ -11,7 +11,7 @@ vi.mock("./persistence", () => ({
   saveProject: persistenceMock.saveProject,
 }));
 
-import { startAutoSave, stopAutoSave } from "./autoSave";
+import { saveNow, startAutoSave, stopAutoSave } from "./autoSave";
 
 describe("autoSave error reporting", () => {
   beforeEach(() => {
@@ -29,6 +29,17 @@ describe("autoSave error reporting", () => {
     useAppStore.getState().actions.setBpm(121);
     await vi.advanceTimersByTimeAsync(600);
     vi.useRealTimers();
+
+    const entry = getLogs().find((log) => log.event === LOG_EVENTS.AUTOSAVE_ERROR);
+    expect(entry?.level).toBe("error");
+    expect(entry?.payload).toEqual({ message: "quota exceeded" });
+  });
+
+  it("logs a structured autosave error when saveNow rejects", async () => {
+    persistenceMock.saveProject.mockRejectedValueOnce(new Error("quota exceeded"));
+
+    startAutoSave();
+    await expect(saveNow()).rejects.toThrow("quota exceeded");
 
     const entry = getLogs().find((log) => log.event === LOG_EVENTS.AUTOSAVE_ERROR);
     expect(entry?.level).toBe("error");

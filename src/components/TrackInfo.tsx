@@ -5,6 +5,7 @@ import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { AI_OFFLINE_COPY } from "../lib/aiOffline";
 import type { Clip, Tag } from "../types";
 
 const AUTO_TAG_TOAST_MS = 3000;
@@ -12,6 +13,7 @@ type AutoTagState =
   | { kind: "idle" }
   | { kind: "tagging" }
   | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
+  | { kind: "offline" }
   | { kind: "miss" };
 
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
@@ -25,10 +27,18 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
+  const recordingError = useAppStore((s) => s.recording.error);
+  const recordingStationShowing = useAppStore(
+    (s) =>
+      s.media.status === "granted" &&
+      s.project.tracks.some((track) => !track.clip) &&
+      !s.session.recordingStationDismissed,
+  );
   const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);
   const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
   const toastTimerRef = useRef<number | null>(null);
+  const wasLastRecordingTrackRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -37,7 +47,26 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     [],
   );
 
+  useEffect(() => {
+    if (recordingState === "preparing" && activeTrackId !== trackId) {
+      wasLastRecordingTrackRef.current = false;
+    }
+    if (activeTrackId === trackId && recordingState !== "idle") {
+      wasLastRecordingTrackRef.current = true;
+    }
+    if (recordingState === "idle" && !recordingError) {
+      wasLastRecordingTrackRef.current = false;
+    }
+  }, [activeTrackId, recordingError, recordingState, trackId]);
+
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
+  const visibleRecordingError =
+    !recordingStationShowing &&
+    recordingError &&
+    (activeTrackId === trackId || wasLastRecordingTrackRef.current)
+      ? recordingError
+      : null;
+  const visibleError = visibleRecordingError ?? error;
 
   const scheduleToastReset = () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -101,8 +130,14 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       </div>
       <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-24 shrink-0" />}
-      <AutoTagStatus state={autoTagState} />
-      {error && <span className="text-xs text-red-400">{error}</span>}
+      {clip?.audioStatus === "unavailable" ? (
+        <span className="w-40 shrink-0 text-[10px] text-amber-300">
+          audio unavailable — re-record
+        </span>
+      ) : (
+        <AutoTagStatus state={autoTagState} />
+      )}
+      {visibleError && <span className="text-xs text-red-400">{visibleError}</span>}
     </div>
   );
 }
@@ -117,12 +152,16 @@ function AutoTagStatus({ state }: { state: AutoTagState }) {
   } else if (state.kind === "applied") {
     text = state.hatAudioOnly ? `tagged ${state.tag} → audio-only` : `tagged ${state.tag}`;
     cls = "text-orange-400";
+  } else if (state.kind === "offline") {
+    text = AI_OFFLINE_COPY;
+    cls = "text-red-400";
   } else {
     text = "couldn't auto-tag, pick one";
     cls = "text-zinc-500";
   }
+  const widthClass = state.kind === "offline" ? "w-40" : "w-32 truncate";
   return (
-    <span role="status" className={`text-[10px] uppercase tracking-wide ${cls} w-32 truncate`}>
+    <span role="status" className={`text-[10px] uppercase tracking-wide ${cls} ${widthClass}`}>
       {text}
     </span>
   );

@@ -14,15 +14,17 @@ const LABELS: Record<Vibe, string> = {
 
 export function FlowSelector() {
   const value = useAppStore((s) => s.project.vibe);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
   return (
     <label className="flex items-center gap-2 text-sm text-zinc-300">
       <span>Flow</span>
       <select
         value={value}
+        disabled={isExporting}
         onChange={(e) =>
           useAppStore.getState().actions.setVibe(e.target.value as Vibe)
         }
-        className="bg-zinc-900 rounded border border-zinc-700 text-zinc-200 px-2 py-1 focus:outline-none focus:border-orange-500 transition-colors"
+        className="bg-zinc-900 rounded border border-zinc-700 text-zinc-200 px-2 py-1 pointer-coarse:min-h-11 focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
       >
         {VIBES.map((v) => (
           <option key={v} value={v}>

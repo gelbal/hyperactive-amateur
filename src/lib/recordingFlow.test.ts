@@ -1,15 +1,25 @@
 // ABOUTME: recordingFlow tests — shared recording gate and early state claims.
 // ABOUTME: Keeps async capture mocked so tests can target orchestration races.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({
-  ensureAudioStarted: vi.fn(),
-  getAudioContext: vi.fn(() => ({})),
+  context: {
+    state: "running" as AudioContextState,
+    currentTime: 12,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  },
+  getAudioContext: vi.fn(() => audioMocks.context),
+}));
+
+const toneMocks = vi.hoisted(() => ({
+  start: vi.fn(),
 }));
 
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
   releaseRecordingStream: vi.fn(),
+  invalidatePendingAcquire: vi.fn(),
   requestMedia: vi.fn(),
 }));
 
@@ -17,14 +27,31 @@ const recorderMocks = vi.hoisted(() => ({
   recordClip: vi.fn(),
 }));
 
+const posterMocks = vi.hoisted(() => ({
+  captureFirstFrame: vi.fn(),
+}));
+
+const autoSaveMocks = vi.hoisted(() => ({
+  flushPending: vi.fn(),
+  saveNow: vi.fn(),
+}));
+
+const installMocks = vi.hoisted(() => ({
+  requestPersistence: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
-  ensureAudioStarted: audioMocks.ensureAudioStarted,
   getAudioContext: audioMocks.getAudioContext,
+}));
+
+vi.mock("tone", () => ({
+  start: toneMocks.start,
 }));
 
 vi.mock("./media", () => ({
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
+  invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
   requestMedia: mediaMocks.requestMedia,
 }));
 
@@ -50,7 +77,7 @@ vi.mock("./applyClassifiedTag", () => ({
 }));
 
 vi.mock("./posterFrame", () => ({
-  captureFirstFrame: vi.fn().mockResolvedValue(null),
+  captureFirstFrame: posterMocks.captureFirstFrame,
 }));
 
 vi.mock("./wavEncoder", () => ({
@@ -61,32 +88,190 @@ vi.mock("./audioBufferSlice", () => ({
   sliceAudioBuffer: vi.fn((buffer) => buffer),
 }));
 
-import { cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
-import { useAppStore } from "../store/useAppStore";
+vi.mock("./autoSave", () => ({
+  flushPending: autoSaveMocks.flushPending,
+  saveNow: autoSaveMocks.saveNow,
+}));
 
-function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
-    resolve = res;
+vi.mock("./install", () => ({
+  requestPersistence: installMocks.requestPersistence,
+}));
+
+import {
+  COUNTDOWN_MS,
+  __resetPersistenceRequestForTesting,
+  cancelCurrentRecording,
+  recordIntoTrack,
+} from "./recordingFlow";
+import { useAppStore } from "../store/useAppStore";
+import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { canStartAudibleAction } from "./audibleActionGate";
+import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
+import { clearLogs } from "./logger";
+
+const INTERRUPTION_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
+
+function makeDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value?: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value?: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = (value) => res(value as T | PromiseLike<T>);
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
-function makeStream(): MediaStream {
-  return { getTracks: () => [] } as unknown as MediaStream;
+async function flushMicrotasks(times = 3): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function observeResolution(
+  promise: Promise<boolean>,
+): Promise<{ status: "resolved"; value: boolean } | { status: "pending" }> {
+  let result: { status: "resolved"; value: boolean } | { status: "pending" } = {
+    status: "pending",
+  };
+  void promise.then((value) => {
+    result = { status: "resolved", value };
+  });
+  await flushMicrotasks();
+  return result;
+}
+
+function makeTrack(
+  kind: "audio" | "video",
+  overrides: Partial<Pick<MediaStreamTrack, "muted" | "readyState">> = {},
+): MediaStreamTrack {
+  return {
+    kind,
+    muted: false,
+    readyState: "live",
+    ...overrides,
+  } as MediaStreamTrack;
+}
+
+class LifecycleTrack extends EventTarget {
+  kind: "audio" | "video";
+  muted = false;
+  readyState: "live" | "ended" = "live";
+  stop = vi.fn(() => {
+    this.readyState = "ended";
+  });
+
+  constructor(kind: "audio" | "video") {
+    super();
+    this.kind = kind;
+  }
+
+  fireMute() {
+    this.muted = true;
+    this.dispatchEvent(new Event("mute"));
+  }
+}
+
+function makeStream(tracks: MediaStreamTrack[] = [makeTrack("audio"), makeTrack("video")]): MediaStream {
+  return {
+    getTracks: () => tracks,
+    getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+  } as unknown as MediaStream;
+}
+
+function makeLifecycleStream(): { stream: MediaStream; tracks: LifecycleTrack[] } {
+  const tracks = [new LifecycleTrack("video"), new LifecycleTrack("audio")];
+  return {
+    stream: makeStream(tracks as unknown as MediaStreamTrack[]),
+    tracks,
+  };
+}
+
+function setGrantedWithStream(stream: MediaStream): void {
+  useAppStore.getState().actions.setMedia({
+    stream,
+    status: "granted",
+    error: null,
+  });
+}
+
+function dispatchHidden(): void {
+  Object.defineProperty(document, "hidden", {
+    value: true,
+    configurable: true,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+function makeRecordResult({ durationMs = 1000 }: { durationMs?: number } = {}) {
+  return {
+    blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    audioBuffer: { duration: durationMs / 1000, sampleRate: 48000 } as AudioBuffer,
+    durationMs,
+  };
+}
+
+async function abortPendingFlow(promise: Promise<boolean>): Promise<void> {
+  cancelCurrentRecording();
+  await vi.runOnlyPendingTimersAsync();
+  await promise.catch(() => false);
+}
+
+async function advanceCountdownToDeadline(): Promise<void> {
+  const deadline = useAppStore.getState().recording.countdownEndsAt;
+  if (deadline === null) throw new Error("missing countdown deadline");
+  audioMocks.context.currentTime = deadline;
+  await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+  await flushMicrotasks();
+}
+
+function makeAbortableRecordClip() {
+  return (_stream: MediaStream, _durationMs: number, _context: AudioContext, options: { signal?: AbortSignal }) =>
+    new Promise<never>((_resolve, reject) => {
+      const signal = options.signal;
+      if (!signal) return;
+      const rejectAbort = () => reject(new DOMException("Aborted during record", "AbortError"));
+      if (signal.aborted) {
+        rejectAbort();
+        return;
+      }
+      signal.addEventListener("abort", rejectAbort, { once: true });
+    });
 }
 
 describe("recordingFlow", () => {
   beforeEach(() => {
+    __resetAudioLifecycleForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
-    audioMocks.ensureAudioStarted.mockReset();
-    audioMocks.ensureAudioStarted.mockResolvedValue(undefined);
+    audioMocks.context.state = "running";
+    audioMocks.context.currentTime = 12;
+    toneMocks.start.mockReset();
+    toneMocks.start.mockResolvedValue(undefined);
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
     mediaMocks.requestMedia.mockReset();
     recorderMocks.recordClip.mockReset();
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
+    posterMocks.captureFirstFrame.mockReset();
+    posterMocks.captureFirstFrame.mockResolvedValue(null);
+    autoSaveMocks.flushPending.mockReset();
+    autoSaveMocks.saveNow.mockReset();
+    autoSaveMocks.saveNow.mockResolvedValue(true);
+    installMocks.requestPersistence.mockReset();
+    installMocks.requestPersistence.mockResolvedValue("best-effort");
+    __resetPersistenceRequestForTesting();
+    clearLogs();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("refuses to start recording while export is active", async () => {
@@ -95,7 +280,7 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
@@ -106,22 +291,39 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
 
-  it("claims countdown state before awaiting audio or media startup", async () => {
+  it("surfaces rejected Tone.start with pinned audio copy and resets recording state", async () => {
+    const onError = vi.fn();
+    toneMocks.start.mockRejectedValue(new Error("resume denied"));
+    mediaMocks.acquireRecordingStream.mockRejectedValue(new Error("media should not start"));
+
+    await expect(recordIntoTrack(3, { onError })).resolves.toBe(false);
+
+    expect(toneMocks.start).toHaveBeenCalledTimes(1);
+    expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
+    expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
+  it("claims preparing state before awaiting audio or media startup", async () => {
     const audioStarted = makeDeferred();
-    audioMocks.ensureAudioStarted.mockReturnValue(audioStarted.promise);
+    toneMocks.start.mockReturnValue(audioStarted.promise);
 
     const promise = recordIntoTrack(2);
 
     expect(useAppStore.getState().recording).toEqual({
-      state: "countdown",
+      state: "preparing",
       activeTrackId: 2,
+      countdownEndsAt: null,
+      error: null,
     });
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
 
     cancelCurrentRecording();
     audioStarted.resolve();
@@ -130,5 +332,711 @@ describe("recordingFlow", () => {
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).not.toHaveBeenCalled();
     expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
+  it.each([
+    ["implicit user", () => cancelCurrentRecording()],
+    ["explicit user", () => cancelCurrentRecording("user")],
+  ])("keeps %s cancellation quiet while preparing", async (_label, cancel) => {
+    const onError = vi.fn();
+    const audioStarted = makeDeferred();
+    toneMocks.start.mockReturnValue(audioStarted.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+
+    cancel();
+    audioStarted.resolve();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("cancels quietly while stream acquisition is pending and reopens the gate", async () => {
+    const onError = vi.fn();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+    expect(mediaMocks.acquireRecordingStream).toHaveBeenCalledTimes(1);
+
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.resolve(makeStream());
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("releases a stream that resolves after acquisition cancellation", async () => {
+    const stream = makeStream();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0);
+    await flushMicrotasks();
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.resolve(stream);
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+    expect(mediaMocks.releaseRecordingStream).not.toHaveBeenCalled();
+
+    acquisition.resolve(stream);
+    await flushMicrotasks();
+
+    expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("swallows a rejected stream acquisition after cancellation", async () => {
+    const onError = vi.fn();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+    cancelCurrentRecording();
+    const settled = await observeResolution(promise);
+    if (settled.status !== "resolved") {
+      acquisition.reject(new Error("late denial"));
+      await promise.catch(() => false);
+    }
+
+    expect(settled).toEqual({ status: "resolved", value: false });
+
+    acquisition.reject(new Error("late denial"));
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("sets the pinned store error for interrupted cancellation during preparing", async () => {
+    const onError = vi.fn();
+    const audioStarted = makeDeferred();
+    toneMocks.start.mockReturnValue(audioStarted.promise);
+
+    const promise = recordIntoTrack(0, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+
+    cancelCurrentRecording("interrupted");
+    audioStarted.resolve();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+    expect(mediaMocks.releaseRecordingStream).not.toHaveBeenCalled();
+  });
+
+  it("starts countdown after audio and live tracks using the audio-clock deadline", async () => {
+    vi.useFakeTimers();
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(
+      audioMocks.context.currentTime + COUNTDOWN_MS / 1000,
+    );
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+    await abortPendingFlow(promise);
+  });
+
+  it("sets the pinned store error for interrupted cancellation during countdown", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const stream = makeStream();
+    mediaMocks.acquireRecordingStream.mockResolvedValue(stream);
+
+    const promise = recordIntoTrack(1, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+
+    cancelCurrentRecording("interrupted");
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).not.toHaveBeenCalled();
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+    expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+  });
+
+  it.each([
+    ["muted audio track", makeStream([makeTrack("audio", { muted: true }), makeTrack("video")])],
+    ["no audio track", makeStream([makeTrack("video")])],
+    ["no video track", makeStream([makeTrack("audio")])],
+  ])("fails before countdown when the stream has %s", async (_label, stream) => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockResolvedValue(stream);
+
+    const promise = recordIntoTrack(4, { onError });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).toHaveBeenCalledWith(INTERRUPTION_COPY);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+  });
+
+  it("flips to recording before recordClip runs and clears countdown deadline on idle", async () => {
+    vi.useFakeTimers();
+    const setRecordingState = vi.spyOn(useAppStore.getState().actions, "setRecordingState");
+
+    recorderMocks.recordClip.mockImplementation(() => {
+      expect(useAppStore.getState().recording.state).toBe("recording");
+      return Promise.resolve(makeRecordResult());
+    });
+
+    const promise = recordIntoTrack(5);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    const recordingCallOrder = setRecordingState.mock.calls.findIndex(
+      ([state]) => state === "recording",
+    );
+    expect(recordingCallOrder).toBeGreaterThanOrEqual(0);
+    expect(setRecordingState.mock.invocationCallOrder[recordingCallOrder]).toBeLessThan(
+      recorderMocks.recordClip.mock.invocationCallOrder[0],
+    );
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBeNull();
+
+    setRecordingState.mockRestore();
+  });
+
+  it("clamps saved trim end to the actual captured buffer duration", async () => {
+    vi.useFakeTimers();
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 500 }));
+
+    const promise = recordIntoTrack(5);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    const clip = useAppStore.getState().project.tracks[5].clip;
+    expect(clip?.durationMs).toBe(500);
+    expect(clip?.trimStartMs).toBe(0);
+    expect(clip?.trimEndMs).toBe(500);
+  });
+
+  it("sets the pinned store error for interrupted cancellation during the record window", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const stream = makeStream();
+    mediaMocks.acquireRecordingStream.mockResolvedValue(stream);
+    recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
+
+    const promise = recordIntoTrack(2, { onError });
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+
+    cancelCurrentRecording("interrupted");
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+  });
+
+  it("saves the clip and returns idle before poster extraction resolves, then attaches the late poster", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const poster = makeDeferred<Blob | null>();
+    const posterBlob = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
+    posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+    const setTrackPoster = vi.spyOn(useAppStore.getState().actions, "setTrackPoster");
+
+    const promise = recordIntoTrack(2, { onError });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+      expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: true,
+      });
+      const stateBeforePoster = useAppStore.getState();
+      const savedClip = stateBeforePoster.project.tracks[2].clip;
+      expect(stateBeforePoster.recording.state).toBe("idle");
+      expect(savedClip).not.toBeNull();
+      expect(savedClip?.posterBlob).toBeNull();
+      expect(savedClip?.posterUrl).toBeNull();
+      expect(setTrackPoster).not.toHaveBeenCalled();
+
+      poster.resolve(posterBlob);
+      await flushMicrotasks(5);
+
+      expect(setTrackPoster).toHaveBeenCalledWith(2, posterBlob, savedClip);
+      expect(useAppStore.getState().project.tracks[2].clip?.posterBlob).toBe(posterBlob);
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      poster.resolve(null);
+      await promise.catch(() => false);
+      setTrackPoster.mockRestore();
+    }
+  });
+
+  it("awaits saveNow after storing the clip before returning idle", async () => {
+    vi.useFakeTimers();
+    const save = makeDeferred();
+    autoSaveMocks.saveNow.mockReturnValue(save.promise);
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await flushMicrotasks();
+
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    await expect(observeResolution(promise)).resolves.toEqual({ status: "pending" });
+    expect(posterMocks.captureFirstFrame).not.toHaveBeenCalled();
+
+    save.resolve();
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests persistent storage once after the first successful clip save", async () => {
+    vi.useFakeTimers();
+    installMocks.requestPersistence.mockResolvedValue("persistent");
+
+    const first = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(first).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+    await flushMicrotasks();
+    expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+
+    const second = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(second).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers the persistence request to the next successful save after a failed first save", async () => {
+    vi.useFakeTimers();
+    autoSaveMocks.saveNow.mockRejectedValueOnce(new Error("quota exceeded"));
+
+    const first = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(first).resolves.toBe(true);
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
+
+    const second = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(second).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an unresolved persistence request on later successful saves until settled", async () => {
+    vi.useFakeTimers();
+    installMocks.requestPersistence.mockResolvedValueOnce("unknown");
+    installMocks.requestPersistence.mockResolvedValueOnce("persistent");
+
+    for (const trackId of [0, 1, 2]) {
+      const flow = recordIntoTrack(trackId);
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(flow).resolves.toBe(true);
+      await flushMicrotasks();
+    }
+
+    // First save asks and gets no answer; the second retry is granted; the
+    // third save must not ask again.
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().session.storageDurability).toBe("persistent");
+  });
+
+  it("coalesces persistence requests while one is still pending", async () => {
+    vi.useFakeTimers();
+    const pending = makeDeferred<string>();
+    installMocks.requestPersistence.mockReturnValue(pending.promise);
+
+    // Two successful clip saves land while the first persist() is unresolved:
+    // the second must coalesce into it, not issue an overlapping call.
+    for (const trackId of [0, 1]) {
+      const flow = recordIntoTrack(trackId);
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(flow).resolves.toBe(true);
+      await flushMicrotasks();
+    }
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(1);
+
+    pending.resolve("unknown");
+    await flushMicrotasks();
+
+    // An "unknown" outcome stays retryable once the in-flight request clears.
+    const third = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(third).resolves.toBe(true);
+    expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the clip in memory and skips the persistence request when the immediate save is paused", async () => {
+    vi.useFakeTimers();
+    // saveNow resolves false when the degraded-load autosave pause is active:
+    // nothing was written, so no durable-storage request should anchor to it.
+    autoSaveMocks.saveNow.mockResolvedValue(false);
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
+  });
+
+  it("keeps the clip and returns idle when saveNow rejects", async () => {
+    vi.useFakeTimers();
+    autoSaveMocks.saveNow.mockRejectedValue(new Error("quota exceeded"));
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
+  });
+
+  it("discards a late poster when the clip was replaced before it resolves", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const poster = makeDeferred<Blob | null>();
+    const posterBlob = new Blob([new Uint8Array([9])], { type: "image/jpeg" });
+    posterMocks.captureFirstFrame.mockReturnValue(poster.promise);
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+
+    const promise = recordIntoTrack(2, { onError });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+      expect(posterMocks.captureFirstFrame).toHaveBeenCalledTimes(1);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: true,
+      });
+      const savedClip = useAppStore.getState().project.tracks[2].clip;
+      if (!savedClip) throw new Error("missing saved clip");
+      const urlCallsAfterSave = createObjectURL.mock.calls.length;
+      const replacement = {
+        ...savedClip,
+        blob: new Blob([new Uint8Array([2])], { type: "video/webm" }),
+        url: "blob:test/replacement",
+        posterBlob: null,
+        posterUrl: null,
+      };
+      useAppStore.getState().actions.setTrackClip(2, replacement);
+
+      poster.resolve(posterBlob);
+      await flushMicrotasks(5);
+
+      expect(useAppStore.getState().project.tracks[2].clip).toBe(replacement);
+      expect(useAppStore.getState().project.tracks[2].clip?.posterBlob).toBeNull();
+      expect(createObjectURL).toHaveBeenCalledTimes(urlCallsAfterSave);
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      poster.resolve(null);
+      await promise.catch(() => false);
+      createObjectURL.mockRestore();
+    }
+  });
+
+  it("keeps the saved clip intact when poster extraction returns null", async () => {
+    vi.useFakeTimers();
+    posterMocks.captureFirstFrame.mockResolvedValue(null);
+
+    const promise = recordIntoTrack(2);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    const clip = useAppStore.getState().project.tracks[2].clip;
+    expect(clip).not.toBeNull();
+    expect(clip?.posterBlob).toBeNull();
+    expect(clip?.posterUrl).toBeNull();
+  });
+
+  it("keeps waiting when the audio clock has not reached the countdown deadline", async () => {
+    vi.useFakeTimers();
+
+    const promise = recordIntoTrack(6);
+    try {
+      await flushMicrotasks(5);
+      const deadline = useAppStore.getState().recording.countdownEndsAt;
+      if (deadline === null) throw new Error("missing countdown deadline");
+
+      audioMocks.context.currentTime = deadline - 1;
+      await vi.advanceTimersByTimeAsync(COUNTDOWN_MS);
+      await flushMicrotasks();
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+      audioMocks.context.currentTime = deadline;
+      await vi.advanceTimersByTimeAsync(1000);
+      await flushMicrotasks();
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+    } finally {
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels a wired in-flight flow before capture when the page hides during countdown", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const { stream, tracks } = makeLifecycleStream();
+    registerStreamLifecycle(stream);
+    setGrantedWithStream(stream);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(2, { stream, onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("countdown");
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+      expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+      expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+      expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await vi.runOnlyPendingTimersAsync();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels a wired in-flight flow without saving when the page hides during recording", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const { stream, tracks } = makeLifecycleStream();
+    registerStreamLifecycle(stream);
+    setGrantedWithStream(stream);
+    recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(2, { stream, onError });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(useAppStore.getState().recording.state).toBe("recording");
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+      expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+      expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await flushMicrotasks();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels with the pinned copy when the page hides while audio startup is pending", async () => {
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const audioStarted = makeDeferred();
+    toneMocks.start.mockReturnValue(audioStarted.promise);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(0, { onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("preparing");
+
+      dispatchHidden();
+      audioStarted.resolve();
+      await flushMicrotasks(5);
+
+      expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+      await expect(promise).resolves.toBe(false);
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels with the pinned copy when the page hides while stream acquisition is pending", async () => {
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const stream = makeStream();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(0, { onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("preparing");
+      expect(mediaMocks.acquireRecordingStream).toHaveBeenCalledTimes(1);
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(onError).not.toHaveBeenCalled();
+      expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+      // The invalidated acquire settling later is released, never installed.
+      acquisition.resolve(stream);
+      await flushMicrotasks();
+      expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("hidden while recording is idle leaves recording state and error untouched", async () => {
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const detach = installVisibilityListener();
+    try {
+      dispatchHidden();
+      await flushMicrotasks();
+
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+    }
+  });
+
+  it("cancels a real in-flight flow when a lifecycle mute event fires", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const { stream, tracks } = makeLifecycleStream();
+    registerStreamLifecycle(stream);
+    // The store must hold the stream as current: stale-stream mute events
+    // deliberately no longer interrupt a recording (they only fire the
+    // interrupt when the event's stream is the held one).
+    setGrantedWithStream(stream);
+    recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
+
+    const promise = recordIntoTrack(2, { stream, onError });
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    expect(useAppStore.getState().recording.state).toBe("recording");
+
+    tracks[1].fireMute();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
   });
 });

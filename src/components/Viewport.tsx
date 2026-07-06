@@ -1,19 +1,30 @@
-// ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
+// ABOUTME: Viewport — fixed export render canvas plus DPR-scaled display canvas.
 // ABOUTME: Owns the empty state plus the fullscreen toggle for presentation mode.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
-import { requestMedia } from "../lib/media";
+import { isAcquireInFlight, requestMedia } from "../lib/media";
+import { ensureAudioRunning } from "../lib/audioLifecycle";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
 
+const RENDER_CANVAS_SIZE = 480;
+const DISPLAY_DPR_CAP = 2;
+
+function getDisplayBackingSize(cssSize: number): number {
+  const dpr = Math.min(window.devicePixelRatio || 1, DISPLAY_DPR_CAP);
+  return Math.max(1, Math.round(cssSize * dpr));
+}
+
 export function Viewport() {
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [displayCanvasSize, setDisplayCanvasSize] = useState(RENDER_CANVAS_SIZE);
   const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
   const emptyTrackCount = useAppStore(
     (s) => s.project.tracks.filter((t) => !t.clip).length,
@@ -21,6 +32,7 @@ export function Viewport() {
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
+  const audioState = useAppStore((s) => s.playback.audioState);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
   // The overlays (gate, station, record-prompt, countdown) stay visible in
@@ -45,6 +57,7 @@ export function Viewport() {
     emptyTrackCount > 0 &&
     !stationDismissed;
   const showReconnectPill = mediaStatus === "suspended";
+  const showAudioResumePill = audioState === "resume-required";
   const showRecordMore = !isFullscreen && emptyTrackCount > 0 && stationDismissed;
   const showFullscreenToggle = fullscreenSupported && (mediaStatus === "granted" || hasClips);
 
@@ -53,22 +66,52 @@ export function Viewport() {
   }, []);
 
   useEffect(() => {
-    setActiveCanvas(canvasRef.current);
+    setActiveCanvas(renderCanvasRef.current);
     return () => setActiveCanvas(null);
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const displayCanvas = displayCanvasRef.current;
+    if (!displayCanvas || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const cssSize =
+        entries[0]?.contentRect.width ||
+        entries[0]?.contentRect.height ||
+        RENDER_CANVAS_SIZE;
+      const backingSize = getDisplayBackingSize(cssSize);
+      setDisplayCanvasSize((current) =>
+        current === backingSize ? current : backingSize,
+      );
+    });
+
+    observer.observe(displayCanvas);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const renderCanvas = renderCanvasRef.current;
+    if (!renderCanvas) return;
+    const renderCtx = renderCanvas.getContext("2d");
+    if (!renderCtx) return;
+    const displayCanvas = displayCanvasRef.current;
+    const displayCtx = displayCanvas?.getContext("2d") ?? null;
 
     let rafId = 0;
     const draw = () => {
       // Audio time is the source of truth for "what should be on screen".
       // rAF only decides when we paint.
-      const audioTime = Tone.now();
-      drawCurrentFrame(ctx, audioTime);
+      const audioTime = Tone.immediate();
+      drawCurrentFrame(renderCtx, audioTime);
+      if (displayCanvas && displayCtx) {
+        displayCtx.drawImage(
+          renderCanvas,
+          0,
+          0,
+          displayCanvas.width,
+          displayCanvas.height,
+        );
+      }
       rafId = requestAnimationFrame(draw);
     };
 
@@ -91,17 +134,35 @@ export function Viewport() {
         className="ha-viewport-frame relative aspect-square w-full max-w-[480px]"
       >
         <canvas
-          ref={canvasRef}
-          width={480}
-          height={480}
+          ref={renderCanvasRef}
+          width={RENDER_CANVAS_SIZE}
+          height={RENDER_CANVAS_SIZE}
+          aria-hidden="true"
+          className="ha-render-canvas w-full h-full rounded bg-zinc-950"
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: 0,
+            pointerEvents: "none",
+          }}
+        />
+        <canvas
+          ref={displayCanvasRef}
+          width={displayCanvasSize}
+          height={displayCanvasSize}
           aria-label="hard-cut video viewport"
-          className="ha-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
+          className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
         {showGate && (
           <PermissionGate status={mediaStatus} error={mediaError} />
         )}
         {showStation && <RecordingStation />}
-        {showReconnectPill && <ReconnectPill />}
+        {(showAudioResumePill || showReconnectPill) && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
+            {showAudioResumePill && <AudioResumePill />}
+            {showReconnectPill && <ReconnectPill />}
+          </div>
+        )}
         {mediaStatus === "granted" && !hasClips && stationDismissed && (
           <RecordPrompt />
         )}
@@ -123,15 +184,62 @@ export function Viewport() {
 }
 
 function ReconnectPill() {
+  const recordingState = useAppStore((s) => s.recording.state);
+  // isAcquireInFlight() reads module state that never triggers a re-render,
+  // so the click-time transition needs local pending state to actually render
+  // the button disabled while the acquire is unresolved (R6.1). On settlement
+  // the store outcome decides what shows: granted unmounts the pill, a still
+  // suspended/denied store leaves it tappable again.
+  const [pending, setPending] = useState(false);
+  const disabled = pending || recordingState !== "idle" || isAcquireInFlight();
+
+  const reconnect = async () => {
+    setPending(true);
+    try {
+      await useAppStore.getState().actions.resumeMedia();
+    } finally {
+      setPending(false);
+    }
+  };
+
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => void reconnect()}
+      className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-zinc-950/80"
+    >
+      Camera disconnected — tap to reconnect
+    </button>
+  );
+}
+
+function AudioResumePill() {
+  const [stillBlocked, setStillBlocked] = useState(false);
+
+  const handleResume = async () => {
+    setStillBlocked(false);
+    try {
+      await ensureAudioRunning();
+    } catch {
+      setStillBlocked(true);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
       <button
         type="button"
-        onClick={() => void useAppStore.getState().actions.resumeMedia()}
+        onClick={() => void handleResume()}
         className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
       >
-        Camera disconnected — tap to reconnect
+        Audio interrupted — tap to resume.
       </button>
+      {stillBlocked && (
+        <div className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs text-orange-200">
+          Still blocked — try the volume keys or reopen the app.
+        </div>
+      )}
     </div>
   );
 }

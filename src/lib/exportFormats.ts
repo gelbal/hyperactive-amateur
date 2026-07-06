@@ -1,5 +1,6 @@
 // ABOUTME: exportFormats — feature-detect which MediaRecorder MIME types this browser supports.
 // ABOUTME: The export pipeline is codec-agnostic; this util drives the user-facing format picker.
+import { RECORDING_MIME_CANDIDATES } from "./mediaRecorderSupport";
 
 export interface ExportFormat {
   mimeType: string;
@@ -7,27 +8,34 @@ export interface ExportFormat {
   extension: string;
 }
 
-// Preference order — first match per container wins. WebM is the safer
-// Chromium default for MediaRecorder; Safari falls through to MP4.
-const PREFERENCE_ORDER: ExportFormat[] = [
-  {
-    mimeType: "video/webm; codecs=vp9,opus",
+const FORMAT_METADATA = {
+  "video/webm; codecs=vp9,opus": {
     label: "WebM (VP9)",
     extension: "webm",
   },
-  {
-    mimeType: "video/webm; codecs=vp8,opus",
+  "video/webm; codecs=vp8,opus": {
     label: "WebM (VP8)",
     extension: "webm",
   },
-  { mimeType: "video/webm", label: "WebM", extension: "webm" },
-  {
-    mimeType: "video/mp4; codecs=avc1.42E01E,mp4a.40.2",
+  "video/webm": { label: "WebM", extension: "webm" },
+  "video/mp4; codecs=avc1.42E01E,mp4a.40.2": {
     label: "MP4 (H.264)",
     extension: "mp4",
   },
-  { mimeType: "video/mp4", label: "MP4", extension: "mp4" },
-];
+  "video/mp4; codecs=h264,aac": { label: "MP4 (H.264)", extension: "mp4" },
+  "video/mp4": { label: "MP4", extension: "mp4" },
+} satisfies Record<
+  (typeof RECORDING_MIME_CANDIDATES)[number],
+  Omit<ExportFormat, "mimeType">
+>;
+
+// Preference order comes from the shared recording/export MediaRecorder probe.
+// First match per container wins. WebM is the safer Chromium default for
+// MediaRecorder; Safari falls through to MP4.
+const PREFERENCE_ORDER: ExportFormat[] = RECORDING_MIME_CANDIDATES.map((mimeType) => ({
+  mimeType,
+  ...FORMAT_METADATA[mimeType],
+}));
 
 // Return the supported formats for this browser. Caps the list at one entry
 // per container (mp4, webm) — the first-supported MIME under each container
@@ -42,4 +50,20 @@ export function detectSupportedFormats(): ExportFormat[] {
     byExtension.set(fmt.extension, fmt);
   }
   return Array.from(byExtension.values());
+}
+
+export function extensionForMimeType(
+  mimeType: string,
+  fallbackExtension: string,
+): string {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  if (!normalizedMimeType) return fallbackExtension;
+
+  const metadata =
+    FORMAT_METADATA[normalizedMimeType as keyof typeof FORMAT_METADATA] ??
+    FORMAT_METADATA[
+      normalizedMimeType.split(";")[0].trim() as keyof typeof FORMAT_METADATA
+    ];
+
+  return metadata?.extension ?? fallbackExtension;
 }

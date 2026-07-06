@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { triggerTrackNow } from "./audio";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { runAudibleAction } from "./audibleActionRunner";
 import { useAppStore } from "../store/useAppStore";
 
 function isEditable(target: EventTarget | null): boolean {
@@ -35,7 +36,7 @@ export function useKeyboardTriggers(): void {
       if (trackId === null) return;
       if (!canStartAudibleAction(useAppStore.getState())) return;
       event.preventDefault();
-      void triggerTrackNow(trackId);
+      runAudibleAction(triggerTrackNow(trackId));
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

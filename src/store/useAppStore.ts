@@ -7,12 +7,14 @@ import type {
   CutSubdivision,
   MediaStatus,
   RecordingState,
+  StorageDurability,
   Subgenre,
   Tag,
   Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
-import { acquireRecordingStream } from "../lib/media";
+import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
+import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
   AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
@@ -63,10 +65,12 @@ export interface AppActions {
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
+  setAudioState: (audioState: AppState["playback"]["audioState"]) => void;
   setIsExporting: (exporting: boolean) => void;
   setCurrentStep: (step: number) => void;
   markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
+  setTrackPoster: (trackId: number, posterBlob: Blob | null, expectedClip?: Clip) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (
     trackId: number,
@@ -80,13 +84,16 @@ export interface AppActions {
     source?: "user" | "system",
   ) => void;
   setRecoveryWarnings: (warnings: string[]) => void;
+  setStorageDurability: (durability: StorageDurability) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
   setVideoFacingMode: (mode: "user" | "environment") => void;
   toggleVideoFacingMode: () => void;
   resumeMedia: () => Promise<void>;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
-  hydrateProject: (project: AppState["project"]) => void;
+  setCountdownEndsAt: (deadline: number | null) => void;
+  setRecordingError: (error: string | null) => void;
+  hydrateProject: (project: AppState["project"], manuallyTagged?: number[]) => void;
   applyPattern: (grid: boolean[][]) => void;
   applyPatternIfCurrent: (
     grid: boolean[][],
@@ -241,7 +248,9 @@ export const useAppStore = create<AppStore>((set) => ({
           project: {
             ...state.project,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, muted } : track,
+              // A user mute toggle owns the state from then on: it clears any
+              // repair-applied marker so re-record won't override the intent.
+              track.id === trackId ? { ...track, muted, mutedByRepair: false } : track,
             ),
           },
         };
@@ -249,6 +258,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setIsPlaying: (playing) =>
       set((state) => ({ playback: { ...state.playback, isPlaying: playing } })),
+
+    setAudioState: (audioState) =>
+      set((state) => ({ playback: { ...state.playback, audioState } })),
 
     setIsExporting: (exporting) =>
       set((state) => ({ playback: { ...state.playback, isExporting: exporting } })),
@@ -267,7 +279,8 @@ export const useAppStore = create<AppStore>((set) => ({
     setTrackClip: (trackId, clip) =>
       set((state) => {
         if (state.playback.isExporting) return state;
-        const previous = state.project.tracks[trackId]?.clip;
+        const previousTrack = state.project.tracks[trackId];
+        const previous = previousTrack?.clip;
         if (previous && previous.url && previous.url !== clip.url) {
           // Avoid leaking object URLs when a clip is replaced.
           URL.revokeObjectURL(previous.url);
@@ -285,15 +298,56 @@ export const useAppStore = create<AppStore>((set) => ({
           trackId in state.project.tagReasoning
             ? omitKey(state.project.tagReasoning, trackId)
             : state.project.tagReasoning;
+        // Re-recording clears a mute only when the repair applied it (marked
+        // mutedByRepair). A mute the user owns — on a healthy track or
+        // re-applied after a repair — is kept.
+        const clearRepairMute =
+          previousTrack?.mutedByRepair === true && clip.audioStatus === "ok";
         return {
           project: {
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip } : track,
+              track.id === trackId
+                ? {
+                    ...track,
+                    clip,
+                    muted: clearRepairMute ? false : track.muted,
+                    mutedByRepair: false,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                  }
+                : track,
             ),
           },
           session: bumpProjectRevision(state.session),
+        };
+      }),
+
+    setTrackPoster: (trackId, posterBlob, expectedClip) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const current = state.project.tracks[trackId]?.clip;
+        if (!current) return state;
+        if (expectedClip && current !== expectedClip) return state;
+        if (!posterBlob && !current.posterBlob && !current.posterUrl) return state;
+
+        const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
+        if (current.posterUrl && current.posterUrl !== posterUrl) {
+          URL.revokeObjectURL(current.posterUrl);
+        }
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId
+                ? {
+                    ...track,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                    clip: { ...current, posterBlob, posterUrl },
+                  }
+                : track,
+            ),
+          },
         };
       }),
 
@@ -312,7 +366,9 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
-              track.id === trackId ? { ...track, clip: null } : track,
+              track.id === trackId
+                ? { ...track, clip: null, blobRevision: (track.blobRevision ?? 0) + 1 }
+                : track,
             ),
           },
           // Re-recording a track means the user wants the station back. Without
@@ -401,6 +457,9 @@ export const useAppStore = create<AppStore>((set) => ({
     setRecoveryWarnings: (warnings) =>
       set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
 
+    setStorageDurability: (storageDurability) =>
+      set((state) => ({ session: { ...state.session, storageDurability } })),
+
     setMedia: (next) =>
       set((state) => ({
         media: {
@@ -428,12 +487,16 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({ media: { ...state.media, videoFacingMode: mode } })),
 
     toggleVideoFacingMode: () =>
-      set((state) => ({
-        media: {
-          ...state.media,
-          videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
-        },
-      })),
+      set((state) => {
+        persistDeviceId(VIDEO_DEVICE_STORAGE_KEY, null);
+        return {
+          media: {
+            ...state.media,
+            videoDeviceId: null,
+            videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
+          },
+        };
+      }),
 
     // Re-acquire after a "suspended" transition (track ended, page resumed,
     // recorder died). media.ts ↔ useAppStore.ts is a circular import, but ESM
@@ -442,6 +505,8 @@ export const useAppStore = create<AppStore>((set) => ({
     // On success acquireRecordingStream flips status to "granted"; on failure
     // it flips to "denied" and we let the gate take over.
     resumeMedia: async () => {
+      if (useAppStore.getState().recording.state !== "idle") return;
+      if (isAcquireInFlight()) return;
       try {
         await acquireRecordingStream();
       } catch {
@@ -452,9 +517,23 @@ export const useAppStore = create<AppStore>((set) => ({
     setRecordingState: (recordingState, activeTrackId) =>
       set((state) => ({
         recording: {
+          ...state.recording,
           state: recordingState,
           activeTrackId: activeTrackId === undefined ? state.recording.activeTrackId : activeTrackId,
+          countdownEndsAt:
+            recordingState === "preparing" ? null : state.recording.countdownEndsAt,
+          error: recordingState === "preparing" ? null : state.recording.error,
         },
+      })),
+
+    setCountdownEndsAt: (deadline) =>
+      set((state) => ({
+        recording: { ...state.recording, countdownEndsAt: deadline },
+      })),
+
+    setRecordingError: (error) =>
+      set((state) => ({
+        recording: { ...state.recording, error },
       })),
 
     dismissRecordingStation: () =>
@@ -463,7 +542,7 @@ export const useAppStore = create<AppStore>((set) => ({
     reopenRecordingStation: () =>
       set((state) => ({ session: { ...state.session, recordingStationDismissed: false } })),
 
-    hydrateProject: (project) =>
+    hydrateProject: (project, manuallyTagged) =>
       set((state) => {
         if (state.playback.isExporting) return state;
         // If the rehydrated project has any recorded clip, the user is past
@@ -471,11 +550,22 @@ export const useAppStore = create<AppStore>((set) => ({
         // (and its permission gate) on reload until they explicitly opt back
         // in via "Record more" or "Re-record".
         const hasAnyClip = project.tracks.some((t) => t.clip);
+        const normalizedProject = {
+          ...project,
+          tracks: project.tracks.map((track) => ({
+            ...track,
+            blobRevision: track.blobRevision ?? 0,
+          })),
+        };
         return {
-          project,
-          session: hasAnyClip
-            ? { ...bumpProjectRevision(state.session), recordingStationDismissed: true }
-            : bumpProjectRevision(state.session),
+          project: normalizedProject,
+          // Persisted tagSource restores manual tag ownership so auto-tag
+          // passes keep skipping user-tagged tracks after a reload.
+          session: {
+            ...bumpProjectRevision(state.session),
+            ...(manuallyTagged ? { manuallyTagged: [...manuallyTagged] } : {}),
+            ...(hasAnyClip ? { recordingStationDismissed: true } : {}),
+          },
         };
       }),
 
@@ -541,7 +631,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }
       // Stop any held media stream so getUserMedia is re-armed cleanly.
       if (state.media.stream) {
-        for (const t of state.media.stream.getTracks()) t.stop();
+        releaseMediaStream(state.media.stream);
       }
       const next = createInitialState();
       set({

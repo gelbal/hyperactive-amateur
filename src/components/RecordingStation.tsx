@@ -2,7 +2,7 @@
 // ABOUTME: Holds a live preview stream while mounted and reuses it for each capture; exposes a Sources picker for camera/mic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, SkipForward, Check, Settings2, SwitchCamera } from "lucide-react";
-import { useAppStore } from "../store/useAppStore";
+import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { recordIntoTrack } from "../lib/recordingFlow";
 import {
   acquirePreviewStream,
@@ -10,7 +10,7 @@ import {
   releasePreviewStream,
   type InputDeviceList,
 } from "../lib/media";
-import { isStandalone, triggerInstall, useCanInstall } from "../lib/install";
+import { isManualInstallHintContext, triggerInstall, useCanInstall } from "../lib/install";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const TRACK_COUNT = 8;
@@ -18,6 +18,7 @@ const EMPTY_DEVICES: InputDeviceList = { videoInputs: [], audioInputs: [] };
 
 export function RecordingStation() {
   const recordingState = useAppStore((s) => s.recording.state);
+  const recordingError = useAppStore((s) => s.recording.error);
   const canStartRecording = useAppStore(canStartAudibleAction);
   const tracks = useAppStore((s) => s.project.tracks);
   const videoDeviceId = useAppStore((s) => s.media.videoDeviceId);
@@ -127,6 +128,7 @@ export function RecordingStation() {
 
   const isBusy = recordingState !== "idle";
   const recordDisabled = isBusy || !canStartRecording;
+  const visibleError = recordingError ?? error;
 
   const onRecord = () => {
     setError(null);
@@ -247,9 +249,9 @@ export function RecordingStation() {
         )}
       </div>
       <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-3 px-4">
-        {error && (
+        {visibleError && (
           <span role="alert" className="text-xs text-red-400 max-w-[80%] text-center">
-            {error}
+            {visibleError}
           </span>
         )}
         <div className="flex items-center gap-2">
@@ -293,10 +295,11 @@ export function RecordingStation() {
 // the install button when the prompt is available. The hook subscribes to
 // install-state changes so the button appears even if the event fires AFTER
 // the Sources panel is open (Chrome's install-eligibility heuristics can take
-// several seconds). iOS Safari has no install prompt API at all, so we
-// surface a one-line hint pointing at Share → Add to Home Screen. The UA
-// sniff is for the hint surface only; it does not gate functionality.
+// several seconds). Browser contexts without that signal get the manual hint
+// only before clips exist and when coarse-pointer/standalone feature checks
+// match.
 function InstallAffordance() {
+  const clipCount = useAppStore(selectClipCount);
   const installable = useCanInstall();
   if (installable) {
     return (
@@ -309,10 +312,7 @@ function InstallAffordance() {
       </button>
     );
   }
-  const isIOS =
-    typeof navigator !== "undefined" &&
-    /iPad|iPhone|iPod/.test(navigator.userAgent);
-  if (isIOS && !isStandalone()) {
+  if (clipCount === 0 && isManualInstallHintContext(installable)) {
     return (
       <p className="mt-1 text-[10px] text-zinc-500 leading-snug">
         Tap Share → Add to Home Screen to install.
