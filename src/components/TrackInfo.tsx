@@ -32,7 +32,10 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     (s) =>
       s.media.status === "granted" &&
       s.project.tracks.some((track) => !track.clip) &&
-      !s.session.recordingStationDismissed,
+      !s.session.recordingStationDismissed &&
+      // Mirrors Viewport's suppression: while playback runs the station is
+      // unmounted, so errors must fall back to the track row.
+      !s.playback.isPlaying,
   );
   const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);
@@ -201,6 +204,10 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
     const next = selected === tag ? null : tag;
     useAppStore.getState().actions.setTrackTag(trackId, next);
   };
+  // The chips stay compact on every pointer type: three 2-column rows must
+  // fit inside the fixed h-12 track row, or adjacent tracks' chips overlap
+  // (the coarse-pointer padding bump shipped exactly that overlap). A proper
+  // 44px touch tag picker needs a popover/sheet — tracked in NEXT-STEPS.
   return (
     <div
       className="grid grid-cols-2 gap-0.5 w-24 shrink-0"
@@ -218,7 +225,7 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
             data-selected={isSelected}
             onClick={() => onClick(tag)}
             className={
-              "px-1.5 py-0.5 pointer-coarse:py-1.5 pointer-coarse:px-2 rounded-full text-[10px] uppercase tracking-wide leading-none " +
+              "px-1.5 py-0.5 rounded-full text-[10px] uppercase tracking-wide leading-none " +
               (isSelected
                 ? "bg-orange-500 text-zinc-950"
                 : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600")

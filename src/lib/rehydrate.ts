@@ -5,6 +5,7 @@ import {
   loadProject,
   migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
+  saveProject,
   saveRecoveryBackup,
   type PersistedProject,
   type PersistedTrack,
@@ -20,6 +21,7 @@ import {
   STEP_COUNT_INCREMENT,
 } from "../store/initialState";
 import { captureFirstFrame } from "./posterFrame";
+import { audioBufferToWav } from "./wavEncoder";
 
 export interface RehydrateResult {
   ok: boolean;
@@ -342,26 +344,18 @@ function warnAudioUnavailable(warnings: string[], trackId: number): void {
   if (!warnings.includes(message)) warn(warnings, message);
 }
 
-function collectAudioRepairTrackIds(
-  persisted: PersistedProject,
-  warnings: string[],
-): Set<number> {
-  const trackIds = new Set<number>();
+// Missing audio sidecar records are NOT warned here: hydration retries the
+// decode below (container fallback included) and only a failed retry warns.
+function warnMissingMediaBlobs(persisted: PersistedProject, warnings: string[]): void {
   for (const missing of persisted.missingBlobs ?? []) {
     if (Number.isInteger(missing.trackId) && missing.trackId >= 0) {
-      if (missing.field === "audioBlob") {
-        trackIds.add(missing.trackId);
-      } else if (missing.field === "clipBlob") {
+      if (missing.field === "clipBlob") {
         warn(warnings, `Track ${missing.trackId + 1} clip video was missing and was dropped.`);
       } else if (missing.field === "posterBlob") {
         warn(warnings, `Track ${missing.trackId + 1} poster was missing and regenerated.`);
       }
     }
   }
-  for (const trackId of Array.from(trackIds).sort((a, b) => a - b)) {
-    warnAudioUnavailable(warnings, trackId);
-  }
-  return trackIds;
 }
 
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
@@ -376,7 +370,7 @@ async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(buffer.slice(0));
 }
 
-async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise<AudioBuffer> {
+export async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise<AudioBuffer> {
   if (audioBlob) {
     try {
       return await decodeBlob(audioBlob);
@@ -408,7 +402,10 @@ async function rehydrateClip(
     url: URL.createObjectURL(clipBlob),
     audioBuffer,
     audioStatus,
-    audioBlob: audioStatus === "ok" ? (track.audioBlob ?? null) : null,
+    // The sidecar reference survives a repair state: severing it here would
+    // let the next autosave orphan the bytes and make a transient decode
+    // failure permanent. Kept, it stays retryable (and GC-rooted).
+    audioBlob: track.audioBlob ?? null,
     trimStartMs: track.trimStartMs,
     trimEndMs: track.trimEndMs,
     durationMs: track.durationMs,
@@ -460,7 +457,7 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const empty = createInitialState();
   const warnings: string[] = [];
   const normalized = normalizeProject(persisted, warnings);
-  const audioRepairTrackIds = collectAudioRepairTrackIds(persisted, warnings);
+  warnMissingMediaBlobs(persisted, warnings);
   let recoveryBackupWritten = false;
   if (warnings.length > 0 || persisted.storageFormat === "legacy") {
     recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
@@ -482,21 +479,36 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     }
   }
 
+  let audioRepairedDuringLoad = false;
   const tracks: Track[] = await Promise.all(
     normalized.tracks.map(async (pt): Promise<Track> => {
       let clip: Clip | null = null;
+      let healedAudio = false;
       if (pt.clipBlob) {
-        if (pt.audioStatus === "unavailable" || audioRepairTrackIds.has(pt.id)) {
-          warnAudioUnavailable(warnings, pt.id);
-          clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
-        } else {
-          try {
-            const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
-            clip = await rehydrateClip(pt, pt.clipBlob, audioBuffer, "ok");
-          } catch {
-            warnAudioUnavailable(warnings, pt.id);
-            clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
+        // Decode is always retried, even for clips persisted as unavailable —
+        // the failure that put them there can be transient (iOS interruption,
+        // memory pressure). Success heals the clip in place.
+        const wasUnavailable = pt.audioStatus === "unavailable";
+        try {
+          const audioBuffer = await decodeClipAudio(pt.clipBlob, pt.audioBlob);
+          clip = await rehydrateClip(pt, pt.clipBlob, audioBuffer, "ok");
+          healedAudio = wasUnavailable;
+          if (healedAudio) audioRepairedDuringLoad = true;
+          if (!clip.audioBlob) {
+            // Best-effort: rebuild the missing playback sidecar so future
+            // loads stop depending on video-container audio decode.
+            try {
+              clip.audioBlob = audioBufferToWav(audioBuffer);
+              audioRepairedDuringLoad = true;
+            } catch {
+              // Keep the decoded buffer; the sidecar stays absent.
+            }
           }
+        } catch {
+          // A clip already persisted as unavailable warns at the original
+          // failure, not on every later load — TrackInfo carries the hint.
+          if (!wasUnavailable) warnAudioUnavailable(warnings, pt.id);
+          clip = await rehydrateClip(pt, pt.clipBlob, null, "unavailable");
         }
       }
       const audioUnavailable = clip?.audioStatus === "unavailable";
@@ -507,12 +519,13 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
         blobRevision: 0,
         steps: [...pt.steps],
         volume: pt.volume,
-        muted: audioUnavailable ? true : pt.muted,
+        // Healing releases only a repair-owned mute; user mutes stay put.
+        muted: audioUnavailable ? true : (healedAudio && wasMutedByRepair ? false : pt.muted),
         // The repair owns the mute when it flipped it on; a mute the user
         // already held (or re-applied after a repair) stays user-owned.
         mutedByRepair: audioUnavailable
           ? (pt.muted ? wasMutedByRepair : true)
-          : wasMutedByRepair,
+          : (healedAudio ? false : wasMutedByRepair),
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
       };
@@ -550,5 +563,17 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     .map((track) => track.id);
   useAppStore.getState().actions.hydrateProject(project, manuallyTagged);
   useAppStore.getState().actions.setRecoveryWarnings(warnings);
+  // Persist a load-time heal right away: autosave only attaches after this
+  // function resolves and only fires on future edits, so without this write a
+  // healed clip (or regenerated sidecar) would silently repeat its repair on
+  // every load — and stay broken on browsers whose decoder cannot heal it.
+  // Clean loads only: a degraded load keeps the saved original protected.
+  if (audioRepairedDuringLoad && warnings.length === 0) {
+    try {
+      await saveProject(useAppStore.getState());
+    } catch {
+      // Best-effort: the heal stays in memory; the next edit persists it.
+    }
+  }
   return { ok: true, degraded: warnings.length > 0, warnings };
 }

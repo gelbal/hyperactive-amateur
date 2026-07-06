@@ -17,6 +17,7 @@ import { selectClipCount, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
 import { initAudioLifecycle } from "./lib/audioLifecycle";
+import { initAudioRepair } from "./lib/audioRepair";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
@@ -34,6 +35,7 @@ export function App() {
     initTransport();
     const detachInstallPrompt = captureInstallPrompt();
     const detachAudioLifecycle = initAudioLifecycle();
+    const detachAudioRepair = initAudioRepair();
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
     let allowAutoSave = true;
@@ -80,6 +82,7 @@ export function App() {
       cancelled = true;
       detachInstallPrompt();
       detachAudioLifecycle();
+      detachAudioRepair();
       detachVisibility();
       resumeAutoSaveUnsubscribe?.();
       shutdownAutoSave();

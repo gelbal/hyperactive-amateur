@@ -48,7 +48,11 @@ const metadataReady = new Map<number, boolean>();
 const pendingFirstTrigger = new Map<number, { when: number }>();
 let pendingTriggers: TriggerEvent[] = [];
 let currentlyDisplayed: TriggerEvent | null = null;
-let pendingCommit: TriggerEvent | null = null;
+// The boundary decision waiting for the audible clock to reach its boundary.
+// Committed from the paint loop (see commitDueBoundary), never from Tone.Draw:
+// Draw silently expires callbacks that run late, and a dropped commit used to
+// leave the canvas stuck on a stale cut (or black once its trim ran out).
+let pendingCommit: { event: TriggerEvent | null; boundaryTime: number } | null = null;
 let lastDrawn: TriggerEvent | null = null;
 let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
@@ -58,7 +62,6 @@ let preparedBoundary: { boundaryTime: number; event: TriggerEvent } | null = nul
 let cutSubdivision: CutSubdivision = "8n";
 let initialized = false;
 let activeCanvas: HTMLCanvasElement | null = null;
-let playbackEpoch = 0;
 
 export function setActiveCanvas(canvas: HTMLCanvasElement | null): void {
   activeCanvas = canvas;
@@ -334,7 +337,11 @@ function readTrackContexts(): Map<number, TrackContext> {
   return map;
 }
 
-// Boundary callback: decide what to display until the next boundary.
+// Boundary callback: decide what to display until the next boundary. The
+// decision is staged on pendingCommit; the paint loop promotes it once the
+// audible clock reaches the boundary. A later boundary overwrites an
+// uncommitted decision, so a stalled paint catches up to the latest cut
+// instead of flashing through stale ones.
 function onCutBoundary(boundaryTime: number): void {
   const interval = subdivisionToSeconds(cutSubdivision);
   const windowStart = boundaryTime - interval;
@@ -344,28 +351,26 @@ function onCutBoundary(boundaryTime: number): void {
   pendingTriggers = result.remaining;
 
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
-  const effectiveCurrent = pendingCommit ?? currentlyDisplayed;
+  const effectiveCurrent = pendingCommit ? pendingCommit.event : currentlyDisplayed;
   const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
-  const epoch = playbackEpoch;
-  pendingCommit = next;
+  pendingCommit = { event: next, boundaryTime };
   prepareUpcoming(boundaryTime, next, effectiveCurrent);
-  Tone.getDraw().schedule(() => {
-    if (epoch !== playbackEpoch) {
-      if (isSameEvent(pendingCommit, next)) pendingCommit = null;
-      return;
+}
+
+// Promote the staged boundary decision once the audible clock reaches its
+// boundary. Runs from the rAF paint path: a stalled frame delays the cut by
+// one paint instead of dropping it (Tone.Draw expires late callbacks).
+function commitDueBoundary(audioTime: number): void {
+  if (!pendingCommit || audioTime < pendingCommit.boundaryTime) return;
+  const { event, boundaryTime } = pendingCommit;
+  pendingCommit = null;
+  if (preparedBoundary && isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)) {
+    if (!isSameEvent(preparedBoundary.event, event)) {
+      pauseTrack(preparedBoundary.event.trackId);
     }
-    if (
-      preparedBoundary &&
-      isSameBoundary(preparedBoundary.boundaryTime, boundaryTime)
-    ) {
-      if (!isSameEvent(preparedBoundary.event, next)) {
-        pauseTrack(preparedBoundary.event.trackId);
-      }
-      preparedBoundary = null;
-    }
-    currentlyDisplayed = next;
-    if (isSameEvent(pendingCommit, next)) pendingCommit = null;
-  }, boundaryTime);
+    preparedBoundary = null;
+  }
+  currentlyDisplayed = event;
 }
 
 function subdivisionToSeconds(value: CutSubdivision): number {
@@ -407,6 +412,7 @@ function clearExpiredLastDrawnFrame(
 }
 
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
+  commitDueBoundary(audioTime);
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const displayed = currentlyDisplayed;
@@ -481,7 +487,6 @@ function disposeBoundaryEvent(): void {
 }
 
 function scheduleBoundaryEvent(): void {
-  playbackEpoch += 1;
   pendingCommit = null;
   disposeBoundaryEvent();
   clearPreparedState();
@@ -499,7 +504,6 @@ export function setVideoCutSubdivision(value: CutSubdivision): void {
 // Reset transient render state — used on stop/pause so we don't carry stale
 // triggers into the next playback session.
 export function resetPlaybackState(): void {
-  playbackEpoch += 1;
   pendingTriggers = [];
   pendingCommit = null;
   currentlyDisplayed = null;
@@ -582,7 +586,6 @@ export function __resetVideoEngineForTesting(): void {
   lastDrawn = null;
   clearPreparedState();
   drawErrorLogged = false;
-  playbackEpoch = 0;
   if (host) {
     host.remove();
     host = null;

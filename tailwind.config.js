@@ -2,7 +2,10 @@ import plugin from "tailwindcss/plugin";
 
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Test files are excluded: class-name literals inside test assertions must
+  // not seed the JIT, or generated-CSS regression tests can pass on classes
+  // no shipped component uses (and dead classes leak into the bundle).
+  content: ["./index.html", "./src/**/!(*.test).{ts,tsx}"],
   darkMode: "class",
   theme: {
     extend: {

@@ -53,6 +53,24 @@ describe("PlayButton silent-switch hint", () => {
     expect(screen.queryByText("No sound? Check your phone's silent switch.")).not.toBeInTheDocument();
   });
 
+  it("clamps the silent-switch hint to the viewport on phones instead of centering off-screen", () => {
+    // The play button sits at the far left on phone layouts; a 224px hint
+    // centered under it ran off the left screen edge. Phones get the shared
+    // fixed inset clamp; sm+ keeps the anchored popover.
+    hintState.shouldShow.mockReturnValue(true);
+    useAppStore.getState().actions.setAudioState("running");
+
+    render(<PlayButton />);
+
+    const hint = screen
+      .getByText("No sound? Check your phone's silent switch.")
+      .closest("div");
+    expect(hint?.className).toContain("fixed");
+    expect(hint?.className).toContain("inset-x-3");
+    expect(hint?.className).toContain("sm:absolute");
+    expect(hint?.className).toContain("sm:inset-x-auto");
+  });
+
   it("swallows audio-unavailable playback rejections from clicks", async () => {
     hintState.togglePlayback.mockRejectedValueOnce(new hintState.AudioUnavailableError());
 

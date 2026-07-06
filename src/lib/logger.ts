@@ -28,6 +28,7 @@ export const LOG_EVENTS = {
   SUGGEST_RETRY: "suggest.retry",
   AUTOSAVE_ERROR: "autosave.error",
   AUDIO_SESSION_ERROR: "audio.session-error",
+  AUDIO_REPAIRED: "audio.repaired",
   AUDIO_INTERRUPTED: "audio.interrupted",
   AUDIO_RESUME_REQUIRED: "audio.resume-required",
   AUDIO_ACTION_ERROR: "audio.action-error",

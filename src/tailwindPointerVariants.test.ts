@@ -30,6 +30,9 @@ describe("tailwind pointer-coarse variants", () => {
     expect(css).toMatch(/pointer-coarse\\:h-11/);
     expect(css).toMatch(/\.pointer-coarse\\:min-h-11\s*{\s*min-height: 2\.75rem;/);
     expect(css).toMatch(/any-pointer-coarse\\:flex/);
+    // Subtle always-visible block-remove affordance (StepGrid).
+    expect(css).toMatch(/any-pointer-coarse\\:opacity-60/);
+    expect(css).toMatch(/any-pointer-coarse\\:pointer-events-auto/);
   }, 20_000);
 
   it("emits 24px range thumbs for coarse pointers", async () => {

@@ -7,6 +7,8 @@ import { recordIntoTrack } from "../lib/recordingFlow";
 import {
   acquirePreviewStream,
   enumerateMediaDevices,
+  invalidatePendingAcquire,
+  isAcquireInFlight,
   releasePreviewStream,
   type InputDeviceList,
 } from "../lib/media";
@@ -74,6 +76,13 @@ export function RecordingStation() {
       cancelled = true;
       if (stream) {
         releasePreviewStream(stream);
+      } else if (isAcquireInFlight()) {
+        // The preview acquire is still pending (e.g. the station unmounted
+        // because playback started). Invalidate it so a late grant is
+        // released instead of re-lighting the camera, and a late failure
+        // cannot downgrade media.status to "denied" — the user never denied
+        // anything, they just navigated away from the station.
+        invalidatePendingAcquire();
       }
       previewStreamRef.current = null;
       setPreviewStream(null);
