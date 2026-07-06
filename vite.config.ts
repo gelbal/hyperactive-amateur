@@ -52,12 +52,17 @@ export function moodSpikeProbeDevServer(): Plugin {
     configureServer(server) {
       server.middlewares.use("/spikes/mood-probe.html", (req, res, next) => {
         if (req.method === undefined) return next();
+        if (req.method !== "GET" && req.method !== "HEAD") return next();
         if (req.url && req.url !== "/" && req.url !== "") return next();
 
         const probePath = resolvePath(process.cwd(), "spikes", "mood-probe.html");
         res.statusCode = 200;
         res.setHeader("content-type", "text/html; charset=utf-8");
         res.setHeader("cache-control", "no-store");
+        if (req.method === "HEAD") {
+          res.end();
+          return;
+        }
         res.end(readFileSync(probePath));
       });
     },

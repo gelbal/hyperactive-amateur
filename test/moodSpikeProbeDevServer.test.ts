@@ -47,7 +47,7 @@ function makeResponse() {
 }
 
 describe("Mood spike probe Vite middleware", () => {
-  it("serves the probe page only from the dev spikes route", () => {
+  it("serves GET requests for the probe page only from the dev spikes route", () => {
     const entry = mountProbeMiddleware();
     expect(entry.route).toBe("/spikes/mood-probe.html");
 
@@ -62,6 +62,31 @@ describe("Mood spike probe Vite middleware", () => {
     expect(res.body).toContain("Mood spike probe");
     expect(res.body).toContain("S1");
     expect(res.body).toContain("S6");
+  });
+
+  it("serves HEAD requests with headers and no body", () => {
+    const entry = mountProbeMiddleware();
+    const res = makeResponse();
+    const next = vi.fn();
+
+    entry.handler({ method: "HEAD", url: "/" }, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.body).toBe("");
+  });
+
+  it("passes through unsupported methods", () => {
+    const entry = mountProbeMiddleware();
+    const res = makeResponse();
+    const next = vi.fn();
+
+    entry.handler({ method: "POST", url: "/" }, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.body).toBe("");
   });
 
   it("passes through nested route suffixes", () => {
