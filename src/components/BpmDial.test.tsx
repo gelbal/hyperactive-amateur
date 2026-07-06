@@ -1,7 +1,7 @@
 // ABOUTME: BpmDial tests — pointer-event drag updates BPM; arrow keys still step; cancel reverts.
 // ABOUTME: jsdom's PointerEvent ignores clientY in its init, so we build the event by hand.
-import { render, screen, fireEvent, createEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach } from "vitest";
+import { cleanup, render, screen, fireEvent, createEvent } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { BpmDial } from "./BpmDial";
 import { useAppStore } from "../store/useAppStore";
 
@@ -57,5 +57,32 @@ describe("BpmDial", () => {
     const knob = screen.getByRole("slider");
     fireEvent.keyDown(knob, { key: "ArrowUp" });
     expect(useAppStore.getState().project.bpm).toBe(100);
+  });
+
+  describe("while exporting", () => {
+    afterEach(() => {
+      cleanup();
+      useAppStore.getState().actions.setIsExporting(false);
+    });
+
+    it("renders disabled and ignores wheel, drag, and arrow keys", () => {
+      useAppStore.getState().actions.setBpm(90);
+      useAppStore.getState().actions.setIsExporting(true);
+      const setBpm = vi.spyOn(useAppStore.getState().actions, "setBpm");
+      render(<BpmDial />);
+      const knob = screen.getByRole("slider");
+
+      expect(knob).toBeDisabled();
+
+      fireEvent.wheel(knob, { deltaY: -1 });
+      firePointer(knob, "pointerdown", { clientY: 200 });
+      firePointer(knob, "pointermove", { clientY: 184 });
+      firePointer(knob, "pointerup", { clientY: 184 });
+      fireEvent.keyDown(knob, { key: "ArrowUp" });
+
+      expect(setBpm).not.toHaveBeenCalled();
+      expect(useAppStore.getState().project.bpm).toBe(90);
+      setBpm.mockRestore();
+    });
   });
 });

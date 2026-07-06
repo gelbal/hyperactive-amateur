@@ -3,6 +3,7 @@ import { useAppStore } from "../store/useAppStore";
 
 export function HoldTimeControl() {
   const value = useAppStore((s) => s.project.sameTierHoldMs);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
   return (
     <label className="flex items-center gap-2 text-sm text-zinc-300">
       <span>Hold</span>
@@ -13,10 +14,11 @@ export function HoldTimeControl() {
         step={50}
         value={value}
         aria-label="hold time"
+        disabled={isExporting}
         onChange={(e) =>
           useAppStore.getState().actions.setSameTierHoldMs(Number(e.target.value))
         }
-        className="w-24"
+        className="w-24 disabled:opacity-30 disabled:cursor-not-allowed"
       />
       <span className="w-12 text-right font-mono tabular-nums text-zinc-400 text-xs">
         {value}ms
