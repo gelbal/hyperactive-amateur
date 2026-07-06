@@ -1,0 +1,824 @@
+<!-- ABOUTME: Dev-only Mood spike probe for S1-S6 real-device measurements. -->
+<!-- ABOUTME: Operator instructions and results live in .claude/mood/spikes.md. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mood spike probe</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #09090b;
+        color: #f4f4f5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 15% 10%, rgba(244, 63, 94, 0.24), transparent 26rem),
+          radial-gradient(circle at 85% 0%, rgba(20, 184, 166, 0.2), transparent 24rem),
+          #09090b;
+      }
+
+      main {
+        width: min(1160px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 24px 0 32px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 5vw, 4.8rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: 1rem;
+        line-height: 1.2;
+      }
+
+      p {
+        color: #c4c4c7;
+        line-height: 1.5;
+      }
+
+      button,
+      select,
+      input {
+        min-height: 42px;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: #18181b;
+        color: #fafafa;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+        padding: 0 14px;
+        font-weight: 700;
+      }
+
+      button:hover {
+        background: #27272a;
+      }
+
+      button.primary {
+        border-color: #f97316;
+        background: #f97316;
+        color: #111;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: #d4d4d8;
+        font-size: 0.9rem;
+      }
+
+      input,
+      select {
+        padding: 0 10px;
+      }
+
+      input[type="file"] {
+        width: 100%;
+        padding: 9px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: end;
+        padding: 24px 0;
+      }
+
+      .status {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        min-width: min(520px, 100%);
+      }
+
+      .metric {
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: rgba(24, 24, 27, 0.72);
+        padding: 10px;
+      }
+
+      .metric strong {
+        display: block;
+        font-variant-numeric: tabular-nums;
+        font-size: 1.25rem;
+      }
+
+      .panel {
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: rgba(9, 9, 11, 0.76);
+        padding: 16px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .controls,
+      .runs,
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .controls {
+        margin-bottom: 12px;
+      }
+
+      .runs {
+        align-items: stretch;
+      }
+
+      .run {
+        display: grid;
+        gap: 10px;
+      }
+
+      .stage {
+        display: grid;
+        gap: 10px;
+      }
+
+      canvas {
+        width: 100%;
+        max-height: 70vh;
+        border: 1px solid #52525b;
+        border-radius: 8px;
+        background: #030303;
+        object-fit: contain;
+      }
+
+      video {
+        width: 100%;
+        max-height: 180px;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: #050505;
+      }
+
+      output,
+      pre {
+        display: block;
+        width: 100%;
+        min-height: 220px;
+        max-height: 360px;
+        overflow: auto;
+        margin: 0;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        background: #050505;
+        color: #e4e4e7;
+        padding: 12px;
+        font:
+          12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        white-space: pre-wrap;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 880px) {
+        .hero,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .status {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div>
+          <h1>Mood spike probe</h1>
+          <p>
+            Disposable dev page for Mood S1-S6. It is served only by Vite dev
+            middleware and must stay out of the app bundle and service worker precache.
+          </p>
+        </div>
+        <div class="status" aria-label="live probe metrics">
+          <div class="metric"><span>FPS</span><strong id="fps">0.0</strong></div>
+          <div class="metric"><span>Dropped</span><strong id="dropped">0</strong></div>
+          <div class="metric"><span>Elapsed</span><strong id="elapsed">0s</strong></div>
+          <div class="metric"><span>Chunks</span><strong id="chunks">0</strong></div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="stage panel">
+          <div class="controls">
+            <label>
+              Local clips
+              <input id="clipFiles" type="file" accept="video/*" multiple />
+            </label>
+            <label>
+              Canvas
+              <select id="canvasSize">
+                <option value="960x960">960x960 Corners</option>
+                <option value="1280x720">1280x720 Row</option>
+                <option value="720x1280">720x1280 Stack</option>
+                <option value="854x480">854x480 Row fallback</option>
+                <option value="480x854">480x854 Stack fallback</option>
+                <option value="480x480">480x480 Corners fallback</option>
+              </select>
+            </label>
+            <label>
+              Videos
+              <input id="videoCount" type="number" min="1" max="8" value="5" />
+            </label>
+            <button id="stopAll" type="button">Stop all</button>
+          </div>
+          <canvas id="stage" width="960" height="960"></canvas>
+          <video id="preview" class="hidden" muted playsinline autoplay></video>
+        </div>
+
+        <div class="panel run">
+          <h2>Spike modes</h2>
+          <div class="runs">
+            <button id="runS1" class="primary" type="button">S1 decode + preview</button>
+            <button id="runS2Square" type="button">S2 960x960 30s</button>
+            <button id="runS2Row" type="button">S2 1280x720 30s</button>
+            <button id="runS2Stack" type="button">S2 720x1280 30s</button>
+            <button id="runS3" type="button">S3 play-and-record</button>
+            <button id="runS4Square" type="button">S4 1:1 constraints</button>
+            <button id="runS4Portrait" type="button">S4 9:16 constraints</button>
+            <button id="runS4Landscape" type="button">S4 16:9 constraints</button>
+            <button id="runS5" type="button">S5 vibe budget</button>
+            <button id="runS6" class="primary" type="button">S6 3 min combined</button>
+          </div>
+          <div class="row">
+            <button id="sessionPlayback" type="button">audioSession playback</button>
+            <button id="sessionPlayRecord" type="button">audioSession play-and-record</button>
+            <button id="toggleOsc" type="button">Toggle oscillator gain</button>
+            <button id="playS3" type="button">Play S3 recording</button>
+          </div>
+          <output id="log" aria-live="polite"></output>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const canvas = document.getElementById("stage");
+        const ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+        const clipFiles = document.getElementById("clipFiles");
+        const canvasSize = document.getElementById("canvasSize");
+        const videoCount = document.getElementById("videoCount");
+        const preview = document.getElementById("preview");
+        const logNode = document.getElementById("log");
+        const fpsNode = document.getElementById("fps");
+        const droppedNode = document.getElementById("dropped");
+        const elapsedNode = document.getElementById("elapsed");
+        const chunksNode = document.getElementById("chunks");
+
+        const state = {
+          urls: [],
+          videos: [],
+          cameraStream: null,
+          audioStream: null,
+          rafId: 0,
+          runStartMs: 0,
+          lastFrameMs: 0,
+          frameCount: 0,
+          droppedFrames: 0,
+          fpsWindowStartMs: 0,
+          fpsWindowFrames: 0,
+          recorder: null,
+          chunks: [],
+          s3BlobUrl: "",
+          audioContext: null,
+          oscillator: null,
+          oscillatorGain: null,
+          timerId: 0,
+          fpsLog: [],
+        };
+
+        function log(message) {
+          const stamp = new Date().toLocaleTimeString();
+          logNode.textContent += `[${stamp}] ${message}\n`;
+          logNode.scrollTop = logNode.scrollHeight;
+        }
+
+        function setCanvasSize(sizeValue) {
+          const [width, height] = sizeValue.split("x").map(Number);
+          canvas.width = width;
+          canvas.height = height;
+          log(`Canvas set to ${width}x${height}`);
+        }
+
+        function setMetrics({ fps, dropped, elapsed, chunks } = {}) {
+          if (fps !== undefined) fpsNode.textContent = fps.toFixed(1);
+          if (dropped !== undefined) droppedNode.textContent = String(dropped);
+          if (elapsed !== undefined) elapsedNode.textContent = `${Math.floor(elapsed)}s`;
+          if (chunks !== undefined) chunksNode.textContent = String(chunks);
+        }
+
+        function stopStreams() {
+          for (const stream of [state.cameraStream, state.audioStream]) {
+            if (!stream) continue;
+            for (const track of stream.getTracks()) track.stop();
+          }
+          state.cameraStream = null;
+          state.audioStream = null;
+          preview.srcObject = null;
+        }
+
+        function stopVideos() {
+          for (const video of state.videos) {
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
+          }
+          for (const url of state.urls) URL.revokeObjectURL(url);
+          state.videos = [];
+          state.urls = [];
+        }
+
+        function stopRecorder() {
+          if (state.recorder && state.recorder.state !== "inactive") {
+            state.recorder.stop();
+          }
+          state.recorder = null;
+        }
+
+        function stopAnimation() {
+          if (state.rafId) cancelAnimationFrame(state.rafId);
+          if (state.timerId) clearInterval(state.timerId);
+          state.rafId = 0;
+          state.timerId = 0;
+        }
+
+        function stopAudio() {
+          if (state.oscillator) {
+            try {
+              state.oscillator.stop();
+            } catch {
+              // Already stopped.
+            }
+          }
+          state.oscillator = null;
+          if (state.audioContext) {
+            void state.audioContext.close();
+          }
+          state.audioContext = null;
+          state.oscillatorGain = null;
+        }
+
+        function stopAll() {
+          stopAnimation();
+          stopRecorder();
+          stopStreams();
+          stopVideos();
+          stopAudio();
+          setMetrics({ fps: 0, dropped: 0, elapsed: 0, chunks: 0 });
+          log("Stopped active probe work.");
+        }
+
+        function runSafe(fn) {
+          return async () => {
+            try {
+              await fn();
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              log(`Stopped with error: ${message}`);
+            }
+          };
+        }
+
+        async function getCameraPreview(audio = false) {
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("getUserMedia is not available in this browser.");
+          }
+          if (state.cameraStream) return state.cameraStream;
+          state.cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio,
+          });
+          preview.srcObject = state.cameraStream;
+          preview.classList.remove("hidden");
+          await preview.play();
+          return state.cameraStream;
+        }
+
+        async function buildVideos() {
+          stopVideos();
+          const files = Array.from(clipFiles.files || []);
+          const count = Math.max(1, Math.min(8, Number(videoCount.value) || 1));
+          if (files.length === 0) {
+            log("No local clips selected; S1/S6 will composite camera preview only.");
+            return;
+          }
+          for (let index = 0; index < count; index += 1) {
+            const file = files[index % files.length];
+            const url = URL.createObjectURL(file);
+            const video = document.createElement("video");
+            video.muted = true;
+            video.loop = true;
+            video.playsInline = true;
+            video.src = url;
+            state.urls.push(url);
+            state.videos.push(video);
+            await video.play();
+          }
+          log(`Spawned ${state.videos.length} muted looping video elements.`);
+        }
+
+        function drawCover(source, x, y, width, height) {
+          const sourceWidth = source.videoWidth || source.width || 1;
+          const sourceHeight = source.videoHeight || source.height || 1;
+          const scale = Math.max(width / sourceWidth, height / sourceHeight);
+          const cropWidth = width / scale;
+          const cropHeight = height / scale;
+          const cropX = Math.max(0, (sourceWidth - cropWidth) / 2);
+          const cropY = Math.max(0, (sourceHeight - cropHeight) / 2);
+          ctx.drawImage(
+            source,
+            cropX,
+            cropY,
+            cropWidth,
+            cropHeight,
+            x,
+            y,
+            width,
+            height,
+          );
+        }
+
+        function drawGridFrame(nowMs, collectFpsLog = false) {
+          const elapsed = (nowMs - state.runStartMs) / 1000;
+          const delta = state.lastFrameMs ? nowMs - state.lastFrameMs : 16.7;
+          state.lastFrameMs = nowMs;
+          state.frameCount += 1;
+          state.fpsWindowFrames += 1;
+          if (delta > 50) state.droppedFrames += Math.max(1, Math.round(delta / 33.3) - 1);
+
+          ctx.fillStyle = "#050505";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          const sources = [...state.videos];
+          if (preview.srcObject) sources.push(preview);
+          const total = Math.max(1, sources.length);
+          const cols = Math.ceil(Math.sqrt(total));
+          const rows = Math.ceil(total / cols);
+          const cellWidth = canvas.width / cols;
+          const cellHeight = canvas.height / rows;
+          sources.forEach((source, index) => {
+            const x = (index % cols) * cellWidth;
+            const y = Math.floor(index / cols) * cellHeight;
+            if (source.readyState >= 2) {
+              drawCover(source, x, y, cellWidth, cellHeight);
+            } else {
+              ctx.fillStyle = `hsl(${(index * 71) % 360} 80% 34%)`;
+              ctx.fillRect(x, y, cellWidth, cellHeight);
+            }
+          });
+
+          ctx.fillStyle = "rgba(0, 0, 0, 0.62)";
+          ctx.fillRect(12, 12, 240, 72);
+          ctx.fillStyle = "#fafafa";
+          ctx.font = "28px ui-monospace, monospace";
+          const fpsNow = delta > 0 ? 1000 / delta : 0;
+          ctx.fillText(`${fpsNow.toFixed(1)} fps`, 24, 44);
+          ctx.font = "16px ui-monospace, monospace";
+          ctx.fillText(`dropped ${state.droppedFrames}`, 24, 72);
+
+          if (nowMs - state.fpsWindowStartMs >= 1000) {
+            const seconds = (nowMs - state.fpsWindowStartMs) / 1000;
+            const fps = state.fpsWindowFrames / seconds;
+            setMetrics({ fps, dropped: state.droppedFrames, elapsed });
+            if (collectFpsLog) state.fpsLog.push(`${elapsed.toFixed(0)}s ${fps.toFixed(1)}fps`);
+            state.fpsWindowStartMs = nowMs;
+            state.fpsWindowFrames = 0;
+          }
+
+          state.rafId = requestAnimationFrame((nextMs) =>
+            drawGridFrame(nextMs, collectFpsLog),
+          );
+        }
+
+        async function startS1({ collectFpsLog = false } = {}) {
+          stopAll();
+          setCanvasSize(canvasSize.value);
+          await getCameraPreview(false);
+          await buildVideos();
+          state.runStartMs = performance.now();
+          state.lastFrameMs = 0;
+          state.frameCount = 0;
+          state.droppedFrames = 0;
+          state.fpsWindowStartMs = state.runStartMs;
+          state.fpsWindowFrames = 0;
+          state.fpsLog = [];
+          drawGridFrame(state.runStartMs, collectFpsLog);
+          log("S1 running: video decodes + camera preview + rAF compositing.");
+        }
+
+        function pickRecorderOptions(stream) {
+          if (!window.MediaRecorder) throw new Error("MediaRecorder is unavailable.");
+          const candidates = [
+            "video/webm;codecs=vp9,opus",
+            "video/webm;codecs=vp8,opus",
+            "video/webm",
+            "video/mp4",
+          ];
+          for (const mimeType of candidates) {
+            if (MediaRecorder.isTypeSupported?.(mimeType)) return { mimeType };
+          }
+          return {};
+        }
+
+        async function runCanvasRecorder(size, durationMs, label) {
+          if (!canvas.captureStream) throw new Error("canvas.captureStream is unavailable.");
+          setCanvasSize(size);
+          if (!state.rafId) {
+            state.runStartMs = performance.now();
+            state.fpsWindowStartMs = state.runStartMs;
+            drawGridFrame(state.runStartMs);
+          }
+          const stream = canvas.captureStream(30);
+          state.chunks = [];
+          const recorder = new MediaRecorder(stream, pickRecorderOptions(stream));
+          state.recorder = recorder;
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) state.chunks.push(event.data);
+            setMetrics({ chunks: state.chunks.length });
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(state.chunks, { type: recorder.mimeType || "video/webm" });
+            const sizeMb = blob.size / (1024 * 1024);
+            log(`${label} stopped: ${state.chunks.length} chunks, ${sizeMb.toFixed(2)} MB.`);
+            state.recorder = null;
+          };
+          recorder.start(1000);
+          log(`${label} recording ${size} for ${Math.round(durationMs / 1000)}s.`);
+          window.setTimeout(() => {
+            if (recorder.state !== "inactive") recorder.stop();
+          }, durationMs);
+        }
+
+        async function runS2(size) {
+          stopAll();
+          await runCanvasRecorder(size, 30000, `S2 ${size}`);
+        }
+
+        async function runS3() {
+          stopAll();
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("getUserMedia is not available in this browser.");
+          }
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) throw new Error("Web Audio is unavailable.");
+
+          state.audioContext = new AudioCtx();
+          state.oscillator = state.audioContext.createOscillator();
+          state.oscillatorGain = state.audioContext.createGain();
+          state.oscillator.type = "square";
+          state.oscillator.frequency.value = 220;
+          state.oscillatorGain.gain.value = 0;
+          state.oscillator.connect(state.oscillatorGain);
+          state.oscillatorGain.connect(state.audioContext.destination);
+          state.oscillator.start();
+
+          state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          state.chunks = [];
+          const recorder = new MediaRecorder(state.audioStream);
+          state.recorder = recorder;
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) state.chunks.push(event.data);
+            setMetrics({ chunks: state.chunks.length });
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(state.chunks, { type: recorder.mimeType || "audio/webm" });
+            if (state.s3BlobUrl) URL.revokeObjectURL(state.s3BlobUrl);
+            state.s3BlobUrl = URL.createObjectURL(blob);
+            log(`S3 recording ready for ear check: ${(blob.size / 1024).toFixed(1)} KB.`);
+            state.recorder = null;
+          };
+          recorder.start(1000);
+          log("S3 recording mic for 8s while oscillator runs through gain 0.");
+          window.setTimeout(() => {
+            if (recorder.state !== "inactive") recorder.stop();
+          }, 8000);
+        }
+
+        async function setAudioSession(type) {
+          const session = navigator.audioSession;
+          if (!session || !("type" in session)) {
+            log(`audioSession.type unsupported; could not set ${type}.`);
+            return;
+          }
+          session.type = type;
+          log(`audioSession.type set to ${session.type}.`);
+        }
+
+        function toggleOscillatorGain() {
+          if (!state.oscillatorGain) {
+            log("Run S3 first to create the oscillator gain.");
+            return;
+          }
+          const next = state.oscillatorGain.gain.value > 0 ? 0 : 0.12;
+          state.oscillatorGain.gain.setTargetAtTime(next, state.audioContext.currentTime, 0.01);
+          log(`Oscillator gain target set to ${next}.`);
+        }
+
+        function playS3Recording() {
+          if (!state.s3BlobUrl) {
+            log("No S3 recording yet.");
+            return;
+          }
+          const audio = new Audio(state.s3BlobUrl);
+          void audio.play();
+          log("Playing S3 recording for ear check.");
+        }
+
+        async function runS4(label, constraints) {
+          stopAll();
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("getUserMedia is not available in this browser.");
+          }
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: constraints,
+            audio: false,
+          });
+          const [track] = stream.getVideoTracks();
+          log(`S4 ${label} requested:\n${JSON.stringify(constraints, null, 2)}`);
+          log(`S4 ${label} negotiated:\n${JSON.stringify(track.getSettings(), null, 2)}`);
+          for (const liveTrack of stream.getTracks()) liveTrack.stop();
+        }
+
+        function paintVibeSource() {
+          const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+          gradient.addColorStop(0, "#f97316");
+          gradient.addColorStop(0.5, "#14b8a6");
+          gradient.addColorStop(1, "#f43f5e");
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "rgba(0,0,0,0.24)";
+          for (let i = 0; i < 48; i += 1) {
+            ctx.beginPath();
+            ctx.arc(
+              (canvas.width * ((i * 17) % 48)) / 48,
+              (canvas.height * ((i * 29) % 48)) / 48,
+              10 + (i % 9) * 4,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+          }
+        }
+
+        async function runS5() {
+          stopAll();
+          setCanvasSize(canvasSize.value);
+          paintVibeSource();
+          const small = document.createElement("canvas");
+          small.width = Math.max(1, Math.round(canvas.width / 12));
+          small.height = Math.max(1, Math.round(canvas.height / 12));
+          const smallCtx = small.getContext("2d", { willReadFrequently: true });
+          const sample = document.createElement("canvas");
+          sample.width = 48;
+          sample.height = 48;
+          const sampleCtx = sample.getContext("2d", { willReadFrequently: true });
+
+          let start = performance.now();
+          for (let frame = 0; frame < 120; frame += 1) {
+            smallCtx.imageSmoothingEnabled = true;
+            smallCtx.drawImage(canvas, 0, 0, small.width, small.height);
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
+          }
+          const pixelateMs = (performance.now() - start) / 120;
+
+          paintVibeSource();
+          start = performance.now();
+          for (let frame = 0; frame < 120; frame += 1) {
+            sampleCtx.drawImage(canvas, 0, 0, 48, 48);
+            const data = sampleCtx.getImageData(0, 0, 48, 48).data;
+            ctx.fillStyle = "#050505";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let y = 0; y < 48; y += 3) {
+              for (let x = 0; x < 48; x += 3) {
+                const index = (y * 48 + x) * 4;
+                const luma = data[index] * 0.2126 + data[index + 1] * 0.7152 + data[index + 2] * 0.0722;
+                ctx.fillStyle = `rgba(${luma}, ${255 - luma * 0.4}, ${80 + luma * 0.5}, 0.85)`;
+                ctx.beginPath();
+                ctx.arc(
+                  ((x + 0.5) / 48) * canvas.width,
+                  ((y + 0.5) / 48) * canvas.height,
+                  Math.max(1, luma / 28),
+                  0,
+                  Math.PI * 2,
+                );
+                ctx.fill();
+              }
+            }
+          }
+          const latticeMs = (performance.now() - start) / 120;
+          log(`S5 pixelate pass: ${pixelateMs.toFixed(2)} ms/frame.`);
+          log(`S5 48x48 luminance arc lattice: ${latticeMs.toFixed(2)} ms/frame.`);
+        }
+
+        async function runS6() {
+          await startS1({ collectFpsLog: true });
+          await runCanvasRecorder(canvasSize.value, 180000, "S6 combined thermal run");
+          state.timerId = window.setTimeout(() => {
+            log(`S6 FPS log:\n${state.fpsLog.join("\n")}`);
+          }, 181000);
+        }
+
+        document.getElementById("runS1").addEventListener("click", runSafe(() => startS1()));
+        document
+          .getElementById("runS2Square")
+          .addEventListener("click", runSafe(() => runS2("960x960")));
+        document
+          .getElementById("runS2Row")
+          .addEventListener("click", runSafe(() => runS2("1280x720")));
+        document
+          .getElementById("runS2Stack")
+          .addEventListener("click", runSafe(() => runS2("720x1280")));
+        document.getElementById("runS3").addEventListener("click", runSafe(runS3));
+        document.getElementById("runS4Square").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("1:1", {
+              width: { ideal: 960 },
+              height: { ideal: 960 },
+              aspectRatio: { ideal: 1 },
+            }),
+          ),
+        );
+        document.getElementById("runS4Portrait").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("9:16", {
+              width: { ideal: 720 },
+              height: { ideal: 1280 },
+              aspectRatio: { ideal: 9 / 16 },
+            }),
+          ),
+        );
+        document.getElementById("runS4Landscape").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("16:9", {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              aspectRatio: { ideal: 16 / 9 },
+            }),
+          ),
+        );
+        document.getElementById("runS5").addEventListener("click", runSafe(runS5));
+        document.getElementById("runS6").addEventListener("click", runSafe(runS6));
+        document.getElementById("stopAll").addEventListener("click", stopAll);
+        document
+          .getElementById("sessionPlayback")
+          .addEventListener("click", () => void setAudioSession("playback"));
+        document
+          .getElementById("sessionPlayRecord")
+          .addEventListener("click", () => void setAudioSession("play-and-record"));
+        document.getElementById("toggleOsc").addEventListener("click", toggleOscillatorGain);
+        document.getElementById("playS3").addEventListener("click", playS3Recording);
+        canvasSize.addEventListener("change", () => setCanvasSize(canvasSize.value));
+
+        setCanvasSize(canvasSize.value);
+        log("Ready. Load local clips, then run S1-S6.");
+      })();
+    </script>
+  </body>
+</html>
