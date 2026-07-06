@@ -6,7 +6,7 @@ import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
-import { requestMedia } from "../lib/media";
+import { isAcquireInFlight, requestMedia } from "../lib/media";
 import { ensureAudioRunning } from "../lib/audioLifecycle";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
@@ -184,11 +184,15 @@ export function Viewport() {
 }
 
 function ReconnectPill() {
+  const recordingState = useAppStore((s) => s.recording.state);
+  const disabled = recordingState !== "idle" || isAcquireInFlight();
+
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => void useAppStore.getState().actions.resumeMedia()}
-      className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
+      className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-zinc-950/80"
     >
       Camera disconnected — tap to reconnect
     </button>

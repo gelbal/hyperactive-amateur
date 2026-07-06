@@ -7,6 +7,8 @@ import {
 } from "./streamLifecycle";
 
 let inFlight: Promise<void> | null = null;
+let acquireGeneration = 0;
+let activeAcquireToken: number | null = null;
 
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
@@ -105,21 +107,31 @@ async function getUserMediaWithDeviceFallback(): Promise<MediaStream> {
 // status === 'granted'. If the failure looks like a stale deviceId, clear the
 // preference and retry once with the browser default.
 export async function acquireRecordingStream(): Promise<MediaStream> {
+  const token = ++acquireGeneration;
+  activeAcquireToken = token;
   try {
     const stream = await getUserMediaWithDeviceFallback();
+    if (token !== acquireGeneration) {
+      releaseMediaStream(stream);
+      throw new DOMException("Stale media acquisition", "AbortError");
+    }
     const current = useAppStore.getState().media.stream;
-    if (current && current !== stream) releaseRecordingStream(current);
+    if (current && current !== stream) releaseMediaStream(current);
     registerStreamLifecycle(stream);
     useAppStore
       .getState()
       .actions.setMedia({ stream, status: "granted", error: null });
     return stream;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    useAppStore
-      .getState()
-      .actions.setMedia({ stream: null, status: "denied", error: message });
+    if (token === acquireGeneration) {
+      const message = err instanceof Error ? err.message : String(err);
+      useAppStore
+        .getState()
+        .actions.setMedia({ stream: null, status: "denied", error: message });
+    }
     throw err;
+  } finally {
+    if (activeAcquireToken === token) activeAcquireToken = null;
   }
 }
 
@@ -127,7 +139,13 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
 // the camera light goes off) and clears the media slice if this was the
 // currently held stream.
 export function releaseRecordingStream(stream: MediaStream): void {
+  acquireGeneration += 1;
+  activeAcquireToken = null;
   releaseMediaStream(stream);
+}
+
+export function isAcquireInFlight(): boolean {
+  return activeAcquireToken !== null;
 }
 
 // Preview helpers — same shape as the recording acquire/release, kept as
@@ -164,4 +182,6 @@ export async function enumerateMediaDevices(): Promise<InputDeviceList> {
 // Test-only — clears the in-flight promise singleton between cases.
 export function __resetMediaForTesting(): void {
   inFlight = null;
+  acquireGeneration = 0;
+  activeAcquireToken = null;
 }

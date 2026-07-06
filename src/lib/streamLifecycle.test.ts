@@ -196,6 +196,49 @@ describe("streamLifecycle", () => {
       expect(media.stream).toBeNull();
     });
 
+    it("cancels an in-flight recording before stopping tracks when a required track ends", () => {
+      const { stream, tracks } = makeStream();
+      const order: string[] = [];
+      const interrupt = vi.fn(() => order.push("cancel"));
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      for (const track of tracks) {
+        track.stop.mockImplementation(() => {
+          order.push(`stop:${track.kind}`);
+          track.readyState = "ended";
+        });
+      }
+      setGrantedWithStream(stream);
+      attachStreamEndedListeners(stream);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).toHaveBeenCalledWith("interrupted");
+      expect(order[0]).toBe("cancel");
+      expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+    });
+
+    it("does not invoke the recording interrupt handler when a track ends while idle", () => {
+      const { stream, tracks } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => false,
+        interrupt,
+      });
+      setGrantedWithStream(stream);
+      attachStreamEndedListeners(stream);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(useAppStore.getState().media.status).toBe("suspended");
+    });
+
     it("does not crash when a track mutes without a registered recording interrupt handler", () => {
       vi.useFakeTimers();
       try {
@@ -317,7 +360,24 @@ describe("streamLifecycle", () => {
   });
 
   describe("installVisibilityListener", () => {
-    it("on hidden: stops playback and suspends a held stream", () => {
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: stops playback and suspends a held stream", ({ dispatch }) => {
       const transportStop = vi.fn();
       vi.mocked(Tone.getTransport).mockReturnValue({
         stop: transportStop,
@@ -329,11 +389,7 @@ describe("streamLifecycle", () => {
       useAppStore.getState().actions.setIsPlaying(true);
       const detach = installVisibilityListener();
 
-      Object.defineProperty(document, "hidden", {
-        value: true,
-        configurable: true,
-      });
-      document.dispatchEvent(new Event("visibilitychange"));
+      dispatch();
 
       expect(transportStop).toHaveBeenCalled();
       expect(useAppStore.getState().playback.isPlaying).toBe(false);
@@ -341,6 +397,89 @@ describe("streamLifecycle", () => {
       expect(media.status).toBe("suspended");
       expect(media.stream).toBeNull();
       detach();
+    });
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: cancels an in-flight recording before stopping held media", ({ dispatch }) => {
+      const { stream, tracks } = makeStream();
+      const order: string[] = [];
+      const interrupt = vi.fn(() => order.push("cancel"));
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      for (const track of tracks) {
+        track.stop.mockImplementation(() => {
+          order.push(`stop:${track.kind}`);
+          track.readyState = "ended";
+        });
+      }
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).toHaveBeenCalledWith("interrupted");
+        expect(order[0]).toBe("cancel");
+        expect(order.slice(1)).toEqual(["stop:video", "stop:audio"]);
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+      }
+    });
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: does not invoke the recording interrupt handler when idle", ({ dispatch }) => {
+      const { stream } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => false,
+        interrupt,
+      });
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).not.toHaveBeenCalled();
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+      }
     });
 
     it("on visible: marks audio resume required without starting Tone", () => {
@@ -368,7 +507,24 @@ describe("streamLifecycle", () => {
       detach();
     });
 
-    it("on hidden: aborts an active export and still suspends held media", () => {
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name: aborts an active export and still suspends held media", ({ dispatch }) => {
       const { stream, tracks } = makeStream();
       setGrantedWithStream(stream);
       const abort = vi.fn();
@@ -376,11 +532,7 @@ describe("streamLifecycle", () => {
       if (!unregister) throw new Error("unexpected active export session");
       const detach = installVisibilityListener();
 
-      Object.defineProperty(document, "hidden", {
-        value: true,
-        configurable: true,
-      });
-      document.dispatchEvent(new Event("visibilitychange"));
+      dispatch();
 
       expect(abort).toHaveBeenCalledWith(
         "Rendering was interrupted because the screen locked or the app was hidden. Tap Render to try again.",
@@ -446,6 +598,134 @@ describe("streamLifecycle", () => {
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(useAppStore.getState().media.stream).toBeNull();
       detach();
+    });
+
+    it.each([
+      {
+        name: "pageshow",
+        prepare: (tracks: FakeTrack[]) => {
+          tracks[0].readyState = "ended";
+        },
+        dispatch: () => {
+          window.dispatchEvent(new Event("pageshow"));
+        },
+      },
+      {
+        name: "persisted pageshow",
+        prepare: (tracks: FakeTrack[]) => {
+          tracks[0].readyState = "ended";
+        },
+        dispatch: () => {
+          const event = new Event("pageshow") as PageTransitionEvent;
+          Object.defineProperty(event, "persisted", {
+            value: true,
+            configurable: true,
+          });
+          window.dispatchEvent(event);
+        },
+      },
+      {
+        name: "pageshow with muted audio",
+        prepare: (tracks: FakeTrack[]) => {
+          tracks[1].muted = true;
+        },
+        dispatch: () => {
+          window.dispatchEvent(new Event("pageshow"));
+        },
+      },
+      {
+        name: "document resume",
+        prepare: (tracks: FakeTrack[]) => {
+          tracks[0].readyState = "ended";
+        },
+        dispatch: () => {
+          document.dispatchEvent(new Event("resume"));
+        },
+      },
+    ])("on $name: suspends a held stream that is no longer usable", ({ prepare, dispatch }) => {
+      const { stream, tracks } = makeStream();
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+      prepare(tracks);
+
+      dispatch();
+
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+      expect(tracks[0].stop).toHaveBeenCalled();
+      expect(tracks[1].stop).toHaveBeenCalled();
+      detach();
+    });
+
+    it("on pageshow: leaves a fully live held stream unchanged", () => {
+      const { stream, tracks } = makeStream();
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+
+      window.dispatchEvent(new Event("pageshow"));
+
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("granted");
+      expect(media.stream).toBe(stream);
+      expect(tracks[0].stop).not.toHaveBeenCalled();
+      expect(tracks[1].stop).not.toHaveBeenCalled();
+      detach();
+    });
+
+    it("does not crash when the document listener API is absent", () => {
+      const originalAdd = document.addEventListener;
+      const originalRemove = document.removeEventListener;
+      Object.defineProperty(document, "addEventListener", {
+        configurable: true,
+        value: undefined,
+      });
+      Object.defineProperty(document, "removeEventListener", {
+        configurable: true,
+        value: undefined,
+      });
+
+      try {
+        const detach = installVisibilityListener();
+        expect(() => detach()).not.toThrow();
+      } finally {
+        Object.defineProperty(document, "addEventListener", {
+          configurable: true,
+          value: originalAdd,
+        });
+        Object.defineProperty(document, "removeEventListener", {
+          configurable: true,
+          value: originalRemove,
+        });
+      }
+    });
+
+    it("detach removes visibility, pagehide, pageshow, and resume listeners", () => {
+      const transportStop = vi.fn();
+      vi.mocked(Tone.getTransport).mockReturnValue({
+        stop: transportStop,
+      } as unknown as ReturnType<typeof Tone.getTransport>);
+      const { stream, tracks } = makeStream();
+      setGrantedWithStream(stream);
+      const detach = installVisibilityListener();
+      detach();
+
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+      tracks[0].readyState = "ended";
+      window.dispatchEvent(new Event("pageshow"));
+      document.dispatchEvent(new Event("resume"));
+
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("granted");
+      expect(media.stream).toBe(stream);
+      expect(transportStop).not.toHaveBeenCalled();
+      expect(tracks[0].stop).not.toHaveBeenCalled();
+      expect(tracks[1].stop).not.toHaveBeenCalled();
     });
 
     it("on hidden: does not log or save when autosave is clean", async () => {

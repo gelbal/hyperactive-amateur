@@ -4,6 +4,7 @@ import {
   requestMedia,
   acquireRecordingStream,
   releaseRecordingStream,
+  isAcquireInFlight,
   buildConstraints,
   __resetMediaForTesting,
 } from "./media";
@@ -35,6 +36,16 @@ function stubGetUserMedia(impl: () => Promise<MediaStream>) {
     configurable: true,
     value: { getUserMedia: vi.fn(impl) },
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("media", () => {
@@ -131,6 +142,95 @@ describe("media", () => {
     for (const track of first._tracks) expect(track.stop).toHaveBeenCalled();
     for (const track of second._tracks) expect(track.stop).not.toHaveBeenCalled();
     expect(useAppStore.getState().media.stream).toBe(second);
+  });
+
+  it("keeps the newer acquire installed when an older acquire resolves last", async () => {
+    const older = deferred<MediaStream>();
+    const newer = deferred<MediaStream>();
+    const olderStream = makeFakeStream();
+    const newerStream = makeFakeStream();
+    const getUserMedia = vi
+      .fn()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    const olderAcquire = acquireRecordingStream();
+    const newerAcquire = acquireRecordingStream();
+    expect(isAcquireInFlight()).toBe(true);
+
+    newer.resolve(newerStream);
+    await expect(newerAcquire).resolves.toBe(newerStream);
+    expect(useAppStore.getState().media.stream).toBe(newerStream);
+    expect(useAppStore.getState().media.status).toBe("granted");
+
+    older.resolve(olderStream);
+    await olderAcquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.stream).toBe(newerStream);
+    expect(useAppStore.getState().media.status).toBe("granted");
+    for (const track of olderStream._tracks) expect(track.stop).toHaveBeenCalled();
+    for (const track of newerStream._tracks) expect(track.stop).not.toHaveBeenCalled();
+    expect(isAcquireInFlight()).toBe(false);
+  });
+
+  it("ignores an older acquire failure after a newer acquire has succeeded", async () => {
+    const older = deferred<MediaStream>();
+    const newer = deferred<MediaStream>();
+    const newerStream = makeFakeStream();
+    const getUserMedia = vi
+      .fn()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    const olderAcquire = acquireRecordingStream();
+    const newerAcquire = acquireRecordingStream();
+
+    newer.resolve(newerStream);
+    await expect(newerAcquire).resolves.toBe(newerStream);
+
+    older.reject(new DOMException("revoked", "NotAllowedError"));
+    await olderAcquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.stream).toBe(newerStream);
+    expect(useAppStore.getState().media.status).toBe("granted");
+    expect(useAppStore.getState().media.error).toBeNull();
+    for (const track of newerStream._tracks) expect(track.stop).not.toHaveBeenCalled();
+  });
+
+  it("does not install an acquire that resolves after the held stream was released", async () => {
+    const currentStream = makeFakeStream();
+    const lateStream = makeFakeStream();
+    const lateAcquire = deferred<MediaStream>();
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(currentStream)
+      .mockReturnValueOnce(lateAcquire.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    await acquireRecordingStream();
+    expect(useAppStore.getState().media.stream).toBe(currentStream);
+
+    const acquire = acquireRecordingStream();
+    releaseRecordingStream(currentStream);
+    expect(useAppStore.getState().media.stream).toBeNull();
+
+    lateAcquire.resolve(lateStream);
+    await acquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.stream).toBeNull();
+    expect(useAppStore.getState().media.status).toBe("granted");
+    for (const track of lateStream._tracks) expect(track.stop).toHaveBeenCalled();
   });
 
   it("acquireRecordingStream rolls media status back to 'denied' on failure so requestMedia can re-prompt (regression)", async () => {

@@ -31,6 +31,7 @@ const posterMocks = vi.hoisted(() => ({
 }));
 
 const autoSaveMocks = vi.hoisted(() => ({
+  flushPending: vi.fn(),
   saveNow: vi.fn(),
 }));
 
@@ -86,6 +87,7 @@ vi.mock("./audioBufferSlice", () => ({
 }));
 
 vi.mock("./autoSave", () => ({
+  flushPending: autoSaveMocks.flushPending,
   saveNow: autoSaveMocks.saveNow,
 }));
 
@@ -102,7 +104,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { canStartAudibleAction } from "./audibleActionGate";
-import { registerStreamLifecycle } from "./streamLifecycle";
+import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
 import { clearLogs } from "./logger";
 
 const INTERRUPTION_COPY =
@@ -188,6 +190,22 @@ function makeLifecycleStream(): { stream: MediaStream; tracks: LifecycleTrack[] 
   };
 }
 
+function setGrantedWithStream(stream: MediaStream): void {
+  useAppStore.getState().actions.setMedia({
+    stream,
+    status: "granted",
+    error: null,
+  });
+}
+
+function dispatchHidden(): void {
+  Object.defineProperty(document, "hidden", {
+    value: true,
+    configurable: true,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 function makeRecordResult({ durationMs = 1000 }: { durationMs?: number } = {}) {
   return {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
@@ -241,6 +259,7 @@ describe("recordingFlow", () => {
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     posterMocks.captureFirstFrame.mockReset();
     posterMocks.captureFirstFrame.mockResolvedValue(null);
+    autoSaveMocks.flushPending.mockReset();
     autoSaveMocks.saveNow.mockReset();
     autoSaveMocks.saveNow.mockResolvedValue(undefined);
     installMocks.requestPersistence.mockReset();
@@ -792,6 +811,90 @@ describe("recordingFlow", () => {
       await flushMicrotasks();
       expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
     } finally {
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels a wired in-flight flow before capture when the page hides during countdown", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const { stream, tracks } = makeLifecycleStream();
+    registerStreamLifecycle(stream);
+    setGrantedWithStream(stream);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(2, { stream, onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("countdown");
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+      expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+      expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+      expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await vi.runOnlyPendingTimersAsync();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels a wired in-flight flow without saving when the page hides during recording", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const { stream, tracks } = makeLifecycleStream();
+    registerStreamLifecycle(stream);
+    setGrantedWithStream(stream);
+    recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(2, { stream, onError });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      expect(useAppStore.getState().recording.state).toBe("recording");
+      expect(recorderMocks.recordClip).toHaveBeenCalledTimes(1);
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(useAppStore.getState().project.tracks[2].clip).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+      expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+      expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await flushMicrotasks();
       await promise.catch(() => false);
     }
   });

@@ -1,6 +1,6 @@
 // ABOUTME: Tests for the store actions that contain real logic — clamping, side-effects, slicing.
 // ABOUTME: Trivial setters (setIsPlaying, setBpm-in-range, etc.) are not tested directly; they're verified by the components that drive them.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
@@ -13,6 +13,7 @@ vi.mock("../lib/audioLifecycle", () => ({
 }));
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
+import { __resetMediaForTesting } from "../lib/media";
 import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
 import type { Clip } from "../types";
 import { useAppStore } from "./useAppStore";
@@ -34,14 +35,51 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
   };
 }
 
+function makeFakeStream() {
+  const tracks = [
+    Object.assign(new EventTarget(), {
+      stop: vi.fn(),
+      readyState: "live" as "live" | "ended",
+    }),
+    Object.assign(new EventTarget(), {
+      stop: vi.fn(),
+      readyState: "live" as "live" | "ended",
+    }),
+  ];
+  return {
+    getTracks: () => tracks,
+  } as unknown as MediaStream;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("useAppStore", () => {
+  let originalMediaDevices: MediaDevices | undefined;
+
   beforeEach(() => {
+    __resetMediaForTesting();
+    originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
     get().actions.setIsExporting(false);
     window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
     window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
     get().actions.reset();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: originalMediaDevices,
+    });
   });
 
   it("tracks transient audio context state in the playback slice", () => {
@@ -83,6 +121,42 @@ describe("useAppStore", () => {
     get().actions.setRecordingState("preparing", 3);
     expect(get().recording.countdownEndsAt).toBeNull();
     expect(get().recording.error).toBeNull();
+  });
+
+  it("resumeMedia no-ops while recording is active", async () => {
+    const getUserMedia = vi.fn().mockResolvedValue(makeFakeStream());
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    get().actions.setMedia({ stream: null, status: "suspended", error: null });
+    get().actions.setRecordingState("countdown", 0);
+
+    await get().actions.resumeMedia();
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(get().media.status).toBe("suspended");
+  });
+
+  it("resumeMedia no-ops while an acquire is already in flight", async () => {
+    const acquisition = deferred<MediaStream>();
+    const stream = makeFakeStream();
+    const getUserMedia = vi.fn().mockReturnValue(acquisition.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    get().actions.setMedia({ stream: null, status: "suspended", error: null });
+
+    const first = get().actions.resumeMedia();
+    const second = get().actions.resumeMedia();
+
+    acquisition.resolve(stream);
+    await Promise.allSettled([first, second]);
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(get().media.stream).toBe(stream);
+    expect(get().media.status).toBe("granted");
   });
 
   it("toggleVideoFacingMode clears and unpersists the pinned video device", () => {
