@@ -256,10 +256,17 @@ function normalizeTrack(
     warn(warnings, `Track ${trackId + 1} id was normalized.`);
   }
   const clip = normalizeClipFields(warnings, trackId, rawTrack);
+  const tag = clip.clipBlob ? normalizeTag(warnings, trackId, rawTrack.tag) : null;
   return {
     id: trackId,
     ...clip,
-    tag: clip.clipBlob ? normalizeTag(warnings, trackId, rawTrack.tag) : null,
+    tag,
+    // Manual tag ownership recorded at save time survives the reload so a
+    // post-reload auto-tag pass keeps skipping user-tagged tracks.
+    tagSource:
+      tag && (rawTrack.tagSource === "user" || rawTrack.tagSource === "system")
+        ? rawTrack.tagSource
+        : null,
     steps: normalizeSteps(warnings, trackId, rawTrack.steps, stepCount),
     volume: normalizeNumber(warnings, `Track ${trackId + 1} volume`, rawTrack.volume, 0, 1, 1),
     muted: typeof rawTrack.muted === "boolean" ? rawTrack.muted : false,
@@ -536,7 +543,12 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     tagReasoning,
     tracks: tracks.length === 8 ? tracks : empty.project.tracks,
   };
-  useAppStore.getState().actions.hydrateProject(project);
+  const manuallyTagged = tracks
+    .filter(
+      (track) => track.tag !== null && normalized.tracks[track.id]?.tagSource === "user",
+    )
+    .map((track) => track.id);
+  useAppStore.getState().actions.hydrateProject(project, manuallyTagged);
   useAppStore.getState().actions.setRecoveryWarnings(warnings);
   return { ok: true, degraded: warnings.length > 0, warnings };
 }
