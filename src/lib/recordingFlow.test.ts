@@ -901,6 +901,103 @@ describe("recordingFlow", () => {
     }
   });
 
+  it("cancels with the pinned copy when the page hides while audio startup is pending", async () => {
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const audioStarted = makeDeferred();
+    toneMocks.start.mockReturnValue(audioStarted.promise);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(0, { onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("preparing");
+
+      dispatchHidden();
+      audioStarted.resolve();
+      await flushMicrotasks(5);
+
+      expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+      await expect(promise).resolves.toBe(false);
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("cancels with the pinned copy when the page hides while stream acquisition is pending", async () => {
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const stream = makeStream();
+    const acquisition = makeDeferred<MediaStream>();
+    mediaMocks.acquireRecordingStream.mockReturnValue(acquisition.promise);
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(0, { onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("preparing");
+      expect(mediaMocks.acquireRecordingStream).toHaveBeenCalledTimes(1);
+
+      dispatchHidden();
+      await flushMicrotasks(5);
+
+      await expect(observeResolution(promise)).resolves.toEqual({
+        status: "resolved",
+        value: false,
+      });
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(onError).not.toHaveBeenCalled();
+      expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+      expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+      // The invalidated acquire settling later is released, never installed.
+      acquisition.resolve(stream);
+      await flushMicrotasks();
+      expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("hidden while recording is idle leaves recording state and error untouched", async () => {
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    const detach = installVisibilityListener();
+    try {
+      dispatchHidden();
+      await flushMicrotasks();
+
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBeNull();
+      expect(mediaMocks.requestMedia).not.toHaveBeenCalled();
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+    }
+  });
+
   it("cancels a real in-flight flow when a lifecycle mute event fires", async () => {
     vi.useFakeTimers();
     const onError = vi.fn();

@@ -177,6 +177,11 @@ export function installVisibilityListener(): () => void {
     const state = useAppStore.getState();
     if (state.media.status === "granted" && state.media.stream) {
       transitionToSuspended(state.media.stream);
+    } else {
+      // No held stream to route through transitionToSuspended — a recording
+      // still in `preparing` (audio starting, acquisition pending) must be
+      // interrupted all the same, with the same pinned copy.
+      interruptActiveRecording("interrupted");
     }
   };
   const reconcileHeldStream = () => {

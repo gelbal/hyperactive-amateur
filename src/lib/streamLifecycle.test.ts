@@ -528,6 +528,46 @@ describe("streamLifecycle", () => {
       }
     });
 
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name with no held stream: interrupts an active recording", ({ dispatch }) => {
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "idle",
+        error: null,
+      });
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).toHaveBeenCalledWith("interrupted");
+        expect(interrupt).toHaveBeenCalledTimes(1);
+      } finally {
+        detach();
+      }
+    });
+
     it("on visible: marks audio resume required without starting Tone", () => {
       const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
