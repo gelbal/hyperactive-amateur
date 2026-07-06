@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "smoke:browser": "npm run build && playwright test -c playwright.config.ts",
+    "smoke:ci": "playwright test -c playwright.config.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
