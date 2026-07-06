@@ -96,8 +96,8 @@ textarea:focus-visible,
 
 /* Fullscreen presentation mode for the viewport: the wrapper fills the
  * screen with the brand neutral, and the canvas grows to fill the shorter
- * dimension while staying square. The canvas DOM node is unchanged so the
- * rAF render loop keeps drawing without interruption. */
+ * dimension while staying square. The render canvas DOM node is unchanged so
+ * export capture keeps drawing without interruption. */
 .ha-viewport-frame:fullscreen {
   width: 100vw;
   height: 100vh;
@@ -106,7 +106,7 @@ textarea:focus-visible,
   align-items: center;
   justify-content: center;
 }
-.ha-viewport-frame:fullscreen .ha-canvas {
+.ha-viewport-frame:fullscreen .ha-display-canvas {
   width: 100vmin !important;
   height: 100vmin !important;
   border-radius: 0;

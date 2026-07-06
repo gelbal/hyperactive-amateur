@@ -1,4 +1,4 @@
-// ABOUTME: Viewport — square canvas that the hard-cut video renderer draws into.
+// ABOUTME: Viewport — fixed export render canvas plus DPR-scaled display canvas.
 // ABOUTME: Owns the empty state plus the fullscreen toggle for presentation mode.
 import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
@@ -12,9 +12,19 @@ import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
 
+const RENDER_CANVAS_SIZE = 480;
+const DISPLAY_DPR_CAP = 2;
+
+function getDisplayBackingSize(cssSize: number): number {
+  const dpr = Math.min(window.devicePixelRatio || 1, DISPLAY_DPR_CAP);
+  return Math.max(1, Math.round(cssSize * dpr));
+}
+
 export function Viewport() {
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [displayCanvasSize, setDisplayCanvasSize] = useState(RENDER_CANVAS_SIZE);
   const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
   const emptyTrackCount = useAppStore(
     (s) => s.project.tracks.filter((t) => !t.clip).length,
@@ -56,22 +66,52 @@ export function Viewport() {
   }, []);
 
   useEffect(() => {
-    setActiveCanvas(canvasRef.current);
+    setActiveCanvas(renderCanvasRef.current);
     return () => setActiveCanvas(null);
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const displayCanvas = displayCanvasRef.current;
+    if (!displayCanvas || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const cssSize =
+        entries[0]?.contentRect.width ||
+        entries[0]?.contentRect.height ||
+        RENDER_CANVAS_SIZE;
+      const backingSize = getDisplayBackingSize(cssSize);
+      setDisplayCanvasSize((current) =>
+        current === backingSize ? current : backingSize,
+      );
+    });
+
+    observer.observe(displayCanvas);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const renderCanvas = renderCanvasRef.current;
+    if (!renderCanvas) return;
+    const renderCtx = renderCanvas.getContext("2d");
+    if (!renderCtx) return;
+    const displayCanvas = displayCanvasRef.current;
+    const displayCtx = displayCanvas?.getContext("2d") ?? null;
 
     let rafId = 0;
     const draw = () => {
       // Audio time is the source of truth for "what should be on screen".
       // rAF only decides when we paint.
       const audioTime = Tone.immediate();
-      drawCurrentFrame(ctx, audioTime);
+      drawCurrentFrame(renderCtx, audioTime);
+      if (displayCanvas && displayCtx) {
+        displayCtx.drawImage(
+          renderCanvas,
+          0,
+          0,
+          displayCanvas.width,
+          displayCanvas.height,
+        );
+      }
       rafId = requestAnimationFrame(draw);
     };
 
@@ -94,11 +134,24 @@ export function Viewport() {
         className="ha-viewport-frame relative aspect-square w-full max-w-[480px]"
       >
         <canvas
-          ref={canvasRef}
-          width={480}
-          height={480}
+          ref={renderCanvasRef}
+          width={RENDER_CANVAS_SIZE}
+          height={RENDER_CANVAS_SIZE}
+          aria-hidden="true"
+          className="ha-render-canvas w-full h-full rounded bg-zinc-950"
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: 0,
+            pointerEvents: "none",
+          }}
+        />
+        <canvas
+          ref={displayCanvasRef}
+          width={displayCanvasSize}
+          height={displayCanvasSize}
           aria-label="hard-cut video viewport"
-          className="ha-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
+          className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
         {showGate && (
           <PermissionGate status={mediaStatus} error={mediaError} />
