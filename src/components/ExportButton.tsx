@@ -115,13 +115,15 @@ export function ExportButton() {
     setShareFallback(null);
   }, [revokeReviewObjectUrl, setCurrentReview]);
 
-  useEffect(
-    () => () => {
+  // The setup body re-arms the ref so StrictMode's dev double-mount
+  // (setup → cleanup → setup) cannot strand it false for the component's life.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       revokeReviewObjectUrl();
-    },
-    [revokeReviewObjectUrl],
-  );
+    };
+  }, [revokeReviewObjectUrl]);
 
   const saveReview = (current: ExportReview): boolean => {
     if (reviewRef.current !== current) return false;

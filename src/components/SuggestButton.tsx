@@ -1,4 +1,4 @@
-// ABOUTME: SuggestButton — calls Claude to fill the step grid based on track tags + tempo.
+// ABOUTME: SuggestButton — calls Gemini to fill the step grid based on track tags + tempo.
 // ABOUTME: Disabled until ≥4 tracks have clips; shows an undo toast for 5 seconds after applying.
 import { useEffect, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
