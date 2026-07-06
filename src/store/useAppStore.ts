@@ -93,7 +93,7 @@ export interface AppActions {
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   setCountdownEndsAt: (deadline: number | null) => void;
   setRecordingError: (error: string | null) => void;
-  hydrateProject: (project: AppState["project"]) => void;
+  hydrateProject: (project: AppState["project"], manuallyTagged?: number[]) => void;
   applyPattern: (grid: boolean[][]) => void;
   applyPatternIfCurrent: (
     grid: boolean[][],
@@ -542,7 +542,7 @@ export const useAppStore = create<AppStore>((set) => ({
     reopenRecordingStation: () =>
       set((state) => ({ session: { ...state.session, recordingStationDismissed: false } })),
 
-    hydrateProject: (project) =>
+    hydrateProject: (project, manuallyTagged) =>
       set((state) => {
         if (state.playback.isExporting) return state;
         // If the rehydrated project has any recorded clip, the user is past
@@ -559,9 +559,13 @@ export const useAppStore = create<AppStore>((set) => ({
         };
         return {
           project: normalizedProject,
-          session: hasAnyClip
-            ? { ...bumpProjectRevision(state.session), recordingStationDismissed: true }
-            : bumpProjectRevision(state.session),
+          // Persisted tagSource restores manual tag ownership so auto-tag
+          // passes keep skipping user-tagged tracks after a reload.
+          session: {
+            ...bumpProjectRevision(state.session),
+            ...(manuallyTagged ? { manuallyTagged: [...manuallyTagged] } : {}),
+            ...(hasAnyClip ? { recordingStationDismissed: true } : {}),
+          },
         };
       }),
 

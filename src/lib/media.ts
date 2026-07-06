@@ -91,11 +91,17 @@ function isStaleDeviceError(err: unknown): boolean {
   return name === "NotFoundError" || name === "OverconstrainedError";
 }
 
-async function getUserMediaWithDeviceFallback(): Promise<MediaStream> {
+// `token` scopes the destructive half of the fallback: an acquire whose token
+// was superseded while getUserMedia was pending must not clear the user's
+// newer device choices or fire the retry — it just rethrows and lets the
+// caller's stale handling run. requestMedia passes no token: its single-flight
+// guard means the fallback is always current there.
+async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStream> {
   try {
     return await navigator.mediaDevices.getUserMedia(buildConstraints());
   } catch (err) {
     if (!isStaleDeviceError(err)) throw err;
+    if (token !== undefined && token !== acquireGeneration) throw err;
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
     return navigator.mediaDevices.getUserMedia(buildConstraints());
   }
@@ -110,7 +116,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
   try {
-    const stream = await getUserMediaWithDeviceFallback();
+    const stream = await getUserMediaWithDeviceFallback(token);
     if (token !== acquireGeneration) {
       releaseMediaStream(stream);
       throw new DOMException("Stale media acquisition", "AbortError");
@@ -133,6 +139,17 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
   } finally {
     if (activeAcquireToken === token) activeAcquireToken = null;
   }
+}
+
+// Invalidate any pending acquire: bump the generation and clear the active
+// token so a later-settling getUserMedia is treated as stale — its tracks get
+// stopped and neither its stream nor its failure state is installed.
+// streamLifecycle calls this on every lifecycle suspend decision (including
+// hidden/pagehide when no stream is held), so a suspension can never be
+// undone by a late grant.
+export function invalidatePendingAcquire(): void {
+  acquireGeneration += 1;
+  activeAcquireToken = null;
 }
 
 // Release a stream returned by acquireRecordingStream. Stops every track (so

@@ -4,6 +4,7 @@ import {
   requestMedia,
   acquireRecordingStream,
   releaseRecordingStream,
+  invalidatePendingAcquire,
   isAcquireInFlight,
   buildConstraints,
   __resetMediaForTesting,
@@ -203,6 +204,88 @@ describe("media", () => {
     expect(useAppStore.getState().media.status).toBe("granted");
     expect(useAppStore.getState().media.error).toBeNull();
     for (const track of newerStream._tracks) expect(track.stop).not.toHaveBeenCalled();
+  });
+
+  it("a stale acquire's device fallback neither clears newer preferred devices nor retries", async () => {
+    useAppStore.getState().actions.setPreferredDevices({
+      video: "cam-old",
+      audio: "mic-old",
+    });
+    const older = deferred<MediaStream>();
+    const newer = deferred<MediaStream>();
+    const newerStream = makeFakeStream();
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValue(makeFakeStream())
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    const olderAcquire = acquireRecordingStream();
+    useAppStore.getState().actions.setPreferredDevices({
+      video: "cam-new",
+      audio: "mic-new",
+    });
+    const newerAcquire = acquireRecordingStream();
+
+    newer.resolve(newerStream);
+    await expect(newerAcquire).resolves.toBe(newerStream);
+
+    older.reject(new DOMException("device disappeared", "NotFoundError"));
+    await olderAcquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.videoDeviceId).toBe("cam-new");
+    expect(useAppStore.getState().media.audioDeviceId).toBe("mic-new");
+    // No fallback retry may fire for the stale acquire.
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().media.stream).toBe(newerStream);
+    expect(useAppStore.getState().media.status).toBe("granted");
+  });
+
+  it("invalidatePendingAcquire makes a pending acquire stale: late resolve stops tracks, installs nothing", async () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "suspended",
+      error: null,
+    });
+    const pending = deferred<MediaStream>();
+    const pendingStream = makeFakeStream();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquire = acquireRecordingStream();
+    expect(isAcquireInFlight()).toBe(true);
+
+    invalidatePendingAcquire();
+    expect(isAcquireInFlight()).toBe(false);
+
+    pending.resolve(pendingStream);
+    await acquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.stream).toBeNull();
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    for (const track of pendingStream._tracks) expect(track.stop).toHaveBeenCalled();
+  });
+
+  it("invalidatePendingAcquire keeps a late acquire failure from flipping the store to denied", async () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "suspended",
+      error: null,
+    });
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquire = acquireRecordingStream();
+    invalidatePendingAcquire();
+
+    pending.reject(new DOMException("revoked", "NotAllowedError"));
+    await acquire.catch(() => undefined);
+
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    expect(useAppStore.getState().media.error).toBeNull();
   });
 
   it("does not install an acquire that resolves after the held stream was released", async () => {

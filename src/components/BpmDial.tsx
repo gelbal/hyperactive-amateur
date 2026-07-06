@@ -41,6 +41,9 @@ function stepBy(value: number, delta: number): number {
 
 export function BpmDial() {
   const bpm = useAppStore((s) => s.project.bpm);
+  // Export freezes project mutations; the dial must look disabled and ignore
+  // input, not just rely on the store writer's no-op.
+  const isExporting = useAppStore((s) => s.playback.isExporting);
   const dragRef = useRef<{ startY: number; startBpm: number } | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -74,11 +77,14 @@ export function BpmDial() {
         aria-valuemax={STOPS[STOPS.length - 1]}
         aria-valuenow={bpm}
         role="slider"
+        disabled={isExporting}
         onWheel={(event) => {
+          if (isExporting) return;
           event.preventDefault();
           setBpm(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
         }}
         onPointerDown={(event) => {
+          if (isExporting) return;
           event.preventDefault();
           (event.currentTarget as HTMLButtonElement).setPointerCapture(
             event.pointerId,
@@ -87,7 +93,7 @@ export function BpmDial() {
           setDragging(true);
         }}
         onPointerMove={(event) => {
-          if (!dragRef.current) return;
+          if (isExporting || !dragRef.current) return;
           const dy = dragRef.current.startY - event.clientY;
           const stepDelta = Math.round(dy / DRAG_PIXELS_PER_STOP);
           setBpm(stepBy(dragRef.current.startBpm, stepDelta));
@@ -104,6 +110,7 @@ export function BpmDial() {
           setDragging(false);
         }}
         onKeyDown={(event) => {
+          if (isExporting) return;
           if (event.key === "ArrowUp" || event.key === "ArrowRight") {
             event.preventDefault();
             setBpm(stepBy(bpm, 1));
@@ -115,6 +122,7 @@ export function BpmDial() {
         title="Drag, scroll, or use arrow keys to change BPM"
         className={
           "relative shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-colors " +
+          "disabled:opacity-30 disabled:cursor-not-allowed " +
           (dragging ? "cursor-grabbing" : "cursor-ns-resize")
         }
         style={{ width: SIZE, height: SIZE, touchAction: "none" }}

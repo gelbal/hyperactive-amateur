@@ -32,6 +32,7 @@ import {
   releaseMediaStream,
   suspendMediaStream,
 } from "./streamLifecycle";
+import { acquireRecordingStream, __resetMediaForTesting } from "./media";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
@@ -156,6 +157,51 @@ describe("streamLifecycle", () => {
       const media = useAppStore.getState().media;
       expect(media.status).toBe("granted");
       expect(media.stream).toBe(s2);
+    });
+
+    it("stale stream ended does not interrupt a recording on the current stream", () => {
+      const { stream: s1, tracks } = makeStream();
+      const { stream: s2 } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      // Listen on s1 but the store ends up holding s2 (e.g. user re-flipped).
+      attachStreamEndedListeners(s1);
+      setGrantedWithStream(s2);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).not.toHaveBeenCalled();
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("granted");
+      expect(media.stream).toBe(s2);
+    });
+
+    it("stale stream mute does not interrupt a recording on the current stream", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream: s1, tracks } = makeStream();
+        const { stream: s2 } = makeStream();
+        const interrupt = vi.fn();
+        registerRecordingInterruptHandler({
+          isActive: () => true,
+          interrupt,
+        });
+        attachStreamEndedListeners(s1);
+        setGrantedWithStream(s2);
+
+        tracks[1].fireMute();
+        vi.advanceTimersByTime(250);
+
+        expect(interrupt).not.toHaveBeenCalled();
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("granted");
+        expect(media.stream).toBe(s2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("detach() removes listeners — subsequent ended events are inert", () => {
@@ -482,6 +528,46 @@ describe("streamLifecycle", () => {
       }
     });
 
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])("on $name with no held stream: interrupts an active recording", ({ dispatch }) => {
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "idle",
+        error: null,
+      });
+      const detach = installVisibilityListener();
+
+      try {
+        dispatch();
+
+        expect(interrupt).toHaveBeenCalledWith("interrupted");
+        expect(interrupt).toHaveBeenCalledTimes(1);
+      } finally {
+        detach();
+      }
+    });
+
     it("on visible: marks audio resume required without starting Tone", () => {
       const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
@@ -745,6 +831,142 @@ describe("streamLifecycle", () => {
     });
   });
 
+  describe("pending acquire invalidation", () => {
+    let originalMediaDevices: MediaDevices | undefined;
+
+    beforeEach(() => {
+      __resetMediaForTesting();
+      originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices })
+        .mediaDevices;
+    });
+
+    afterEach(() => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+    });
+
+    function stubPendingGetUserMedia() {
+      let resolve!: (stream: MediaStream) => void;
+      const promise = new Promise<MediaStream>((res) => {
+        resolve = res;
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia: vi.fn(() => promise) },
+      });
+      return { resolve };
+    }
+
+    it.each([
+      {
+        name: "visibilitychange hidden",
+        dispatch: () => {
+          Object.defineProperty(document, "hidden", {
+            value: true,
+            configurable: true,
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      },
+      {
+        name: "pagehide",
+        dispatch: () => {
+          window.dispatchEvent(new Event("pagehide"));
+        },
+      },
+    ])(
+      "on $name with no held stream: a pending acquire resolving later is stale",
+      async ({ dispatch }) => {
+        useAppStore.getState().actions.setMedia({
+          stream: null,
+          status: "suspended",
+          error: null,
+        });
+        const pending = stubPendingGetUserMedia();
+        const { stream: lateStream, tracks: lateTracks } = makeStream();
+        const detach = installVisibilityListener();
+
+        try {
+          const acquire = acquireRecordingStream();
+
+          dispatch();
+
+          pending.resolve(lateStream);
+          await acquire.catch(() => undefined);
+
+          const media = useAppStore.getState().media;
+          expect(media.status).toBe("suspended");
+          expect(media.stream).toBeNull();
+          expect(lateTracks[0].stop).toHaveBeenCalled();
+          expect(lateTracks[1].stop).toHaveBeenCalled();
+        } finally {
+          detach();
+        }
+      },
+    );
+
+    it("suspending the held stream (track ended) invalidates a pending acquire", async () => {
+      const { stream: held, tracks: heldTracks } = makeStream();
+      setGrantedWithStream(held);
+      attachStreamEndedListeners(held);
+      const pending = stubPendingGetUserMedia();
+      const { stream: lateStream, tracks: lateTracks } = makeStream();
+
+      const acquire = acquireRecordingStream();
+
+      heldTracks[0].fireEnded();
+      expect(useAppStore.getState().media.status).toBe("suspended");
+
+      pending.resolve(lateStream);
+      await acquire.catch(() => undefined);
+
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("suspended");
+      expect(media.stream).toBeNull();
+      expect(lateTracks[0].stop).toHaveBeenCalled();
+      expect(lateTracks[1].stop).toHaveBeenCalled();
+    });
+
+    it("a fresh acquire after hidden invalidation still installs", async () => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+      const staleGrant = stubPendingGetUserMedia();
+      const { stream: staleStream } = makeStream();
+      const detach = installVisibilityListener();
+
+      try {
+        const staleAcquire = acquireRecordingStream();
+        Object.defineProperty(document, "hidden", {
+          value: true,
+          configurable: true,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        staleGrant.resolve(staleStream);
+        await staleAcquire.catch(() => undefined);
+
+        const { stream: freshStream, tracks: freshTracks } = makeStream();
+        Object.defineProperty(navigator, "mediaDevices", {
+          configurable: true,
+          value: { getUserMedia: vi.fn(async () => freshStream) },
+        });
+
+        await expect(acquireRecordingStream()).resolves.toBe(freshStream);
+
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("granted");
+        expect(media.stream).toBe(freshStream);
+        expect(freshTracks[0].stop).not.toHaveBeenCalled();
+      } finally {
+        detach();
+      }
+    });
+  });
+
   describe("onMediaRecorderError", () => {
     it("does NOT touch the store when tracks are still live (genuine recorder error)", () => {
       const { stream } = makeStream();
@@ -816,6 +1038,24 @@ describe("streamLifecycle", () => {
 
       onMediaRecorderError(s1, new Error("stream gone"));
 
+      expect(useAppStore.getState().media.status).toBe("granted");
+      expect(useAppStore.getState().media.stream).toBe(s2);
+    });
+
+    it("does not interrupt a recording on the current stream for a stale stream's error", () => {
+      const { stream: s1, tracks } = makeStream();
+      for (const t of tracks) t.readyState = "ended";
+      const { stream: s2 } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      setGrantedWithStream(s2);
+
+      onMediaRecorderError(s1, new Error("stream gone"));
+
+      expect(interrupt).not.toHaveBeenCalled();
       expect(useAppStore.getState().media.status).toBe("granted");
       expect(useAppStore.getState().media.stream).toBe(s2);
     });

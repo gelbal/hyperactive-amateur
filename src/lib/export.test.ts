@@ -279,6 +279,84 @@ describe("exportSong", () => {
     expect(sentinels[0]?.release).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects with the abort reason when aborted while the wake-lock request is pending", async () => {
+    const canvas = makeCanvas();
+    let resolveRequest: (sentinel: WakeLockSentinelStub) => void = () => undefined;
+    const sentinel = new EventTarget() as WakeLockSentinelStub;
+    sentinel.released = false;
+    sentinel.release = vi.fn(async () => {
+      sentinel.released = true;
+      sentinel.dispatchEvent(new Event("release"));
+    });
+    const request = vi.fn(
+      (_type: "screen") =>
+        new Promise<WakeLockSentinelStub>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: { request },
+    });
+
+    const promise = exportSong(canvas, makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/aborted during setup/);
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(abortActiveExport("aborted during setup")).toBe(true);
+
+    await rejection;
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+    expect(abortActiveExport("after failure")).toBe(false);
+    expect(canvas.captureStream).not.toHaveBeenCalled();
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.startSpy).not.toHaveBeenCalled();
+
+    // A wake lock granted after the abort must still be released.
+    resolveRequest(sentinel);
+    await vi.waitFor(() => expect(sentinel.release).toHaveBeenCalledTimes(1));
+  });
+
+  it("rejects with the abort reason when aborted while audio startup is pending", async () => {
+    installWakeLockStub();
+    const canvas = makeCanvas();
+    let resolveAudio: () => void = () => undefined;
+    audioLifecycleMocks.ensureAudioRunning.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveAudio = () => resolve();
+      }),
+    );
+
+    const promise = exportSong(canvas, makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/aborted during setup/);
+
+    await vi.waitFor(() =>
+      expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalledTimes(1),
+    );
+    expect(abortActiveExport("aborted during setup")).toBe(true);
+
+    await rejection;
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+    expect(abortActiveExport("after failure")).toBe(false);
+    expect(canvas.captureStream).not.toHaveBeenCalled();
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.startSpy).not.toHaveBeenCalled();
+
+    // Audio resuming after the abort must not restart any export work.
+    resolveAudio();
+    await Promise.resolve();
+    expect(canvas.captureStream).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
   it("does not require wakeLock support to render", async () => {
     Reflect.deleteProperty(navigator, "wakeLock");
 

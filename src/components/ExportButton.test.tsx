@@ -8,6 +8,7 @@ import {
   waitFor,
   act,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const exportMocks = vi.hoisted(() => ({
@@ -301,6 +302,39 @@ describe("ExportButton format picker", () => {
     expect(file.name).toBe(filename);
     expect(file.name.endsWith(".mp4")).toBe(true);
     expect(file.type).toBe("video/mp4");
+  });
+
+  it("keeps the share fallback working after a StrictMode double-mount", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    const share = vi.fn().mockRejectedValue(new Error("share failed"));
+    stubNavigatorShare({ canShare: true, share });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/strict-mode");
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    vi.mocked(exportSong).mockResolvedValueOnce(
+      new Blob(["movie"], { type: "video/webm" }),
+    );
+
+    render(
+      <StrictMode>
+        <ExportButton />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    await screen.findByText(FILENAME_RE);
+
+    fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Sharing failed — saved as a download instead."),
+      ).toBeInTheDocument(),
+    );
+    expect(click).toHaveBeenCalledTimes(1);
+    // sharePending must reset so the Share button is usable again.
+    expect(screen.getByRole("button", { name: /^share$/i })).toBeEnabled();
   });
 
   it("keeps the review row when sharing is canceled", async () => {

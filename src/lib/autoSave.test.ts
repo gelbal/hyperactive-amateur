@@ -79,6 +79,29 @@ describe("autoSave", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("saveNow skips the write while autosave is paused (degraded load) and resolves false", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject");
+    useAppStore.getState().actions.setBpm(160);
+
+    await expect(saveNow()).resolves.toBe(false);
+
+    expect(saveSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+    expect(await loadProject()).toBeNull();
+  });
+
+  it("re-enabling autosave lets the next immediate save persist state changed during the pause", async () => {
+    vi.useRealTimers();
+    useAppStore.getState().actions.setBpm(161);
+    await expect(saveNow()).resolves.toBe(false);
+
+    // RecoveryBanner acknowledgment re-enables saving via startAutoSave().
+    startAutoSave();
+    await expect(saveNow()).resolves.toBe(true);
+
+    expect((await loadProject())?.bpm).toBe(161);
+  });
+
   it("concurrent saveNow calls coalesce behind the in-flight save and write latest state once", async () => {
     const firstSave = makeDeferred();
     const savedBpm: number[] = [];
@@ -87,6 +110,7 @@ describe("autoSave", () => {
       if (savedBpm.length === 1) await firstSave.promise;
     });
 
+    startAutoSave();
     useAppStore.getState().actions.setBpm(132);
     const first = saveNow();
     expect(savedBpm).toEqual([132]);

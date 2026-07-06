@@ -1,6 +1,10 @@
 // ABOUTME: streamLifecycle — single owner of every transition INTO "suspended".
 // ABOUTME: Three event sources route through here: track.onended, visibilitychange, MediaRecorder.onerror.
 import { useAppStore } from "../store/useAppStore";
+// media.ts ↔ streamLifecycle.ts is a circular import (media registers its
+// streams here); ESM hoists the function binding and invalidatePendingAcquire
+// is only invoked at event time, long after both modules have loaded.
+import { invalidatePendingAcquire } from "./media";
 import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
 import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
@@ -36,11 +40,20 @@ function stopTracks(stream: MediaStream): void {
   }
 }
 
-// Mark the store as suspended IF and only IF it currently holds `stream` in a
-// "granted" status. A different stream having been acquired since (e.g. the
-// user re-flipped the camera) means the listener fired on a stale handle and
-// should not touch the store.
+// A stream is current when the store holds exactly it in a "granted" status.
+// A different stream having been acquired since (e.g. the user re-flipped the
+// camera) means the event fired on a stale handle: it must neither touch the
+// store nor interrupt a recording running on the newer stream.
+function isCurrentStream(stream: MediaStream): boolean {
+  const media = useAppStore.getState().media;
+  return media.status === "granted" && media.stream === stream;
+}
+
+// Mark the store as suspended IF and only IF `stream` is current — checked
+// BEFORE the recording interrupt so check+interrupt+suspend act as one
+// current-stream-only operation.
 function transitionToSuspended(stream: MediaStream): void {
+  if (!isCurrentStream(stream)) return;
   interruptActiveRecording("interrupted");
   suspendMediaStream(stream);
 }
@@ -70,6 +83,7 @@ function scheduleMutedSuspension(stream: MediaStream): void {
 }
 
 function onTrackMuted(stream: MediaStream): void {
+  if (!isCurrentStream(stream)) return;
   if (interruptActiveRecording("interrupted")) {
     clearPendingMuteSuspension(stream);
     suspendMediaStream(stream);
@@ -127,6 +141,9 @@ export function suspendMediaStream(stream: MediaStream): void {
   stopTracks(stream);
   const state = useAppStore.getState();
   if (state.media.status === "granted" && state.media.stream === stream) {
+    // A suspension is a lifecycle decision: any acquire still in flight must
+    // not be allowed to re-grant after it.
+    invalidatePendingAcquire();
     noteMicReleased();
     state.actions.setMedia({ stream: null, status: "suspended", error: null });
   }
@@ -153,9 +170,18 @@ export function installVisibilityListener(): () => void {
         // Transport may not be initialized yet; safe to ignore.
       }
     }
+    // Hidden/pagehide is a suspend decision even when no stream is held: a
+    // reconnect-tap acquire still pending must not re-light camera/mic by
+    // resolving after the app went hidden.
+    invalidatePendingAcquire();
     const state = useAppStore.getState();
     if (state.media.status === "granted" && state.media.stream) {
       transitionToSuspended(state.media.stream);
+    } else {
+      // No held stream to route through transitionToSuspended — a recording
+      // still in `preparing` (audio starting, acquisition pending) must be
+      // interrupted all the same, with the same pinned copy.
+      interruptActiveRecording("interrupted");
     }
   };
   const reconcileHeldStream = () => {

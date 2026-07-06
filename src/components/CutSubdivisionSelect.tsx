@@ -13,16 +13,18 @@ const OPTIONS: Array<{ value: CutSubdivision; label: string }> = [
 
 export function CutSubdivisionSelect() {
   const value = useAppStore((s) => s.project.cutSubdivision);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
   return (
     <label className="flex items-center gap-2 text-sm text-zinc-300">
       <span>Cut rate</span>
       <select
         aria-label="cut rate"
         value={value}
+        disabled={isExporting}
         onChange={(e) =>
           useAppStore.getState().actions.setCutSubdivision(e.target.value as CutSubdivision)
         }
-        className="bg-zinc-900 rounded border border-zinc-700 px-2 py-1 pointer-coarse:min-h-11 focus:outline-none focus:border-orange-500"
+        className="bg-zinc-900 rounded border border-zinc-700 px-2 py-1 pointer-coarse:min-h-11 focus:outline-none focus:border-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         {OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>

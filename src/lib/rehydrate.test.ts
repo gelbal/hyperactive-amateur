@@ -47,6 +47,7 @@ import {
   validV1MonolithProject,
 } from "./__fixtures__/persistedProjects";
 import { useAppStore } from "../store/useAppStore";
+import { applyClassifiedTag } from "./applyClassifiedTag";
 import type { Clip } from "../types";
 
 async function persistedBlob(bytes: number[], type: string): Promise<Blob> {
@@ -203,6 +204,39 @@ describe("rehydrateFromStorage", () => {
     expect(restored.project.tracks[0].clip?.url).toMatch(/^blob:/);
     // Persisted posterBlob is restored as a fresh object URL.
     expect(restored.project.tracks[0].clip?.posterUrl).toMatch(/^blob:/);
+  });
+
+  it("restores manual tag ownership so auto-tag results keep skipping user-tagged tracks after reload", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    useAppStore.getState().actions.setTrackTag(0, "snare", "user");
+    await saveProject(useAppStore.getState());
+
+    useAppStore.getState().actions.reset();
+    const result = await rehydrateFromStorage();
+    expect(result.ok).toBe(true);
+    expect(useAppStore.getState().session.manuallyTagged).toContain(0);
+
+    // A high-confidence auto-tag result arriving after reload must skip the track.
+    const outcome = applyClassifiedTag(0, "kick", "post-reload classifier result");
+    expect(outcome.applied).toBe(false);
+    expect(useAppStore.getState().project.tracks[0].tag).toBe("snare");
+
+    // The next save keeps user ownership rather than downgrading it to system.
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    expect(meta.tracks[0].tagSource).toBe("user");
+  });
+
+  it("does not restore system-tagged tracks as manually tagged", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    useAppStore.getState().actions.setTrackTag(0, "snare", "system");
+    await saveProject(useAppStore.getState());
+
+    useAppStore.getState().actions.reset();
+    await rehydrateFromStorage();
+
+    expect(useAppStore.getState().session.manuallyTagged).toEqual([]);
+    expect(useAppStore.getState().project.tracks[0].tag).toBe("snare");
   });
 
   it("uses a persisted audio sidecar instead of decoding the video blob as audio", async () => {
