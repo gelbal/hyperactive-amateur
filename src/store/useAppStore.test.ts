@@ -2,6 +2,17 @@
 // ABOUTME: Trivial setters (setIsPlaying, setBpm-in-range, etc.) are not tested directly; they're verified by the components that drive them.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
+const audioLifecycleMocks = vi.hoisted(() => ({
+  noteMicHeld: vi.fn(),
+  noteMicReleased: vi.fn(),
+}));
+
+vi.mock("../lib/audioLifecycle", () => ({
+  noteMicHeld: audioLifecycleMocks.noteMicHeld,
+  noteMicReleased: audioLifecycleMocks.noteMicReleased,
+}));
+
+import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
@@ -10,6 +21,15 @@ describe("useAppStore", () => {
   beforeEach(() => {
     get().actions.setIsExporting(false);
     get().actions.reset();
+    audioLifecycleMocks.noteMicHeld.mockClear();
+    audioLifecycleMocks.noteMicReleased.mockClear();
+  });
+
+  it("tracks transient audio context state in the playback slice", () => {
+    expect(get().playback.audioState).toBe("unknown");
+
+    get().actions.setAudioState("resume-required");
+    expect(get().playback.audioState).toBe("resume-required");
   });
 
   it("setBpm and setSameTierHoldMs clamp to their valid ranges", () => {
@@ -114,6 +134,26 @@ describe("useAppStore", () => {
     expect(get().project.bpm).toBe(90);
     expect(get().project.tracks[0].clip).toBeNull();
     revoke.mockRestore();
+  });
+
+  it("scratch releases a held stream through the lifecycle owner", () => {
+    const tracks = [
+      Object.assign(new EventTarget(), { stop: vi.fn() }),
+      Object.assign(new EventTarget(), { stop: vi.fn() }),
+    ];
+    const stream = {
+      getTracks: () => tracks,
+    } as unknown as MediaStream;
+    registerStreamLifecycle(stream);
+    get().actions.setMedia({ stream, status: "granted", error: null });
+    audioLifecycleMocks.noteMicReleased.mockClear();
+
+    get().actions.scratch();
+
+    expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(tracks[1].stop).toHaveBeenCalledTimes(1);
+    expect(get().media.stream).toBeNull();
   });
 
   it("applyPattern only writes rows whose length matches the current stepCount", () => {

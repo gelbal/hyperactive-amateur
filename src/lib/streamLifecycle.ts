@@ -1,9 +1,10 @@
 // ABOUTME: streamLifecycle — single owner of every transition INTO "suspended".
 // ABOUTME: Three event sources route through here: track.onended, visibilitychange, MediaRecorder.onerror.
-import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { stopPlayback } from "./audio";
+import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
+import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
+import { LOG_EVENTS, logger } from "./logger";
 
 export interface StreamLifecycleHandle {
   detach: () => void;
@@ -54,6 +55,7 @@ export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycle
 export function registerStreamLifecycle(stream: MediaStream): void {
   detachLifecycle(stream);
   lifecycleHandles.set(stream, attachStreamEndedListeners(stream));
+  noteMicHeld();
 }
 
 export function releaseMediaStream(stream: MediaStream): void {
@@ -61,6 +63,7 @@ export function releaseMediaStream(stream: MediaStream): void {
   stopTracks(stream);
   const state = useAppStore.getState();
   if (state.media.stream === stream) {
+    noteMicReleased();
     state.actions.setMedia({ stream: null, status: "granted", error: null });
   }
 }
@@ -70,16 +73,16 @@ export function suspendMediaStream(stream: MediaStream): void {
   stopTracks(stream);
   const state = useAppStore.getState();
   if (state.media.status === "granted" && state.media.stream === stream) {
+    noteMicReleased();
     state.actions.setMedia({ stream: null, status: "suspended", error: null });
   }
 }
 
 // Listen for page-visibility changes. On hidden: stop playback (no saved-
 // position bookkeeping — restart is user-initiated) and suspend the held
-// stream so the reconnect pill takes over. On visible: nudge the AudioContext
-// awake (iOS suspends it when the tab hides); the store stays suspended until
-// the user taps the pill — deliberately, so we don't auto-resume the camera
-// light. Returns a detach function for cleanup on unmount.
+// stream so the reconnect pill takes over. On visible: surface any blocked
+// AudioContext through the resume pill; user activation owns the actual unlock.
+// Returns a detach function for cleanup on unmount.
 export function installVisibilityListener(): () => void {
   const handler = () => {
     if (document.hidden) {
@@ -98,9 +101,11 @@ export function installVisibilityListener(): () => void {
         suspendMediaStream(state.media.stream);
       }
     } else {
-      // Tone.start() is idempotent. Resumes the AudioContext on iOS without
-      // affecting other platforms.
-      void Tone.start();
+      const context = getAudioContext();
+      if (context.state !== "running") {
+        useAppStore.getState().actions.setAudioState("resume-required");
+        logger.warn(LOG_EVENTS.AUDIO_RESUME_REQUIRED, { state: context.state });
+      }
     }
   };
   document.addEventListener("visibilitychange", handler);

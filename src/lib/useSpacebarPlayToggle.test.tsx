@@ -1,10 +1,23 @@
 // ABOUTME: useSpacebarPlayToggle tests — start gating and editable-target suppression.
-import { render } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const togglePlayback = vi.fn();
+const audioLifecycleMocks = vi.hoisted(() => ({
+  AudioUnavailableError: class TestAudioUnavailableError extends Error {
+    constructor(message = "Audio unavailable") {
+      super(message);
+      this.name = "AudioUnavailableError";
+    }
+  },
+}));
+
 vi.mock("./audio", () => ({
   togglePlayback: (...args: unknown[]) => togglePlayback(...args),
+}));
+
+vi.mock("./audioLifecycle", () => ({
+  AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
 import { useSpacebarPlayToggle } from "./useSpacebarPlayToggle";
@@ -17,8 +30,14 @@ function Harness({ withInput = false }: { withInput?: boolean }) {
 
 describe("useSpacebarPlayToggle", () => {
   beforeEach(() => {
-    togglePlayback.mockClear();
+    togglePlayback.mockReset();
+    togglePlayback.mockResolvedValue(undefined);
+    useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it("toggles on Space while idle and ignores editable targets", () => {
@@ -49,5 +68,15 @@ describe("useSpacebarPlayToggle", () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
 
     expect(togglePlayback).not.toHaveBeenCalled();
+  });
+
+  it("swallows audio-unavailable Space rejections", async () => {
+    togglePlayback.mockRejectedValueOnce(new audioLifecycleMocks.AudioUnavailableError());
+    render(<Harness />);
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+
+    expect(togglePlayback).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
   });
 });

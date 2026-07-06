@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 import { triggerTrackNow } from "../lib/audio";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { runAudibleAction } from "../lib/audibleActionRunner";
 
 const FLASH_MS = 150;
 const TRACK_COUNT = 8;
@@ -32,7 +33,7 @@ function Pad({ trackId }: PadProps) {
       aria-label={`pad ${trackId + 1}`}
       data-flashing={flashing}
       disabled={!canStart}
-      onClick={() => void triggerTrackNow(trackId)}
+      onClick={() => runAudibleAction(triggerTrackNow(trackId))}
       className={
         "relative aspect-square rounded-lg border overflow-hidden transition-colors " +
         (!canStart

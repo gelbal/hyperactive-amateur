@@ -50,6 +50,7 @@ export function createInitialState(): AppState {
     },
     playback: {
       isPlaying: false,
+      audioState: "unknown",
       isExporting: false,
       currentStep: 0,
       activeTriggers: [],

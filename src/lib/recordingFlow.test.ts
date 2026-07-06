@@ -3,8 +3,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({
-  ensureAudioStarted: vi.fn(),
-  getAudioContext: vi.fn(() => ({})),
+  context: {
+    state: "running" as AudioContextState,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  },
+  getAudioContext: vi.fn(() => audioMocks.context),
+}));
+
+const toneMocks = vi.hoisted(() => ({
+  start: vi.fn(),
 }));
 
 const mediaMocks = vi.hoisted(() => ({
@@ -18,8 +26,11 @@ const recorderMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./audio", () => ({
-  ensureAudioStarted: audioMocks.ensureAudioStarted,
   getAudioContext: audioMocks.getAudioContext,
+}));
+
+vi.mock("tone", () => ({
+  start: toneMocks.start,
 }));
 
 vi.mock("./media", () => ({
@@ -63,6 +74,7 @@ vi.mock("./audioBufferSlice", () => ({
 
 import { cancelCurrentRecording, recordIntoTrack } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
+import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -78,10 +90,12 @@ function makeStream(): MediaStream {
 
 describe("recordingFlow", () => {
   beforeEach(() => {
+    __resetAudioLifecycleForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
-    audioMocks.ensureAudioStarted.mockReset();
-    audioMocks.ensureAudioStarted.mockResolvedValue(undefined);
+    audioMocks.context.state = "running";
+    toneMocks.start.mockReset();
+    toneMocks.start.mockResolvedValue(undefined);
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
@@ -95,7 +109,7 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
@@ -106,14 +120,27 @@ describe("recordingFlow", () => {
     await expect(recordIntoTrack(0)).resolves.toBe(false);
 
     expect(useAppStore.getState().recording.state).toBe("idle");
-    expect(audioMocks.ensureAudioStarted).not.toHaveBeenCalled();
+    expect(toneMocks.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
 
+  it("surfaces rejected Tone.start with pinned audio copy and resets recording state", async () => {
+    const onError = vi.fn();
+    toneMocks.start.mockRejectedValue(new Error("resume denied"));
+    mediaMocks.acquireRecordingStream.mockRejectedValue(new Error("media should not start"));
+
+    await expect(recordIntoTrack(3, { onError })).resolves.toBe(false);
+
+    expect(toneMocks.start).toHaveBeenCalledTimes(1);
+    expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
+    expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
   it("claims countdown state before awaiting audio or media startup", async () => {
     const audioStarted = makeDeferred();
-    audioMocks.ensureAudioStarted.mockReturnValue(audioStarted.promise);
+    toneMocks.start.mockReturnValue(audioStarted.promise);
 
     const promise = recordIntoTrack(2);
 

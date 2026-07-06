@@ -89,8 +89,12 @@ export interface ProjectState {
   tracks: Track[];
 }
 
+export type AudioState = "unknown" | "running" | "resume-required";
+
 export interface PlaybackState {
   isPlaying: boolean;
+  // Transient AudioContext health for resume-required UI; never persisted.
+  audioState: AudioState;
   // True while a real-time export render owns the Transport. User playback
   // controls are ignored so they cannot silently corrupt the captured output.
   isExporting: boolean;

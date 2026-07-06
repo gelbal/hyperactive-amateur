@@ -27,6 +27,13 @@ export const LOG_EVENTS = {
   SUGGEST_MISS: "suggest.miss",
   SUGGEST_RETRY: "suggest.retry",
   AUTOSAVE_ERROR: "autosave.error",
+  AUDIO_SESSION_ERROR: "audio.session-error",
+  AUDIO_INTERRUPTED: "audio.interrupted",
+  AUDIO_RESUME_REQUIRED: "audio.resume-required",
+  AUDIO_ACTION_ERROR: "audio.action-error",
+  RECORDING_INTERRUPTED: "recording.interrupted",
+  VIDEO_DRAW_ERROR: "video.draw-error",
+  AUTOSAVE_FLUSH: "autosave.flush",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
 

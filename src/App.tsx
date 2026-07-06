@@ -15,6 +15,7 @@ import { PadGrid } from "./components/PadGrid";
 import { selectClipCount, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
+import { initAudioLifecycle } from "./lib/audioLifecycle";
 import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
@@ -32,6 +33,7 @@ export function App() {
     initTransport();
     const detachInstallPrompt = captureInstallPrompt();
     void persistStorage();
+    const detachAudioLifecycle = initAudioLifecycle();
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
     let allowAutoSave = true;
@@ -56,6 +58,7 @@ export function App() {
     return () => {
       cancelled = true;
       detachInstallPrompt();
+      detachAudioLifecycle();
       detachVisibility();
       stopAutoSave();
     };

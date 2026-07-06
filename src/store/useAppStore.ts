@@ -13,6 +13,7 @@ import type {
 } from "../types";
 import { clearProject } from "../lib/persistence";
 import { acquireRecordingStream } from "../lib/media";
+import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
   AUDIO_DEVICE_STORAGE_KEY,
   createInitialState,
@@ -63,6 +64,7 @@ export interface AppActions {
   setTrackVolume: (trackId: number, volume: number) => void;
   setTrackMuted: (trackId: number, muted: boolean) => void;
   setIsPlaying: (playing: boolean) => void;
+  setAudioState: (audioState: AppState["playback"]["audioState"]) => void;
   setIsExporting: (exporting: boolean) => void;
   setCurrentStep: (step: number) => void;
   markTriggered: (trackId: number) => void;
@@ -249,6 +251,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
     setIsPlaying: (playing) =>
       set((state) => ({ playback: { ...state.playback, isPlaying: playing } })),
+
+    setAudioState: (audioState) =>
+      set((state) => ({ playback: { ...state.playback, audioState } })),
 
     setIsExporting: (exporting) =>
       set((state) => ({ playback: { ...state.playback, isExporting: exporting } })),
@@ -541,7 +546,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }
       // Stop any held media stream so getUserMedia is re-armed cleanly.
       if (state.media.stream) {
-        for (const t of state.media.stream.getTracks()) t.stop();
+        releaseMediaStream(state.media.stream);
       }
       const next = createInitialState();
       set({

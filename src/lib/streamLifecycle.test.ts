@@ -2,9 +2,23 @@
 // ABOUTME: Uses minimal EventTarget-based stand-ins for MediaStream / MediaStreamTrack since jsdom lacks them.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+const audioLifecycleMocks = vi.hoisted(() => ({
+  noteMicHeld: vi.fn(),
+  noteMicReleased: vi.fn(),
+}));
+const toneMocks = vi.hoisted(() => ({
+  rawContext: { state: "suspended" as AudioContextState },
+}));
+
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => ({ stop: vi.fn() })),
+  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
+}));
+
+vi.mock("./audioLifecycle", () => ({
+  noteMicHeld: audioLifecycleMocks.noteMicHeld,
+  noteMicReleased: audioLifecycleMocks.noteMicReleased,
 }));
 
 import * as Tone from "tone";
@@ -12,8 +26,12 @@ import {
   attachStreamEndedListeners,
   installVisibilityListener,
   onMediaRecorderError,
+  registerStreamLifecycle,
+  releaseMediaStream,
+  suspendMediaStream,
 } from "./streamLifecycle";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
+import { LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 
 class FakeTrack extends EventTarget {
@@ -51,7 +69,40 @@ function setGrantedWithStream(stream: MediaStream) {
 describe("streamLifecycle", () => {
   beforeEach(() => {
     __resetExportSessionForTesting();
+    audioLifecycleMocks.noteMicHeld.mockClear();
+    audioLifecycleMocks.noteMicReleased.mockClear();
+    toneMocks.rawContext.state = "suspended";
+    vi.mocked(Tone.start).mockClear();
     useAppStore.getState().actions.reset();
+  });
+
+  describe("audio session mic ownership", () => {
+    it("marks the mic held when a stream lifecycle is registered", () => {
+      const { stream } = makeStream();
+
+      registerStreamLifecycle(stream);
+
+      expect(audioLifecycleMocks.noteMicHeld).toHaveBeenCalledTimes(1);
+      expect(audioLifecycleMocks.noteMicReleased).not.toHaveBeenCalled();
+    });
+
+    it("marks the mic released on intentional stream release", () => {
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+
+      releaseMediaStream(stream);
+
+      expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks the mic released when a stream is suspended", () => {
+      const { stream } = makeStream();
+      setGrantedWithStream(stream);
+
+      suspendMediaStream(stream);
+
+      expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("attachStreamEndedListeners (track.onended)", () => {
@@ -120,7 +171,8 @@ describe("streamLifecycle", () => {
       detach();
     });
 
-    it("on visible: nudges Tone.start() and leaves a suspended store alone (user must tap to reconnect)", () => {
+    it("on visible: marks audio resume required without starting Tone", () => {
+      const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
         stream: null,
         status: "suspended",
@@ -134,7 +186,11 @@ describe("streamLifecycle", () => {
       });
       document.dispatchEvent(new Event("visibilitychange"));
 
-      expect(Tone.start).toHaveBeenCalled();
+      expect(Tone.start).not.toHaveBeenCalled();
+      expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+      expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_RESUME_REQUIRED, {
+        state: "suspended",
+      });
       // Status stays suspended — auto-resume would re-light the camera.
       expect(useAppStore.getState().media.status).toBe("suspended");
       detach();

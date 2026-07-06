@@ -1,5 +1,5 @@
 // ABOUTME: Viewport tests — gate-state transitions across idle/denied/granted; recording station mount.
-import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, act, cleanup, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("tone", () => ({
@@ -11,8 +11,12 @@ vi.mock("tone", () => ({
 }));
 
 const requestMedia = vi.fn();
+const ensureAudioRunning = vi.fn();
 vi.mock("../lib/media", () => ({
   requestMedia: () => requestMedia(),
+}));
+vi.mock("../lib/audioLifecycle", () => ({
+  ensureAudioRunning: () => ensureAudioRunning(),
 }));
 
 import { Viewport } from "./Viewport";
@@ -21,6 +25,10 @@ import { useAppStore } from "../store/useAppStore";
 describe("Viewport", () => {
   beforeEach(() => {
     requestMedia.mockReset();
+    ensureAudioRunning.mockReset();
+    ensureAudioRunning.mockImplementation(async () => {
+      useAppStore.getState().actions.setAudioState("running");
+    });
     useAppStore.getState().actions.reset();
     // jsdom doesn't ship Element#requestFullscreen by default — stub it so
     // the capability guard (M3-2) treats the platform as supporting fullscreen
@@ -119,6 +127,53 @@ describe("Viewport", () => {
     fireEvent.click(pill);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it('resume-required: audio pill shows exactly "Audio interrupted — tap to resume." and stacks with reconnect pill', () => {
+    render(<Viewport />);
+    expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
+    cleanup();
+
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+    });
+    render(<Viewport />);
+
+    expect(screen.getByRole("button", { name: "Audio interrupted — tap to resume." })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeInTheDocument();
+  });
+
+  it("resume-required: tapping the audio pill resumes audio and hides it", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+    });
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio interrupted — tap to resume." }));
+
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
+    });
+  });
+
+  it("resume-required: failed resume keeps the audio pill and shows the blocked hint", async () => {
+    ensureAudioRunning.mockRejectedValueOnce(new Error("still blocked"));
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+    });
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio interrupted — tap to resume." }));
+
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Still blocked — try the volume keys or reopen the app.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Audio interrupted — tap to resume." })).toBeInTheDocument();
   });
 
   it("idle media + some empty tracks + station dismissed: gate hidden, Record more pill is visible", () => {

@@ -1,6 +1,7 @@
 // ABOUTME: Tests for audio.ts trigger gating — showVideo gate, mute respected, fallback synth.
 // ABOUTME: Tone is fully mocked so JSDOM never touches a real audio context.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createAudioContextStub, type AudioContextStub } from "../test-utils/audioContextStub";
 
 type RepeatCb = (time: number) => void;
 const transportMock = {
@@ -20,6 +21,7 @@ vi.mock("./videoEngine", () => ({
 }));
 
 const drawMock = { schedule: vi.fn((fn: () => void) => fn()) };
+let audioContextStub: AudioContextStub;
 
 interface SynthMock {
   triggerAttackRelease: ReturnType<typeof vi.fn>;
@@ -59,7 +61,7 @@ vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => transportMock),
   getDraw: vi.fn(() => drawMock),
-  getContext: vi.fn(() => ({ rawContext: {} })),
+  getContext: vi.fn(() => ({ rawContext: audioContextStub })),
   MembraneSynth: vi.fn(function MembraneSynth() {
     return makeSynth();
   }),
@@ -72,6 +74,10 @@ vi.mock("tone", () => ({
 import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import * as Tone from "tone";
+import {
+  __resetPendingAudibleClaimForTesting,
+  canStartAudibleAction,
+} from "./audibleActionGate";
 
 function makeClip() {
   return {
@@ -85,16 +91,36 @@ function makeClip() {
     posterUrl: null,  };
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("audio: per-step trigger logic", () => {
   beforeEach(() => {
+    audioContextStub = createAudioContextStub();
+    audioContextStub.setState("running");
     __resetAudioForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     transportMock.scheduleRepeat.mockClear();
+    transportMock.start.mockClear();
+    transportMock.stop.mockClear();
+    transportMock.clear.mockClear();
     synthInstances.length = 0;
     playerInstances.length = 0;
     videoEngineTrigger.mockClear();
     vi.mocked(Tone.start).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetPendingAudibleClaimForTesting();
   });
 
   it("clipped track: fires player + videoEngine; showVideo=false skips video; muted skips both", () => {
@@ -135,6 +161,105 @@ describe("audio: per-step trigger logic", () => {
     await triggerTrackNow(2);
     expect(Tone.start).toHaveBeenCalled();
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+  });
+
+  it("does not mark playback playing when audio never reaches running", async () => {
+    vi.useFakeTimers();
+    audioContextStub.setState("suspended");
+    initTransport();
+
+    const promise = togglePlayback();
+    const rejection = expect(promise).rejects.toMatchObject({ name: "AudioUnavailableError" });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await rejection;
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("holds the audible gate while playback waits for audio unlock", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = togglePlayback();
+
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+    expect(transportMock.start).not.toHaveBeenCalled();
+
+    audioStarted.resolve();
+    await promise;
+
+    expect(Tone.start).toHaveBeenCalledTimes(1);
+    expect(transportMock.start).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().playback.isPlaying).toBe(true);
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+
+    useAppStore.getState().actions.setIsPlaying(false);
+
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+  });
+
+  it("holds the audible gate while a pad trigger waits for audio unlock", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = triggerTrackNow(2);
+
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+    expect(synthInstances[2].triggerAttackRelease).not.toHaveBeenCalled();
+
+    audioStarted.resolve();
+    await promise;
+
+    expect(Tone.start).toHaveBeenCalledTimes(1);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+  });
+
+  it("ignores a second playback toggle while the first is starting", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const first = togglePlayback();
+    const second = togglePlayback();
+
+    expect(Tone.start).toHaveBeenCalledTimes(1);
+
+    audioStarted.resolve();
+    await Promise.all([first, second]);
+
+    expect(transportMock.start).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().playback.isPlaying).toBe(true);
+
+    useAppStore.getState().actions.setIsPlaying(false);
+
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+  });
+
+  it("aborts playback start if recording becomes active during audio unlock", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = togglePlayback();
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+
+    audioStarted.resolve();
+    await promise;
+
+    expect(Tone.start).toHaveBeenCalledTimes(1);
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+
+    useAppStore.getState().actions.setRecordingState("idle", null);
+
+    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
   });
 
   it("ignores manual playback controls while export owns the Transport", async () => {

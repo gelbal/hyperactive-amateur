@@ -2,7 +2,8 @@
 // ABOUTME: Also drives the full real-time render: Transport + MediaRecorder + progress + Blob.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { ensureAudioStarted, stopPlayback } from "./audio";
+import { stopPlayback } from "./audio";
+import { ensureAudioRunning } from "./audioLifecycle";
 import { timeoutAfter, waitMs } from "./async";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { registerExportSession } from "./exportSession";
@@ -89,7 +90,7 @@ export async function exportSong(
     ownsExportSession = true;
     useAppStore.getState().actions.setIsExporting(true);
 
-    await ensureAudioStarted();
+    await ensureAudioRunning();
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
       mimeType,
