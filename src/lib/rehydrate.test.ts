@@ -588,21 +588,24 @@ describe("rehydrateFromStorage", () => {
 
     const roundTripResult = await rehydrateFromStorage();
 
+    // The repair state is retryable: once the container decodes again, the
+    // clip heals and the repair-owned mute is released.
     expect(roundTripResult.ok).toBe(true);
-    expect(roundTripResult.degraded).toBe(true);
+    expect(roundTripResult.degraded).toBe(false);
     const roundTrippedTrack = useAppStore.getState().project.tracks[0];
-    expect(roundTrippedTrack.clip?.audioBuffer).toBeNull();
-    expect(roundTrippedTrack.clip?.audioStatus).toBe("unavailable");
+    expect(roundTrippedTrack.clip?.audioBuffer).toBe(fakeAudioBuffer);
+    expect(roundTrippedTrack.clip?.audioStatus).toBe("ok");
     expect(roundTrippedTrack.clip?.url).toMatch(/^blob:/);
-    expect(roundTrippedTrack.mutedByRepair).toBe(true);
+    expect(roundTrippedTrack.muted).toBe(false);
+    expect(roundTrippedTrack.mutedByRepair).toBe(false);
     expect(roundTrippedTrack.tag).toBe("kick");
     expect(roundTrippedTrack.steps[3]).toBe(true);
-    expect(audioMocks.decodeAudioData).not.toHaveBeenCalled();
+    expect(audioMocks.decodeAudioData).toHaveBeenCalled();
   });
 
   it("keeps a user-owned mute on a repaired track user-owned across reload", async () => {
     // A repaired track the user re-muted: muted persists true with no repair
-    // marker, so a later re-record must not clear their mute.
+    // marker, so neither a re-record nor an audio heal may clear their mute.
     useAppStore
       .getState()
       .actions.setTrackClip(0, { ...(await makeClip()), audioBuffer: null, audioStatus: "unavailable" });
@@ -614,7 +617,9 @@ describe("rehydrateFromStorage", () => {
 
     expect(result.ok).toBe(true);
     const track = useAppStore.getState().project.tracks[0];
-    expect(track.clip?.audioStatus).toBe("unavailable");
+    // The sidecar was still present and decodable, so the clip heals — but
+    // the mute belongs to the user and stays.
+    expect(track.clip?.audioStatus).toBe("ok");
     expect(track.muted).toBe(true);
     expect(track.mutedByRepair).toBe(false);
   });
@@ -626,6 +631,9 @@ describe("rehydrateFromStorage", () => {
     const meta = await storedMeta();
     await del(meta.tracks[0].audioBlobRef);
     useAppStore.getState().actions.reset();
+    // No sidecar record left and the container is undecodable — repair state.
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("container has no decodable audio"));
 
     const result = await rehydrateFromStorage();
 
@@ -638,7 +646,7 @@ describe("rehydrateFromStorage", () => {
     expect(track.mutedByRepair).toBe(false);
   });
 
-  it("routes a missing audio sidecar reference through the audio repair state", async () => {
+  it("routes a missing audio sidecar reference through the audio repair state when no decode works", async () => {
     useAppStore.getState().actions.setTrackClip(0, await makeClip());
     useAppStore.getState().actions.setTrackTag(0, "kick");
     await saveProject(useAppStore.getState());
@@ -646,6 +654,9 @@ describe("rehydrateFromStorage", () => {
     const missingRef = meta.tracks[0].audioBlobRef;
     await del(missingRef);
     useAppStore.getState().actions.reset();
+    // The sidecar record is gone AND the video container is undecodable.
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("container has no decodable audio"));
 
     const result = await rehydrateFromStorage();
 
@@ -664,5 +675,120 @@ describe("rehydrateFromStorage", () => {
     expect(repairedTrack.mutedByRepair).toBe(true);
     expect(repairedTrack.tag).toBe("kick");
     expect(await loadRecoveryBackup()).not.toBeNull();
+  });
+
+  it("keeps the audio sidecar reference through a decode failure so a later save cannot orphan it", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("transient decode failure"));
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("unavailable");
+    // The undecoded sidecar bytes stay on the clip — a transient failure must
+    // not sever the reference that makes the audio recoverable.
+    expect(isBlobLike(track.clip?.audioBlob)).toBe(true);
+
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    expect(meta.tracks[0].audioStatus).toBe("unavailable");
+    expect(meta.tracks[0].audioBlobRef).toBeDefined();
+    expect(await get(meta.tracks[0].audioBlobRef)).toBeDefined();
+  });
+
+  it("retries decoding a persisted-unavailable clip and heals it when decode succeeds again", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("transient decode failure"));
+    await rehydrateFromStorage();
+    // Persist the repair state (unavailable + repair-owned mute + kept sidecar).
+    expect(useAppStore.getState().project.tracks[0].mutedByRepair).toBe(true);
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockResolvedValue(audioMocks.sidecarAudioBuffer);
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(false);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("ok");
+    expect(track.clip?.audioBuffer).toBe(audioMocks.sidecarAudioBuffer);
+    // The repair owned this mute; healing releases it.
+    expect(track.muted).toBe(false);
+    expect(track.mutedByRepair).toBe(false);
+    // The heal is persisted by the load itself — autosave only reacts to
+    // future edits, so without this write the repair would repeat every load.
+    const healedMeta = await storedMeta();
+    expect(healedMeta.tracks[0].audioStatus).toBe("ok");
+    expect(healedMeta.tracks[0].muted).toBe(false);
+    expect(healedMeta.tracks[0].mutedByRepair).toBe(false);
+    expect(healedMeta.tracks[0].audioBlobRef).toBeDefined();
+  });
+
+  it("hydrates a still-failing persisted-unavailable clip quietly instead of re-warning every load", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("transient decode failure"));
+    await rehydrateFromStorage();
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+
+    const result = await rehydrateFromStorage();
+
+    // The state is already persisted and surfaced by TrackInfo's hint; a
+    // known-unavailable clip must not re-trigger the recovery banner (and the
+    // autosave pause) on every session.
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(false);
+    expect(result.warnings).toEqual([]);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("unavailable");
+    expect(isBlobLike(track.clip?.audioBlob)).toBe(true);
+    expect(track.muted).toBe(true);
+    expect(track.mutedByRepair).toBe(true);
+  });
+
+  it("regenerates a missing audio sidecar when the clip container still decodes", async () => {
+    const richBuffer = {
+      duration: 1,
+      sampleRate: 48000,
+      numberOfChannels: 1,
+      length: 48,
+      getChannelData: () => new Float32Array(48),
+    } as unknown as AudioBuffer;
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    await del(meta.tracks[0].audioBlobRef);
+    useAppStore.getState().actions.reset();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockResolvedValue(richBuffer);
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip?.audioStatus).toBe("ok");
+    expect(track.clip?.audioBuffer).toBe(richBuffer);
+    expect(isBlobLike(track.clip?.audioBlob)).toBe(true);
+    expect(track.clip?.audioBlob?.type).toBe("audio/wav");
+
+    // The load itself persists the regenerated sidecar (no manual save):
+    // otherwise the dangling audioBlobRef and the container re-decode would
+    // repeat on every load, and never survive to browsers that cannot heal.
+    const healedMeta = await storedMeta();
+    expect(healedMeta.tracks[0].audioStatus).toBe("ok");
+    expect(healedMeta.tracks[0].audioBlobRef).toBeDefined();
+    expect(await get(healedMeta.tracks[0].audioBlobRef)).toBeDefined();
   });
 });
