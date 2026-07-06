@@ -261,7 +261,7 @@ describe("videoEngine integration", () => {
     expect(toneHarness.draw.schedule.mock.calls[0][1]).toBeCloseTo(0.05, 6);
   });
 
-  it("defers cut-boundary display changes until Draw reaches the audible boundary", () => {
+  it("defers cut-boundary display changes until the paint clock reaches the audible boundary", () => {
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
     setClipForTrack(1, makeClip(1));
@@ -278,8 +278,62 @@ describe("videoEngine integration", () => {
     toneHarness.transport.fireRepeat(0, 1.0);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
 
-    toneHarness.draw.advanceTo(1.0);
+    // A paint just before the boundary must not cut early…
+    const early = makeCanvasContext();
+    drawCurrentFrame(early, 0.99);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+
+    // …and the first paint at/after the boundary commits the cut.
+    const atBoundary = makeCanvasContext();
+    drawCurrentFrame(atBoundary, 1.0);
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("commits the boundary winner from the paint loop even when Draw callbacks are dropped", () => {
+    // Tone.Draw silently expires callbacks that are more than its expiration
+    // window in the past — a stalled rAF (mobile jank, decode pressure) used
+    // to drop the display commit entirely, leaving the canvas stuck or black
+    // while audio continued. The paint loop must be the commit authority.
+    initVideoEngine();
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+
+    trigger(0, 0.5);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    // Simulate the stall: Draw never advances. A very late paint still lands
+    // the cut instead of dropping it.
+    const latePaint = makeCanvasContext();
+    drawCurrentFrame(latePaint, 1.7);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("a stalled paint catches up to the latest boundary decision, not a stale one", () => {
+    useAppStore.getState().actions.setBpm(250);
+    initVideoEngine();
+    setVideoCutSubdivision("16n");
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    setClipForTrack(2, makeClip(2));
+    useAppStore.getState().actions.setTrackTag(0, "vocal");
+    useAppStore.getState().actions.setTrackTag(1, "vocal");
+    useAppStore.getState().actions.setTrackTag(2, "vocal");
+
+    trigger(0, 0.2);
+    useAppStore.getState().actions.setIsPlaying(true);
+    trigger(1, 1.0);
+    trigger(2, 2.0);
+    toneHarness.draw.reset();
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    toneHarness.transport.fireRepeat(0, 2.0);
+
+    const catchUpPaint = makeCanvasContext();
+    drawCurrentFrame(catchUpPaint, 2.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(2);
   });
 
   it("ducks the next fast boundary against the pending committed clip", () => {
@@ -303,12 +357,13 @@ describe("videoEngine integration", () => {
 
     toneHarness.transport.fireRepeat(0, 1.0);
     toneHarness.transport.fireRepeat(0, 1.06);
-    toneHarness.draw.advanceTo(1.06);
+    const paint = makeCanvasContext();
+    drawCurrentFrame(paint, 1.06);
 
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
   });
 
-  it("ignores a stale Draw-scheduled boundary commit after reset", () => {
+  it("ignores a stale pending boundary commit after reset", () => {
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
     setClipForTrack(1, makeClip(1));
@@ -325,6 +380,8 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()).toBeNull();
 
     toneHarness.draw.advanceTo(1.0);
+    const paint = makeCanvasContext();
+    drawCurrentFrame(paint, 1.0);
     expect(__getCurrentlyDisplayedForTesting()).toBeNull();
   });
 
@@ -427,7 +484,8 @@ describe("videoEngine integration", () => {
     toneHarness.transport.fireRepeat(0, 1.0);
     expect(__getCurrentlyDisplayedForTesting()).toBeNull();
 
-    toneHarness.draw.advanceTo(1.0);
+    const paint = makeCanvasContext();
+    drawCurrentFrame(paint, 1.0);
 
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
     expect(playback.seek).toHaveBeenCalledTimes(1);
@@ -463,13 +521,14 @@ describe("videoEngine integration", () => {
     trigger(1, 1.0);
     toneHarness.draw.reset();
     toneHarness.transport.fireRepeat(0, 1.0);
-    toneHarness.draw.advanceTo(1.0);
+    const paint = makeCanvasContext();
+    drawCurrentFrame(paint, 1.0);
 
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
     expect(loserPlayback.pause).toHaveBeenCalled();
   });
 
-  it("pre-seeks the boundary winner in the Transport callback before Draw commits", () => {
+  it("pre-seeks the boundary winner in the Transport callback before the paint commit", () => {
     useAppStore.getState().actions.setBpm(120);
     initVideoEngine();
     setClipForTrack(0, makeClip(0));
@@ -493,9 +552,12 @@ describe("videoEngine integration", () => {
     expect(playback.seek).toHaveBeenCalledTimes(1);
     expect(playback.seek).toHaveBeenCalledWith(0);
     expect(playback.play).toHaveBeenCalledTimes(1);
-    expect(toneHarness.draw.pendingTimes()).toEqual([target]);
+    // The display commit rides the paint loop, not Tone.Draw — no pending
+    // Draw event may exist for it (Draw drops late callbacks silently).
+    expect(toneHarness.draw.pendingTimes()).toEqual([]);
 
-    toneHarness.draw.advanceTo(target);
+    const paint = makeCanvasContext();
+    drawCurrentFrame(paint, target);
 
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
     expect(playback.seek).toHaveBeenCalledTimes(1);
