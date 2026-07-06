@@ -38,6 +38,7 @@ describe("autoSave error reporting", () => {
   it("logs a structured autosave error when saveNow rejects", async () => {
     persistenceMock.saveProject.mockRejectedValueOnce(new Error("quota exceeded"));
 
+    startAutoSave();
     await expect(saveNow()).rejects.toThrow("quota exceeded");
 
     const entry = getLogs().find((log) => log.event === LOG_EVENTS.AUTOSAVE_ERROR);

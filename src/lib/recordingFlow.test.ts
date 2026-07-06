@@ -263,7 +263,7 @@ describe("recordingFlow", () => {
     posterMocks.captureFirstFrame.mockResolvedValue(null);
     autoSaveMocks.flushPending.mockReset();
     autoSaveMocks.saveNow.mockReset();
-    autoSaveMocks.saveNow.mockResolvedValue(undefined);
+    autoSaveMocks.saveNow.mockResolvedValue(true);
     installMocks.requestPersistence.mockReset();
     installMocks.requestPersistence.mockResolvedValue("best-effort");
     __resetPersistenceRequestForTesting();
@@ -717,6 +717,23 @@ describe("recordingFlow", () => {
     await advanceCountdownToDeadline();
     await expect(third).resolves.toBe(true);
     expect(installMocks.requestPersistence).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the clip in memory and skips the persistence request when the immediate save is paused", async () => {
+    vi.useFakeTimers();
+    // saveNow resolves false when the degraded-load autosave pause is active:
+    // nothing was written, so no durable-storage request should anchor to it.
+    autoSaveMocks.saveNow.mockResolvedValue(false);
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(installMocks.requestPersistence).not.toHaveBeenCalled();
   });
 
   it("keeps the clip and returns idle when saveNow rejects", async () => {

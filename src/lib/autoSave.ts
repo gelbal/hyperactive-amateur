@@ -76,10 +76,17 @@ function scheduleSave(): void {
   }, DEBOUNCE_MS);
 }
 
-export function saveNow(): Promise<void> {
+// Immediate save for durability boundaries (e.g. a freshly captured clip).
+// Respects the same allow-gate as debounced autosave: while autosave is
+// stopped or paused (degraded loads), the write is skipped so the repaired
+// state cannot overwrite the protected original. Resolves false for a skipped
+// save so callers do not treat it as persisted; the state stays in memory and
+// the next save after autosave resumes persists everything.
+export function saveNow(): Promise<boolean> {
+  if (!unsubscribe) return Promise.resolve(false);
   clearPendingTimer();
   dirtyWhileRecording = false;
-  return requestSave();
+  return requestSave().then(() => true);
 }
 
 export function flushPending(): boolean {
