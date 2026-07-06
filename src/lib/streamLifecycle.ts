@@ -40,11 +40,20 @@ function stopTracks(stream: MediaStream): void {
   }
 }
 
-// Mark the store as suspended IF and only IF it currently holds `stream` in a
-// "granted" status. A different stream having been acquired since (e.g. the
-// user re-flipped the camera) means the listener fired on a stale handle and
-// should not touch the store.
+// A stream is current when the store holds exactly it in a "granted" status.
+// A different stream having been acquired since (e.g. the user re-flipped the
+// camera) means the event fired on a stale handle: it must neither touch the
+// store nor interrupt a recording running on the newer stream.
+function isCurrentStream(stream: MediaStream): boolean {
+  const media = useAppStore.getState().media;
+  return media.status === "granted" && media.stream === stream;
+}
+
+// Mark the store as suspended IF and only IF `stream` is current — checked
+// BEFORE the recording interrupt so check+interrupt+suspend act as one
+// current-stream-only operation.
 function transitionToSuspended(stream: MediaStream): void {
+  if (!isCurrentStream(stream)) return;
   interruptActiveRecording("interrupted");
   suspendMediaStream(stream);
 }
@@ -74,6 +83,7 @@ function scheduleMutedSuspension(stream: MediaStream): void {
 }
 
 function onTrackMuted(stream: MediaStream): void {
+  if (!isCurrentStream(stream)) return;
   if (interruptActiveRecording("interrupted")) {
     clearPendingMuteSuspension(stream);
     suspendMediaStream(stream);

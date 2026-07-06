@@ -906,6 +906,10 @@ describe("recordingFlow", () => {
     const onError = vi.fn();
     const { stream, tracks } = makeLifecycleStream();
     registerStreamLifecycle(stream);
+    // The store must hold the stream as current: stale-stream mute events
+    // deliberately no longer interrupt a recording (they only fire the
+    // interrupt when the event's stream is the held one).
+    setGrantedWithStream(stream);
     recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
 
     const promise = recordIntoTrack(2, { stream, onError });

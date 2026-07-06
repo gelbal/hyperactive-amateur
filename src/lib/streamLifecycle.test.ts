@@ -159,6 +159,51 @@ describe("streamLifecycle", () => {
       expect(media.stream).toBe(s2);
     });
 
+    it("stale stream ended does not interrupt a recording on the current stream", () => {
+      const { stream: s1, tracks } = makeStream();
+      const { stream: s2 } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      // Listen on s1 but the store ends up holding s2 (e.g. user re-flipped).
+      attachStreamEndedListeners(s1);
+      setGrantedWithStream(s2);
+
+      tracks[0].fireEnded();
+
+      expect(interrupt).not.toHaveBeenCalled();
+      const media = useAppStore.getState().media;
+      expect(media.status).toBe("granted");
+      expect(media.stream).toBe(s2);
+    });
+
+    it("stale stream mute does not interrupt a recording on the current stream", () => {
+      vi.useFakeTimers();
+      try {
+        const { stream: s1, tracks } = makeStream();
+        const { stream: s2 } = makeStream();
+        const interrupt = vi.fn();
+        registerRecordingInterruptHandler({
+          isActive: () => true,
+          interrupt,
+        });
+        attachStreamEndedListeners(s1);
+        setGrantedWithStream(s2);
+
+        tracks[1].fireMute();
+        vi.advanceTimersByTime(250);
+
+        expect(interrupt).not.toHaveBeenCalled();
+        const media = useAppStore.getState().media;
+        expect(media.status).toBe("granted");
+        expect(media.stream).toBe(s2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("detach() removes listeners — subsequent ended events are inert", () => {
       const { stream, tracks } = makeStream();
       setGrantedWithStream(stream);
@@ -953,6 +998,24 @@ describe("streamLifecycle", () => {
 
       onMediaRecorderError(s1, new Error("stream gone"));
 
+      expect(useAppStore.getState().media.status).toBe("granted");
+      expect(useAppStore.getState().media.stream).toBe(s2);
+    });
+
+    it("does not interrupt a recording on the current stream for a stale stream's error", () => {
+      const { stream: s1, tracks } = makeStream();
+      for (const t of tracks) t.readyState = "ended";
+      const { stream: s2 } = makeStream();
+      const interrupt = vi.fn();
+      registerRecordingInterruptHandler({
+        isActive: () => true,
+        interrupt,
+      });
+      setGrantedWithStream(s2);
+
+      onMediaRecorderError(s1, new Error("stream gone"));
+
+      expect(interrupt).not.toHaveBeenCalled();
       expect(useAppStore.getState().media.status).toBe("granted");
       expect(useAppStore.getState().media.stream).toBe(s2);
     });
