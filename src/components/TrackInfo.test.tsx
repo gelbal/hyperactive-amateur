@@ -84,6 +84,41 @@ describe("TrackInfo re-record overlay", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(OFFLINE_COPY));
   });
 
+  it("shows a lingering recording error on the track row while playback hides the station", () => {
+    // Viewport unmounts the recording station while playing; TrackInfo must
+    // not keep deferring to a station that is not actually on screen.
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "granted",
+      error: null,
+    });
+    render(<TrackInfo trackId={0} />);
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("recording", 0);
+    });
+    act(() => {
+      useAppStore.getState().actions.setRecordingError("Recording interrupted — test copy.");
+    });
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("idle", null);
+    });
+
+    // The station is on screen (granted + empty tracks + not dismissed), so
+    // the row defers to it.
+    expect(screen.queryByText("Recording interrupted — test copy.")).not.toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(true);
+    });
+    expect(screen.getByText("Recording interrupted — test copy.")).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(false);
+    });
+    expect(screen.queryByText("Recording interrupted — test copy.")).not.toBeInTheDocument();
+  });
+
   it("shows the store recording error on the active track row until a new flow starts", () => {
     useAppStore.getState().actions.setMedia({
       stream: null,

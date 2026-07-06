@@ -33,6 +33,7 @@ export function Viewport() {
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
   const audioState = useAppStore((s) => s.playback.audioState);
+  const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
   // The overlays (gate, station, record-prompt, countdown) stay visible in
@@ -45,8 +46,13 @@ export function Viewport() {
   // precondition: empty tracks exist AND the user hasn't dismissed the
   // walkthrough. Clicking "Record more" or "Re-record" both reopen the
   // station, which in turn reveals the gate when media isn't granted yet.
+  // During playback the viewport belongs to the hard-cut video: the station
+  // and gate overlays stand down until stop (recording can't run while
+  // playing anyway). Unmounting the station also releases its preview stream,
+  // so playback never runs with the mic held (on iOS a held mic keeps the
+  // audio session in play-and-record, which routes output to the earpiece).
   const showStation =
-    mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed;
+    mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed && !isPlaying;
   // "suspended" is "was granted, currently disconnected" — the gate must NOT
   // appear (the user already approved permission); the reconnect pill takes
   // its place.
@@ -55,7 +61,8 @@ export function Viewport() {
       mediaStatus === "requesting" ||
       mediaStatus === "denied") &&
     emptyTrackCount > 0 &&
-    !stationDismissed;
+    !stationDismissed &&
+    !isPlaying;
   const showReconnectPill = mediaStatus === "suspended";
   const showAudioResumePill = audioState === "resume-required";
   const showRecordMore = !isFullscreen && emptyTrackCount > 0 && stationDismissed;
@@ -163,7 +170,7 @@ export function Viewport() {
             {showReconnectPill && <ReconnectPill />}
           </div>
         )}
-        {mediaStatus === "granted" && !hasClips && stationDismissed && (
+        {mediaStatus === "granted" && !hasClips && stationDismissed && !isPlaying && (
           <RecordPrompt />
         )}
         <RecordCountdown />

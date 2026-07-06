@@ -32,7 +32,10 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     (s) =>
       s.media.status === "granted" &&
       s.project.tracks.some((track) => !track.clip) &&
-      !s.session.recordingStationDismissed,
+      !s.session.recordingStationDismissed &&
+      // Mirrors Viewport's suppression: while playback runs the station is
+      // unmounted, so errors must fall back to the track row.
+      !s.playback.isPlaying,
   );
   const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);

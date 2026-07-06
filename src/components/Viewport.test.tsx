@@ -275,6 +275,58 @@ describe("Viewport", () => {
     expect(screen.getByLabelText("recording station")).toBeInTheDocument();
   });
 
+  it("suppresses the permission gate while playback runs so the video stays visible", () => {
+    // Deleting a clip on a fresh session reopens the station intent, and the
+    // gate takes its place while media is idle. Playing the remaining clips
+    // must not leave "Enable camera & mic" floating over the hard-cut video.
+    render(<Viewport />);
+    expect(screen.getByRole("button", { name: /enable camera & mic/i })).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(true);
+    });
+    expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(false);
+    });
+    expect(screen.getByRole("button", { name: /enable camera & mic/i })).toBeInTheDocument();
+  });
+
+  // The preview-stream release itself is pinned by RecordingStation's
+  // unmount tests; this only pins that playback unmounts the station.
+  it("unmounts the recording station while playback runs", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });
+    });
+    render(<Viewport />);
+    expect(screen.getByLabelText("recording station")).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(true);
+    });
+    expect(screen.queryByLabelText("recording station")).not.toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(false);
+    });
+    expect(screen.getByLabelText("recording station")).toBeInTheDocument();
+  });
+
+  it("hides the idle record prompt while playback runs", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });
+      useAppStore.getState().actions.dismissRecordingStation();
+    });
+    render(<Viewport />);
+    expect(screen.getByText(/record a sound on any track/i)).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setIsPlaying(true);
+    });
+    expect(screen.queryByText(/record a sound on any track/i)).not.toBeInTheDocument();
+  });
+
   it("after the recording station is dismissed and no clips exist, shows an actionable first-record affordance", () => {
     act(() => {
       useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });
