@@ -58,6 +58,8 @@ export function createInitialState(): AppState {
     },
     recording: {
       activeTrackId: null,
+      countdownEndsAt: null,
+      error: null,
       state: "idle",
     },
     ui: {

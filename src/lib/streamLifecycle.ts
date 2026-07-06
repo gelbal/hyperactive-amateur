@@ -10,7 +10,19 @@ export interface StreamLifecycleHandle {
   detach: () => void;
 }
 
+export interface RecordingInterruptHandler {
+  isActive: () => boolean;
+  interrupt: (reason: "interrupted") => void;
+}
+
 const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
+const pendingMuteSuspensions = new WeakMap<MediaStream, ReturnType<typeof setTimeout>>();
+const TRACK_MUTE_SUSPEND_DELAY_MS = 250;
+let recordingInterruptHandler: RecordingInterruptHandler | null = null;
+
+export function registerRecordingInterruptHandler(handler: RecordingInterruptHandler | null): void {
+  recordingInterruptHandler = handler;
+}
 
 function detachLifecycle(stream: MediaStream): void {
   const handle = lifecycleHandles.get(stream);
@@ -33,6 +45,41 @@ function transitionToSuspended(stream: MediaStream): void {
   suspendMediaStream(stream);
 }
 
+function clearPendingMuteSuspension(stream: MediaStream): void {
+  const timer = pendingMuteSuspensions.get(stream);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingMuteSuspensions.delete(stream);
+}
+
+function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
+  return tracks.some((track) => track.readyState === "live" && !track.muted);
+}
+
+export function allTracksUsable(stream: MediaStream): boolean {
+  return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
+}
+
+function scheduleMutedSuspension(stream: MediaStream): void {
+  clearPendingMuteSuspension(stream);
+  const timer = setTimeout(() => {
+    pendingMuteSuspensions.delete(stream);
+    suspendMediaStream(stream);
+  }, TRACK_MUTE_SUSPEND_DELAY_MS);
+  pendingMuteSuspensions.set(stream, timer);
+}
+
+function onTrackMuted(stream: MediaStream): void {
+  const interruptHandler = recordingInterruptHandler;
+  if (interruptHandler?.isActive()) {
+    clearPendingMuteSuspension(stream);
+    interruptHandler.interrupt("interrupted");
+    suspendMediaStream(stream);
+    return;
+  }
+  scheduleMutedSuspension(stream);
+}
+
 // Attach an `ended` listener to every track on `stream`. iOS suspends camera/
 // mic on backgrounding, calls grab the camera, other apps reclaim the device,
 // users revoke permission — all surface as track.ended. Returns a handle so
@@ -40,13 +87,22 @@ function transitionToSuspended(stream: MediaStream): void {
 export function attachStreamEndedListeners(stream: MediaStream): StreamLifecycleHandle {
   const tracks = stream.getTracks();
   const onEnded = () => transitionToSuspended(stream);
+  const onMute = () => onTrackMuted(stream);
+  const onUnmute = () => {
+    if (allTracksUsable(stream)) clearPendingMuteSuspension(stream);
+  };
   for (const track of tracks) {
     track.addEventListener("ended", onEnded);
+    track.addEventListener("mute", onMute);
+    track.addEventListener("unmute", onUnmute);
   }
   return {
     detach: () => {
+      clearPendingMuteSuspension(stream);
       for (const track of tracks) {
         track.removeEventListener("ended", onEnded);
+        track.removeEventListener("mute", onMute);
+        track.removeEventListener("unmute", onUnmute);
       }
     },
   };
@@ -118,8 +174,6 @@ export function installVisibilityListener(): () => void {
 // hit a genuine encoding error and we leave the store alone — the caller's
 // onError handler surfaces the message.
 export function onMediaRecorderError(stream: MediaStream, _err: Error): void {
-  const tracks = stream.getTracks();
-  const allTracksLive = tracks.length > 0 && tracks.every((t) => t.readyState === "live");
-  if (allTracksLive) return;
+  if (allTracksUsable(stream)) return;
   transitionToSuspended(stream);
 }

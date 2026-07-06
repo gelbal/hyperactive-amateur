@@ -14,11 +14,15 @@ import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
+import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+const RECORDING_INTERRUPTED_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
+export type RecordingCancelReason = "user" | "interrupted";
 
 export type AutoTagEvent =
   | { kind: "tagging" }
@@ -44,31 +48,114 @@ export interface RecordIntoTrackOptions {
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
 
-export function cancelCurrentRecording(): void {
-  currentController?.abort();
+export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
+  currentController?.abort(reason);
 }
 
 export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
 }
 
+registerRecordingInterruptHandler({
+  isActive: isRecordingInFlight,
+  interrupt: (reason) => cancelCurrentRecording(reason),
+});
+
 function waitMs(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException("Aborted before wait started", "AbortError"));
+      reject(makeAbortError("Aborted before wait started"));
+      return;
+    }
+    const delayMs = Math.max(0, ms);
+    if (delayMs === 0) {
+      resolve();
       return;
     }
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
-    }, ms);
+    }, delayMs);
     const onAbort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-      reject(new DOMException("Aborted during wait", "AbortError"));
+      reject(makeAbortError("Aborted during wait"));
     };
     signal.addEventListener("abort", onAbort);
   });
+}
+
+async function waitUntilAudioTime(
+  deadlineSeconds: number,
+  audioContext: Pick<BaseAudioContext, "currentTime">,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    throwIfFlowAborted(signal, "Aborted before countdown completed");
+    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
+    if (remainingMs <= 0) return;
+    await waitMs(remainingMs, signal);
+  }
+}
+
+function makeAbortError(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+function throwIfFlowAborted(signal: AbortSignal, message: string): void {
+  if (signal.aborted) {
+    throw makeAbortError(message);
+  }
+}
+
+function acquireRecordingStreamUntilAbort(signal: AbortSignal): Promise<MediaStream> {
+  const acquisition = acquireRecordingStream();
+  return new Promise<MediaStream>((resolve, reject) => {
+    let settled = false;
+    const stopWatchingAbort = () => signal.removeEventListener("abort", onAbort);
+    const releaseLateStream = (stream: MediaStream) => {
+      releaseRecordingStream(stream);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      stopWatchingAbort();
+      acquisition.then(releaseLateStream, () => undefined);
+      reject(makeAbortError("Aborted during media acquisition"));
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    acquisition.then(
+      (stream) => {
+        if (settled) {
+          releaseLateStream(stream);
+          return;
+        }
+        settled = true;
+        stopWatchingAbort();
+        resolve(stream);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        stopWatchingAbort();
+        reject(err);
+      },
+    );
+  });
+}
+
+function getAbortReason(signal: AbortSignal): RecordingCancelReason {
+  return signal.reason === "interrupted" ? "interrupted" : "user";
+}
+
+function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
+  return isAbortError(err) || (signal.aborted && err === signal.reason);
 }
 
 // Run the full record sequence for one track. Acquires a fresh MediaStream
@@ -86,7 +173,7 @@ export async function recordIntoTrack(
   if (currentFlow) return false;
   const actions = useAppStore.getState().actions;
   if (!canStartAudibleAction(useAppStore.getState())) return false;
-  actions.setRecordingState("countdown", trackId);
+  actions.setRecordingState("preparing", trackId);
 
   const controller = new AbortController();
   currentController = controller;
@@ -120,16 +207,17 @@ async function runFlow(
       // Recording can still proceed; recordClip has a decode fallback if the
       // live Web Audio tap cannot run.
     }
-    if (signal.aborted) {
-      throw new DOMException("Aborted before media acquisition", "AbortError");
-    }
+    throwIfFlowAborted(signal, "Aborted before media acquisition");
 
     if (externalStream) {
       stream = externalStream;
     } else {
       try {
-        stream = await acquireRecordingStream();
+        stream = await acquireRecordingStreamUntilAbort(signal);
       } catch (e) {
+        if (signal.aborted) {
+          throw makeAbortError("Aborted during media acquisition");
+        }
         // Permission may have been revoked since the last grant — surface the
         // viewport gate so the user can re-allow.
         void requestMedia();
@@ -138,11 +226,23 @@ async function runFlow(
       }
     }
     if (!stream) return false;
+    throwIfFlowAborted(signal, "Aborted before countdown");
 
-    await waitMs(COUNTDOWN_MS, signal);
+    if (!allTracksUsable(stream)) {
+      actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      options.onError?.(RECORDING_INTERRUPTED_COPY);
+      return false;
+    }
+
+    const audioContext = getAudioContext();
+    const countdownEndsAt = audioContext.currentTime + COUNTDOWN_MS / 1000;
+    actions.setCountdownEndsAt(countdownEndsAt);
+    actions.setRecordingState("countdown", trackId);
+
+    await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
     actions.setRecordingState("recording", trackId);
-    const result = await recordClip(stream, RECORD_DURATION_MS, getAudioContext(), { signal });
-    const url = URL.createObjectURL(result.blob);
+    const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
+    throwIfFlowAborted(signal, "Aborted after capture");
     const trim = autoTrim(result.audioBuffer);
     // Poster generation is best-effort — never let a poster failure block
     // the clip save. captureFirstFrame returns null on any decode/timeout.
@@ -152,6 +252,8 @@ async function runFlow(
     } catch {
       posterBlob = null;
     }
+    throwIfFlowAborted(signal, "Aborted after poster extraction");
+    const url = URL.createObjectURL(result.blob);
     const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
     const newClip: Clip = {
       blob: result.blob,
@@ -175,14 +277,17 @@ async function runFlow(
     void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
-    if (isAbortError(e)) {
-      // User pressed Esc — quietly bail without saving.
+    if (isFlowAbort(e, signal)) {
+      if (getAbortReason(signal) === "interrupted") {
+        actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+      }
       return false;
     }
     options.onError?.(e instanceof Error ? e.message : String(e));
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }
 }

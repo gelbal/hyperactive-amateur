@@ -25,6 +25,8 @@ function state(
     recording: {
       state: "idle" as const,
       activeTrackId: null,
+      countdownEndsAt: null,
+      error: null,
       ...recording,
     },
   };
@@ -43,6 +45,7 @@ describe("canStartAudibleAction", () => {
     expect(canStartAudibleAction(state())).toBe(true);
     expect(canStartAudibleAction(state({ isPlaying: true }))).toBe(false);
     expect(canStartAudibleAction(state({ isExporting: true }))).toBe(false);
+    expect(canStartAudibleAction(state({}, { state: "preparing", activeTrackId: 1 }))).toBe(false);
     expect(canStartAudibleAction(state({}, { state: "countdown", activeTrackId: 1 }))).toBe(false);
     expect(canStartAudibleAction(state({}, { state: "recording", activeTrackId: 1 }))).toBe(false);
     expect(canStartAudibleAction(state({}, { state: "reviewing", activeTrackId: 1 }))).toBe(false);

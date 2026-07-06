@@ -35,13 +35,18 @@ describe("persistence", () => {
     expect(loaded?.tracks[2].steps[7]).toBe(true);
   });
 
-  it("omits transient playback audioState from persistence snapshots", () => {
+  it("omits transient playback and recording fields from persistence snapshots", () => {
     useAppStore.getState().actions.setAudioState("resume-required");
+    useAppStore.getState().actions.setCountdownEndsAt(123.25);
+    useAppStore.getState().actions.setRecordingError("do not persist");
 
     const persisted = snapshot(useAppStore.getState());
 
     expect(persisted).not.toHaveProperty("playback");
     expect(persisted).not.toHaveProperty("audioState");
+    expect(persisted).not.toHaveProperty("recording");
+    expect(persisted).not.toHaveProperty("countdownEndsAt");
+    expect(persisted).not.toHaveProperty("error");
   });
 
   it("clearProject removes the record so loadProject returns null", async () => {

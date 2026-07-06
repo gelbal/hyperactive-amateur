@@ -41,7 +41,7 @@ export interface Track {
   showVideo: boolean;
 }
 
-export type RecordingState = "idle" | "countdown" | "recording" | "reviewing";
+export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
 
 export interface ActiveTrigger {
   trackId: number;
@@ -109,6 +109,8 @@ export interface PlaybackState {
 
 export interface RecordingSlice {
   activeTrackId: number | null;
+  countdownEndsAt: number | null;
+  error: string | null;
   state: RecordingState;
 }
 

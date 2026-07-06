@@ -18,6 +18,7 @@ const EMPTY_DEVICES: InputDeviceList = { videoInputs: [], audioInputs: [] };
 
 export function RecordingStation() {
   const recordingState = useAppStore((s) => s.recording.state);
+  const recordingError = useAppStore((s) => s.recording.error);
   const canStartRecording = useAppStore(canStartAudibleAction);
   const tracks = useAppStore((s) => s.project.tracks);
   const videoDeviceId = useAppStore((s) => s.media.videoDeviceId);
@@ -127,6 +128,7 @@ export function RecordingStation() {
 
   const isBusy = recordingState !== "idle";
   const recordDisabled = isBusy || !canStartRecording;
+  const visibleError = recordingError ?? error;
 
   const onRecord = () => {
     setError(null);
@@ -247,9 +249,9 @@ export function RecordingStation() {
         )}
       </div>
       <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-3 px-4">
-        {error && (
+        {visibleError && (
           <span role="alert" className="text-xs text-red-400 max-w-[80%] text-center">
-            {error}
+            {visibleError}
           </span>
         )}
         <div className="flex items-center gap-2">

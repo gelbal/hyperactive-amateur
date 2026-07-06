@@ -25,10 +25,18 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
+  const recordingError = useAppStore((s) => s.recording.error);
+  const recordingStationShowing = useAppStore(
+    (s) =>
+      s.media.status === "granted" &&
+      s.project.tracks.some((track) => !track.clip) &&
+      !s.session.recordingStationDismissed,
+  );
   const canStartRecording = useAppStore(canStartAudibleAction);
   const [error, setError] = useState<string | null>(null);
   const [autoTagState, setAutoTagState] = useState<AutoTagState>({ kind: "idle" });
   const toastTimerRef = useRef<number | null>(null);
+  const wasLastRecordingTrackRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -37,7 +45,26 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     [],
   );
 
+  useEffect(() => {
+    if (recordingState === "preparing" && activeTrackId !== trackId) {
+      wasLastRecordingTrackRef.current = false;
+    }
+    if (activeTrackId === trackId && recordingState !== "idle") {
+      wasLastRecordingTrackRef.current = true;
+    }
+    if (recordingState === "idle" && !recordingError) {
+      wasLastRecordingTrackRef.current = false;
+    }
+  }, [activeTrackId, recordingError, recordingState, trackId]);
+
   const isRecordingThis = recordingState === "recording" && activeTrackId === trackId;
+  const visibleRecordingError =
+    !recordingStationShowing &&
+    recordingError &&
+    (activeTrackId === trackId || wasLastRecordingTrackRef.current)
+      ? recordingError
+      : null;
+  const visibleError = visibleRecordingError ?? error;
 
   const scheduleToastReset = () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -102,7 +129,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       <ShowVideoToggle trackId={trackId} />
       {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-24 shrink-0" />}
       <AutoTagStatus state={autoTagState} />
-      {error && <span className="text-xs text-red-400">{error}</span>}
+      {visibleError && <span className="text-xs text-red-400">{visibleError}</span>}
     </div>
   );
 }

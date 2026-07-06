@@ -88,6 +88,8 @@ export interface AppActions {
   toggleVideoFacingMode: () => void;
   resumeMedia: () => Promise<void>;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
+  setCountdownEndsAt: (deadline: number | null) => void;
+  setRecordingError: (error: string | null) => void;
   hydrateProject: (project: AppState["project"]) => void;
   applyPattern: (grid: boolean[][]) => void;
   applyPatternIfCurrent: (
@@ -457,9 +459,23 @@ export const useAppStore = create<AppStore>((set) => ({
     setRecordingState: (recordingState, activeTrackId) =>
       set((state) => ({
         recording: {
+          ...state.recording,
           state: recordingState,
           activeTrackId: activeTrackId === undefined ? state.recording.activeTrackId : activeTrackId,
+          countdownEndsAt:
+            recordingState === "preparing" ? null : state.recording.countdownEndsAt,
+          error: recordingState === "preparing" ? null : state.recording.error,
         },
+      })),
+
+    setCountdownEndsAt: (deadline) =>
+      set((state) => ({
+        recording: { ...state.recording, countdownEndsAt: deadline },
+      })),
+
+    setRecordingError: (error) =>
+      set((state) => ({
+        recording: { ...state.recording, error },
       })),
 
     dismissRecordingStation: () =>

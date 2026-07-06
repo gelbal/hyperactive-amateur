@@ -1,9 +1,12 @@
 // ABOUTME: TrackInfo tests — clip thumbnail re-record overlay is touch-reachable on coarse pointers.
 // ABOUTME: The overlay is hover-only on desktop; on touch it must stay visible at reduced opacity.
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
 import { TrackInfo } from "./TrackInfo";
 import { useAppStore } from "../store/useAppStore";
+
+const INTERRUPTION_COPY =
+  "Recording interrupted — the microphone or camera was taken by another app or call.";
 
 describe("TrackInfo re-record overlay", () => {
   beforeEach(() => useAppStore.getState().actions.reset());
@@ -23,5 +26,32 @@ describe("TrackInfo re-record overlay", () => {
     const overlay = screen.getByLabelText("re-record");
     expect(overlay.className).toContain("any-pointer-coarse:opacity-40");
     expect(overlay.className).toContain("any-pointer-coarse:group-hover:opacity-100");
+  });
+
+  it("shows the store recording error on the active track row until a new flow starts", () => {
+    useAppStore.getState().actions.setMedia({
+      stream: null,
+      status: "granted",
+      error: null,
+    });
+    useAppStore.getState().actions.dismissRecordingStation();
+    render(<TrackInfo trackId={2} />);
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("recording", 2);
+    });
+    act(() => {
+      useAppStore.getState().actions.setRecordingError(INTERRUPTION_COPY);
+    });
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("idle", null);
+    });
+
+    expect(screen.getByText(INTERRUPTION_COPY)).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("preparing", 2);
+    });
+    expect(screen.queryByText(INTERRUPTION_COPY)).not.toBeInTheDocument();
   });
 });
