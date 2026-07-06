@@ -46,7 +46,7 @@ export function FeelDisclosure() {
         aria-label="Feel: cut rate, swing, hold"
         onClick={() => setOpen((v) => !v)}
         className={
-          "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
+          "flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
           (open
             ? "bg-zinc-800 border-zinc-600"
             : "bg-zinc-900 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600")
@@ -60,7 +60,7 @@ export function FeelDisclosure() {
         <div
           role="dialog"
           aria-label="Feel controls"
-          className="absolute left-0 top-full mt-2 z-30 min-w-[18rem] rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3"
+          className="fixed inset-x-3 mt-2 z-30 w-auto max-w-[24rem] mx-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:min-w-[18rem] sm:max-w-none sm:mx-0"
         >
           <CutSubdivisionSelect />
           <SwingSlider />

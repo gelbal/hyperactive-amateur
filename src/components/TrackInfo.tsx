@@ -5,6 +5,7 @@ import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { AI_OFFLINE_COPY } from "../lib/aiOffline";
 import type { Clip, Tag } from "../types";
 
 const AUTO_TAG_TOAST_MS = 3000;
@@ -12,6 +13,7 @@ type AutoTagState =
   | { kind: "idle" }
   | { kind: "tagging" }
   | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
+  | { kind: "offline" }
   | { kind: "miss" };
 
 const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
@@ -150,12 +152,16 @@ function AutoTagStatus({ state }: { state: AutoTagState }) {
   } else if (state.kind === "applied") {
     text = state.hatAudioOnly ? `tagged ${state.tag} → audio-only` : `tagged ${state.tag}`;
     cls = "text-orange-400";
+  } else if (state.kind === "offline") {
+    text = AI_OFFLINE_COPY;
+    cls = "text-red-400";
   } else {
     text = "couldn't auto-tag, pick one";
     cls = "text-zinc-500";
   }
+  const widthClass = state.kind === "offline" ? "w-40" : "w-32 truncate";
   return (
-    <span role="status" className={`text-[10px] uppercase tracking-wide ${cls} w-32 truncate`}>
+    <span role="status" className={`text-[10px] uppercase tracking-wide ${cls} ${widthClass}`}>
       {text}
     </span>
   );

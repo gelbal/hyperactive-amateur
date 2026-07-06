@@ -108,6 +108,37 @@ describe("ExportButton format picker", () => {
     vi.restoreAllMocks();
   });
 
+  it("sizes the export trigger to 44px on coarse pointers", () => {
+    render(<ExportButton />);
+
+    expect(screen.getByRole("button", { name: /export/i })).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+  });
+
+  it("clamps the popover to the mobile viewport and restores right anchoring at sm", () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /export/i }));
+
+    const popover = screen.getByRole("dialog", { name: "Export song" });
+    expect(popover).toHaveClass(
+      "fixed",
+      "inset-x-3",
+      "w-auto",
+      "max-w-[24rem]",
+      "mx-auto",
+      "sm:absolute",
+      "sm:inset-x-auto",
+      "sm:right-0",
+      "sm:top-full",
+      "sm:min-w-[18rem]",
+      "sm:max-w-none",
+      "sm:mx-0",
+    );
+    expect(popover.className.split(/\s+/)).not.toContain("min-w-[18rem]");
+  });
+
   it("hides the picker when only one format is supported", () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     render(<ExportButton />);
@@ -125,6 +156,19 @@ describe("ExportButton format picker", () => {
     // Switch to MP4.
     fireEvent.click(screen.getByLabelText(/mp4/i));
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe(MP4_MIME);
+  });
+
+  it("sizes export format labels to 44px on coarse pointers", () => {
+    originalRecorder = stubMediaRecorder([MP4_MIME, WEBM_MIME]);
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /export/i }));
+
+    expect(screen.getByLabelText(/webm/i).closest("label")).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+    expect(screen.getByLabelText(/mp4/i).closest("label")).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
   });
 
   it("restores the persisted choice on remount", () => {

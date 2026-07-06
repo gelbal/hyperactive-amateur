@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetGeminiHttpClientForTesting, createHttpGeminiClient } from "./aiHttpClient";
 import {
+  GeminiOfflineError,
   GeminiHttpError,
   MissingApiKeyError,
   TransientGeminiError,
@@ -202,6 +203,18 @@ describe("createHttpGeminiClient", () => {
       expect(err).toBeInstanceOf(GeminiHttpError);
       expect((err as GeminiHttpError).status).toBe(400);
       expect((err as { transient?: boolean }).transient).toBeUndefined();
+    }
+  });
+
+  it("maps fetch TypeError rejections to GeminiOfflineError", async () => {
+    fetchSpy.mockRejectedValue(new TypeError("Failed to fetch"));
+    const client = createHttpGeminiClient();
+    try {
+      await client.models.generateContent({});
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GeminiOfflineError);
+      expect((err as Error).name).toBe("GeminiOfflineError");
     }
   });
 

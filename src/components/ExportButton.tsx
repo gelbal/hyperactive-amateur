@@ -211,7 +211,7 @@ export function ExportButton() {
           setOpen((v) => !v);
         }}
         className={
-          "flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors " +
+          "flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
           (rendering
             ? "bg-zinc-800 border-zinc-600 text-zinc-400 cursor-progress"
             : !canStart && !open
@@ -228,7 +228,7 @@ export function ExportButton() {
         <div
           role="dialog"
           aria-label="Export song"
-          className="absolute right-0 top-full mt-2 z-30 min-w-[18rem] rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3"
+          className="fixed inset-x-3 mt-2 z-30 w-auto max-w-[24rem] mx-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:min-w-[18rem] sm:max-w-none sm:mx-0"
         >
           {formats.length > 1 && (
             <fieldset className="flex flex-col gap-2">
@@ -240,7 +240,7 @@ export function ExportButton() {
                   <label
                     key={fmt.mimeType}
                     className={
-                      "px-3 py-1.5 rounded-full text-xs cursor-pointer border " +
+                      "inline-flex items-center px-3 py-1.5 pointer-coarse:min-h-11 rounded-full text-xs cursor-pointer border " +
                       (mimeType === fmt.mimeType
                         ? "bg-orange-500 text-zinc-950 border-orange-500"
                         : "bg-zinc-900 text-zinc-300 border-zinc-700 hover:bg-zinc-800")
