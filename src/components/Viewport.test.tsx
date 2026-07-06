@@ -311,7 +311,7 @@ describe("Viewport", () => {
     expect(screen.getByRole("button", { name: /enter fullscreen/i })).toBeInTheDocument();
   });
 
-  it("suspended: reconnect pill shows; permission gate does NOT show; clicking pill calls resumeMedia", () => {
+  it("suspended: reconnect pill shows; permission gate does NOT show; clicking pill calls resumeMedia", async () => {
     act(() => {
       useAppStore.getState().actions.setMedia({
         stream: null,
@@ -331,6 +331,9 @@ describe("Viewport", () => {
     const spy = vi.spyOn(useAppStore.getState().actions, "resumeMedia");
     fireEvent.click(pill);
     expect(spy).toHaveBeenCalled();
+    // Let the pill's pending state settle inside act — resumeMedia resolves
+    // on a microtask and re-enables the button.
+    await act(async () => {});
     spy.mockRestore();
   });
 
@@ -358,6 +361,65 @@ describe("Viewport", () => {
     isAcquireInFlight.mockReturnValue(true);
     render(<Viewport />);
     expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeDisabled();
+  });
+
+  it("suspended: clicking the reconnect pill disables it until the acquire settles", async () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+    });
+    // resumeMedia resolves in both outcomes (it swallows acquire failures);
+    // the store's media status carries the result.
+    let settleResume!: () => void;
+    let resumeGate = new Promise<void>((resolve) => {
+      settleResume = resolve;
+    });
+    const spy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockImplementation(() => resumeGate);
+
+    // Failure path: the acquire settles with the store still suspended — the
+    // pill stays mounted and must re-enable.
+    render(<Viewport />);
+    const pill = screen.getByRole("button", { name: /tap to reconnect/i });
+    expect(pill).not.toBeDisabled();
+
+    fireEvent.click(pill);
+    expect(pill).toBeDisabled();
+
+    await act(async () => {
+      settleResume();
+      await resumeGate;
+    });
+    expect(screen.getByRole("button", { name: /tap to reconnect/i })).not.toBeDisabled();
+    cleanup();
+
+    // Success path: the acquire lands granted — the pill leaves the screen.
+    resumeGate = new Promise<void>((resolve) => {
+      settleResume = resolve;
+    });
+    render(<Viewport />);
+    const secondPill = screen.getByRole("button", { name: /tap to reconnect/i });
+
+    fireEvent.click(secondPill);
+    expect(secondPill).toBeDisabled();
+
+    await act(async () => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "granted",
+        error: null,
+      });
+      settleResume();
+      await resumeGate;
+    });
+    expect(
+      screen.queryByRole("button", { name: /tap to reconnect/i }),
+    ).not.toBeInTheDocument();
+    spy.mockRestore();
   });
 
   it('resume-required: audio pill shows exactly "Audio interrupted — tap to resume." and stacks with reconnect pill', () => {

@@ -185,13 +185,28 @@ export function Viewport() {
 
 function ReconnectPill() {
   const recordingState = useAppStore((s) => s.recording.state);
-  const disabled = recordingState !== "idle" || isAcquireInFlight();
+  // isAcquireInFlight() reads module state that never triggers a re-render,
+  // so the click-time transition needs local pending state to actually render
+  // the button disabled while the acquire is unresolved (R6.1). On settlement
+  // the store outcome decides what shows: granted unmounts the pill, a still
+  // suspended/denied store leaves it tappable again.
+  const [pending, setPending] = useState(false);
+  const disabled = pending || recordingState !== "idle" || isAcquireInFlight();
+
+  const reconnect = async () => {
+    setPending(true);
+    try {
+      await useAppStore.getState().actions.resumeMedia();
+    } finally {
+      setPending(false);
+    }
+  };
 
   return (
     <button
       type="button"
       disabled={disabled}
-      onClick={() => void useAppStore.getState().actions.resumeMedia()}
+      onClick={() => void reconnect()}
       className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-zinc-950/80"
     >
       Camera disconnected — tap to reconnect
