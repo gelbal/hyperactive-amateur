@@ -8,6 +8,10 @@ export interface AudioBufferCapture {
   cancel: () => void;
 }
 
+export interface AudioBufferCaptureOptions {
+  maxDurationMs?: number;
+}
+
 function readChannelCount(track: MediaStreamTrack): number {
   try {
     const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
@@ -28,6 +32,7 @@ function disconnectNode(node: AudioNode): void {
 export function startAudioBufferCapture(
   stream: MediaStream,
   audioContext: AudioContext,
+  options: AudioBufferCaptureOptions = {},
 ): AudioBufferCapture | null {
   const audioTracks =
     typeof stream.getAudioTracks === "function" ? stream.getAudioTracks() : [];
@@ -43,6 +48,10 @@ export function startAudioBufferCapture(
 
   const channelCount = readChannelCount(audioTracks[0]);
   const chunks: Float32Array[][] = Array.from({ length: channelCount }, () => []);
+  const maxSampleCount =
+    options.maxDurationMs === undefined
+      ? null
+      : Math.max(0, Math.floor((options.maxDurationMs / 1000) * audioContext.sampleRate));
   let sampleCount = 0;
   let cancelled = false;
 
@@ -82,18 +91,23 @@ export function startAudioBufferCapture(
   return {
     stop: () => {
       disconnect();
-      if (cancelled || sampleCount === 0) return null;
+      const targetSampleCount =
+        maxSampleCount === null ? sampleCount : Math.min(sampleCount, maxSampleCount);
+      if (cancelled || targetSampleCount === 0) return null;
       const audioBuffer = audioContext.createBuffer(
         channelCount,
-        sampleCount,
+        targetSampleCount,
         audioContext.sampleRate,
       );
       for (let channel = 0; channel < channelCount; channel += 1) {
         const target = audioBuffer.getChannelData(channel);
         let offset = 0;
         for (const chunk of chunks[channel]) {
-          target.set(chunk, offset);
-          offset += chunk.length;
+          const remaining = targetSampleCount - offset;
+          if (remaining <= 0) break;
+          const chunkToCopy = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+          target.set(chunkToCopy, offset);
+          offset += chunkToCopy.length;
         }
       }
       return audioBuffer;

@@ -69,6 +69,7 @@ export interface AppActions {
   setCurrentStep: (step: number) => void;
   markTriggered: (trackId: number) => void;
   setTrackClip: (trackId: number, clip: Clip) => void;
+  setTrackPoster: (trackId: number, posterBlob: Blob | null, expectedClip?: Clip) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (
     trackId: number,
@@ -304,6 +305,30 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    setTrackPoster: (trackId, posterBlob, expectedClip) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const current = state.project.tracks[trackId]?.clip;
+        if (!current) return state;
+        if (expectedClip && current !== expectedClip) return state;
+        if (!posterBlob && !current.posterBlob && !current.posterUrl) return state;
+
+        const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
+        if (current.posterUrl && current.posterUrl !== posterUrl) {
+          URL.revokeObjectURL(current.posterUrl);
+        }
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId
+                ? { ...track, clip: { ...current, posterBlob, posterUrl } }
+                : track,
+            ),
+          },
+        };
+      }),
+
     clearTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -435,12 +460,16 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({ media: { ...state.media, videoFacingMode: mode } })),
 
     toggleVideoFacingMode: () =>
-      set((state) => ({
-        media: {
-          ...state.media,
-          videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
-        },
-      })),
+      set((state) => {
+        persistDeviceId(VIDEO_DEVICE_STORAGE_KEY, null);
+        return {
+          media: {
+            ...state.media,
+            videoDeviceId: null,
+            videoFacingMode: state.media.videoFacingMode === "user" ? "environment" : "user",
+          },
+        };
+      }),
 
     // Re-acquire after a "suspended" transition (track ended, page resumed,
     // recorder died). media.ts ↔ useAppStore.ts is a circular import, but ESM

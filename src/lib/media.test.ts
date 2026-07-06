@@ -44,6 +44,7 @@ describe("media", () => {
   beforeEach(() => {
     __resetMediaForTesting();
     useAppStore.getState().actions.reset();
+    useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
     originalPermissions = (navigator as Navigator & { permissions?: Permissions }).permissions;
   });
@@ -180,5 +181,17 @@ describe("media", () => {
     const video = c.video as MediaTrackConstraints;
     expect(video.deviceId).toEqual({ exact: "cam-id-123" });
     expect(video.facingMode).toBeUndefined();
+  });
+
+  it("buildConstraints: after toggleVideoFacingMode, video derives from facingMode with no deviceId", () => {
+    useAppStore.getState().actions.setPreferredDevices({ video: "cam-id-123" });
+
+    useAppStore.getState().actions.toggleVideoFacingMode();
+
+    const c = buildConstraints();
+    const video = c.video as MediaTrackConstraints;
+    expect(useAppStore.getState().media.videoDeviceId).toBeNull();
+    expect(video.deviceId).toBeUndefined();
+    expect(video.facingMode).toBe("environment");
   });
 });
