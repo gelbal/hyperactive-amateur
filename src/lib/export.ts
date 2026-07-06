@@ -87,9 +87,16 @@ export async function exportSong(
     }
 
     let abortExport: (reason: string) => void = () => undefined;
+    let abortError: Error | null = null;
     const exportAbort = new Promise<never>((_, reject) => {
-      abortExport = (reason: string) => reject(new Error(reason));
+      abortExport = (reason: string) => {
+        abortError = new Error(reason);
+        reject(abortError);
+      };
     });
+    // Observe the rejection immediately: an abort landing while no race below
+    // is pending must not surface as an unhandled rejection.
+    exportAbort.catch(() => undefined);
     unregisterExportSession = registerExportSession({ abort: abortExport });
     if (!unregisterExportSession) {
       throw new Error("Another export render is already active.");
@@ -97,8 +104,19 @@ export async function exportSong(
     ownsExportSession = true;
     useAppStore.getState().actions.setIsExporting(true);
 
-    wakeLock = await holdScreenWakeLock();
-    await ensureAudioRunning();
+    // The abort races every setup await so pagehide/audio interruption can
+    // stop the render before any stream or transport work begins.
+    const wakeLockPromise = holdScreenWakeLock();
+    try {
+      wakeLock = await Promise.race([wakeLockPromise, exportAbort]);
+    } catch (err) {
+      // A wake lock granted after the abort must still be released.
+      void wakeLockPromise.then((handle) => void handle.release());
+      throw err;
+    }
+    if (abortError) throw abortError;
+    await Promise.race([ensureAudioRunning(), exportAbort]);
+    if (abortError) throw abortError;
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
       mimeType,
