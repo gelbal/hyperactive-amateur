@@ -84,6 +84,22 @@ describe("TrackInfo re-record overlay", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(OFFLINE_COPY));
   });
 
+  it("keeps the tag picker inside the 48px track row on coarse pointers", () => {
+    // The coarse-pointer chip inflation (py-1.5 over three 2-column rows)
+    // overflowed the h-12 row and the chips of adjacent tracks overlapped.
+    // Chips stay compact on every pointer type; no coarse override may
+    // reintroduce vertical growth or a wider fixed left panel.
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
+    render(<TrackInfo trackId={0} />);
+    const picker = screen.getByRole("group", { name: "tags for track 1" });
+    expect(picker.className).toContain("w-24");
+    expect(picker.className).not.toContain("pointer-coarse:");
+    for (const chip of screen.getAllByRole("button", { name: /^tag \w+ for track 1$/ })) {
+      expect(chip.className).toContain("py-0.5");
+      expect(chip.className).not.toContain("pointer-coarse:py");
+    }
+  });
+
   it("shows a lingering recording error on the track row while playback hides the station", () => {
     // Viewport unmounts the recording station while playing; TrackInfo must
     // not keep deferring to a station that is not actually on screen.
