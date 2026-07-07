@@ -8,6 +8,7 @@ import { canStartAudibleAction } from "../../lib/audibleActionGate";
 import { runAudibleAction } from "../../lib/audibleActionRunner";
 import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
+import { useMoodKeys } from "../../lib/useMoodKeys";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
 import { MoodStage } from "./MoodStage";
@@ -361,6 +362,7 @@ function mergeMoodHydrateResults(
 }
 
 export function MoodMode() {
+  useMoodKeys();
   const piece = useAppStore((s) => s.mood.piece);
   const hydration = useAppStore((s) => s.mood.hydration);
   const isExporting = useAppStore((s) => s.playback.isExporting);

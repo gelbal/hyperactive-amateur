@@ -96,7 +96,7 @@ describe("moodVideoPool", () => {
 
     expect(video?.muted).toBe(true);
     expect(video?.playsInline).toBe(true);
-    expect(video?.loop).toBe(true);
+    expect(video?.loop).toBe(false);
     expect(video?.preload).toBe("auto");
     expect(video?.getAttribute("src")).toBe("blob:test/a");
   });
@@ -116,6 +116,33 @@ describe("moodVideoPool", () => {
 
     expect(playback.seek).toHaveBeenCalledWith(0.125);
     expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeks and plays immediately when an upcoming boundary is inside the seek lead", () => {
+    toneHarness.setImmediate(11.95);
+    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0.25, loopEnd: 1.25 }]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming("take-a", 12);
+
+    expect(toneHarness.draw.pendingTimes()).toEqual([]);
+    expect(playback.seek).toHaveBeenCalledWith(0.25);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-seeks to loopStart when a live take passes loopEnd", () => {
+    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0.125, loopEnd: 1.125 }]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    video.currentTime = 1.2;
+    video.dispatchEvent(new Event("timeupdate"));
+
+    expect(playback.seek).toHaveBeenLastCalledWith(0.125);
+    expect(playback.pause).not.toHaveBeenCalled();
   });
 
   it("guards readiness with current data, seek state, and decoded dimensions", () => {

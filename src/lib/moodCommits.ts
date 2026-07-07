@@ -2,6 +2,7 @@
 // ABOUTME: Drains due transport commits once and applies store-visible performance state.
 import { useAppStore } from "../store/useAppStore";
 import type { MoodSelectionCommit } from "../types";
+import { syncCommittedMoodEngines } from "./moodPerformance";
 import { consumeDueCommits } from "./moodTransport";
 
 export function applyDueCommits(audioTime: number): void {
@@ -17,5 +18,6 @@ export function applyDueCommits(audioTime: number): void {
 
   if (selections.length > 0) {
     useAppStore.getState().actions.commitMoodSelections(selections);
+    syncCommittedMoodEngines();
   }
 }

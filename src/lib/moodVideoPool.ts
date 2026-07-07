@@ -47,7 +47,7 @@ function playVideo(entry: PooledMoodVideo): void {
   void entry.video.play().catch(() => undefined);
 }
 
-function clampAtLoopEnd(entry: PooledMoodVideo): void {
+function loopTrimmedWindow(entry: PooledMoodVideo): void {
   if (entry.loopEnd <= entry.loopStart) {
     entry.video.pause();
     return;
@@ -55,12 +55,8 @@ function clampAtLoopEnd(entry: PooledMoodVideo): void {
 
   if (entry.video.currentTime < entry.loopEnd) return;
 
-  try {
-    entry.video.currentTime = entry.loopEnd;
-  } catch {
-    // The frame will be re-armed from loopStart at the next boundary.
-  }
-  entry.video.pause();
+  seekToLoopStart(entry);
+  playVideo(entry);
 }
 
 function teardown(entry: PooledMoodVideo): void {
@@ -80,11 +76,11 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     loopEnd: take.loopEnd,
     onTimeUpdate: () => undefined,
   };
-  entry.onTimeUpdate = () => clampAtLoopEnd(entry);
+  entry.onTimeUpdate = () => loopTrimmedWindow(entry);
 
   video.muted = true;
   video.playsInline = true;
-  video.loop = true;
+  video.loop = false;
   video.preload = "auto";
   video.src = take.url;
   video.addEventListener("timeupdate", entry.onTimeUpdate);
@@ -146,9 +142,18 @@ export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
 
-  Tone.getDraw().schedule(() => {
+  const seekAndPlay = () => {
     seekToLoopStart(entry);
     playVideo(entry);
+  };
+
+  if (atAudioTime - Tone.now() <= VIDEO_SEEK_LEAD_SECONDS) {
+    seekAndPlay();
+    return;
+  }
+
+  Tone.getDraw().schedule(() => {
+    seekAndPlay();
   }, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
 }
 

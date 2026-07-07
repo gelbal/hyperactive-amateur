@@ -5,11 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodSelectionCommit } from "../types";
 import { claimPendingAudible, canStartAudibleAction } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
-import {
-  liveTakesFromSelections,
-  prepareUpcoming,
-  syncPool,
-} from "./moodVideoPool";
+import { stopAllMoodPlayers } from "./moodPlayers";
 import {
   createBoundaryQueue,
   cycleIndexAt,
@@ -80,34 +76,9 @@ function scheduleCycleDisplayUpdate(audioTime: number): void {
   }, audioTime);
 }
 
-function prepareArmedVideos(due: BoundaryQueueEvent[], boundaryTime: number): void {
-  const state = useAppStore.getState();
-  const piece = state.mood.piece;
-  if (!piece) return;
-
-  const nextSelections = { ...state.mood.performance.selections };
-  const prepared = new Set<string>();
-  for (const event of due) {
-    if (event.type !== "selection" || event.entry === "off") continue;
-    nextSelections[event.micId] = event.entry;
-  }
-
-  syncPool(liveTakesFromSelections(piece, nextSelections));
-
-  for (const event of due) {
-    if (event.type !== "selection" || event.entry === "off") continue;
-    const mic = piece.mics.find((candidate) => candidate.id === event.micId);
-    if (!mic?.takes.some((take) => take.id === event.entry)) continue;
-    if (prepared.has(event.entry)) continue;
-    prepared.add(event.entry);
-    prepareUpcoming(event.entry, boundaryTime);
-  }
-}
-
 function onCycleBoundary(audioTime: number): void {
   const due = boundaryQueue.dueAt(audioTime);
   if (due.length > 0) {
-    prepareArmedVideos(due, audioTime);
     pendingCommits = [...pendingCommits, ...due];
   }
   scheduleCycleDisplayUpdate(audioTime);
@@ -145,6 +116,7 @@ export function stopMoodPerformance(): void {
   const transport = Tone.getTransport();
   transport.stop();
   transport.position = 0;
+  stopAllMoodPlayers();
   useAppStore.getState().actions.setMoodPerforming(false);
 }
 

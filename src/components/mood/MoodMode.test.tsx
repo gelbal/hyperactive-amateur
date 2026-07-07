@@ -26,6 +26,10 @@ vi.mock("../../lib/moodTransport", () => ({
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
+vi.mock("../../lib/useMoodKeys", () => ({
+  useMoodKeys: vi.fn(),
+}));
+
 import { MoodMode } from "./MoodMode";
 import { createEmptyMoodPiece } from "../../lib/moodStages";
 import { clearMoodPiece, saveMoodPiece } from "../../lib/moodPersistence";
