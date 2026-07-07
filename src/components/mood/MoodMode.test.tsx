@@ -262,7 +262,51 @@ describe("MoodMode", () => {
     expect(screen.queryByRole("button", { name: /Pocket/i })).not.toBeInTheDocument();
   });
 
-  it("shows the temporary performance controls with a ticking cycle count", () => {
+  it("disables Mood play until the One sets a cycle", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    render(<MoodMode />);
+
+    const playButton = screen.getByRole("button", { name: "Start mood performance" });
+    expect(playButton).toBeDisabled();
+    expect(screen.getByText("record the One first")).toBeInTheDocument();
+
+    fireEvent.click(playButton);
+
+    expect(moodTransportMocks.startMoodPerformance).not.toHaveBeenCalled();
+  });
+
+  it("gate-blocks Mood start while keeping stop available", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("row", "pocket");
+      useAppStore.getState().actions.setMoodTake(
+        "mic-0",
+        makeTake({ id: "the-one", durationSeconds: 4, trimEndMs: 4000 }),
+      );
+      useAppStore.getState().actions.setRecordingState("recording", 0);
+    });
+    render(<MoodMode />);
+
+    const playButton = screen.getByRole("button", { name: "Start mood performance" });
+    expect(playButton).toBeDisabled();
+
+    fireEvent.click(playButton);
+
+    expect(moodTransportMocks.startMoodPerformance).not.toHaveBeenCalled();
+
+    act(() => {
+      useAppStore.getState().actions.setMoodPerforming(true, 12);
+    });
+
+    const stopButton = screen.getByRole("button", { name: "Stop mood performance" });
+    expect(stopButton).not.toBeDisabled();
+
+    fireEvent.click(stopButton);
+
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the Mood performance controls with a ticking cycle count", () => {
     act(() => {
       useAppStore.getState().actions.setAppMode("mood");
       useAppStore.getState().actions.createMoodPiece("row", "pocket");
