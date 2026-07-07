@@ -98,6 +98,19 @@ function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["perf
   };
 }
 
+function stopMoodPerformanceState(
+  performance: AppState["mood"]["performance"],
+): AppState["mood"]["performance"] {
+  return {
+    ...performance,
+    isPerforming: false,
+    epoch: null,
+    dropActive: false,
+    hotMicId: null,
+    cycleCount: 0,
+  };
+}
+
 function uniqueRecoveryScopes(scopes: RecoveryWarningScope[]): RecoveryWarningScope[] {
   const out: RecoveryWarningScope[] = [];
   for (const scope of scopes) {
@@ -338,7 +351,7 @@ export const useAppStore = create<AppStore>((set) => ({
           mood: {
             ...state.mood,
             performance: state.mood.piece
-              ? createMoodPerformanceForPiece(state.mood.piece)
+              ? stopMoodPerformanceState(state.mood.performance)
               : createIdleMoodPerformance(),
           },
         };
@@ -429,7 +442,7 @@ export const useAppStore = create<AppStore>((set) => ({
                 hotMicId: null,
                 cycleCount: 0,
               }
-            : createIdleMoodPerformance(),
+            : stopMoodPerformanceState(state.mood.performance),
         },
       })),
 

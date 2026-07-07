@@ -8,10 +8,20 @@ const audioMocks = vi.hoisted(() => ({
   decodeAudioData: vi.fn(),
 }));
 
+const moodTransportMocks = vi.hoisted(() => ({
+  startMoodPerformance: vi.fn(),
+  stopMoodPerformance: vi.fn(),
+}));
+
 vi.mock("../../lib/audio", () => ({
   getAudioContext: () => ({
     decodeAudioData: audioMocks.decodeAudioData,
   }),
+}));
+
+vi.mock("../../lib/moodTransport", () => ({
+  startMoodPerformance: moodTransportMocks.startMoodPerformance,
+  stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
 import { MoodMode } from "./MoodMode";
@@ -64,6 +74,9 @@ describe("MoodMode", () => {
     await clearMoodPiece();
     audioMocks.decodeAudioData.mockReset();
     audioMocks.decodeAudioData.mockResolvedValue({ duration: 1.5, sampleRate: 48000 } as AudioBuffer);
+    moodTransportMocks.startMoodPerformance.mockReset();
+    moodTransportMocks.startMoodPerformance.mockResolvedValue(undefined);
+    moodTransportMocks.stopMoodPerformance.mockReset();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setMoodHydration("ready");
@@ -247,6 +260,33 @@ describe("MoodMode", () => {
     expect(screen.getByText("2 mics")).toBeInTheDocument();
     expect(screen.getByLabelText("Time feel")).toHaveTextContent("Pocket");
     expect(screen.queryByRole("button", { name: /Pocket/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the temporary performance controls with a ticking cycle count", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("row", "pocket");
+      useAppStore.getState().actions.setMoodTake(
+        "mic-0",
+        makeTake({ id: "the-one", durationSeconds: 4, trimEndMs: 4000 }),
+      );
+    });
+    render(<MoodMode />);
+
+    expect(screen.getByLabelText("Mood cycle count")).toHaveTextContent("Cycle 0");
+    fireEvent.click(screen.getByRole("button", { name: "Start mood performance" }));
+
+    expect(moodTransportMocks.startMoodPerformance).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      useAppStore.getState().actions.setMoodPerforming(true, 12);
+      useAppStore.getState().actions.setMoodCycleCount(3);
+    });
+
+    expect(screen.getByLabelText("Mood cycle count")).toHaveTextContent("Cycle 3");
+    fireEvent.click(screen.getByRole("button", { name: "Stop mood performance" }));
+
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
 
   it("creates a Click mood piece with local bpm and bars", () => {
