@@ -3,7 +3,7 @@
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
-import { nextCycleBoundary } from "./moodClock";
+import { nextCycleBoundary, takeLoopPeriod } from "./moodClock";
 import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
 import { armMoodSelectionCommit } from "./moodTransport";
 import {
@@ -35,9 +35,10 @@ function liveVideoTakesIncludingArmed(
   piece: MoodPiece,
   selections: SelectionMap,
   armed: ArmedMap,
+  epoch: number | null,
 ): MoodVideoPoolTake[] {
   const live = new Map(
-    liveTakesFromSelections(piece, selections).map((take) => [take.takeId, take]),
+    liveTakesFromSelections(piece, selections, epoch).map((take) => [take.takeId, take]),
   );
 
   for (const mic of piece.mics) {
@@ -50,6 +51,12 @@ function liveVideoTakesIncludingArmed(
       url: take.url,
       loopStart: take.trimStartMs / 1000,
       loopEnd: take.trimEndMs / 1000,
+      loopPeriod:
+        piece.cycleSeconds === null
+          ? Math.max(take.trimEndMs / 1000 - take.trimStartMs / 1000, 1e-6)
+          : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
+      cycleMultiple: take.cycleMultiple,
+      epoch,
     });
   }
 
@@ -79,7 +86,7 @@ export function syncCommittedMoodEngines(
   if (!piece) return;
 
   const { performance } = state.mood;
-  syncPool(liveTakesFromSelections(piece, performance.selections));
+  syncPool(liveTakesFromSelections(piece, performance.selections, performance.epoch));
 
   if (options.syncPlayers === false) return;
   if (!performance.isPerforming || performance.epoch === null) return;
@@ -116,7 +123,14 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
 
   const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, Tone.now());
   armMoodSelectionCommit(commit, boundaryTime);
-  syncPool(liveVideoTakesIncludingArmed(piece, performance.selections, performance.armed));
+  syncPool(
+    liveVideoTakesIncludingArmed(
+      piece,
+      performance.selections,
+      performance.armed,
+      performance.epoch,
+    ),
+  );
   if (entry !== "off") {
     prepareUpcoming(entry, boundaryTime);
   }

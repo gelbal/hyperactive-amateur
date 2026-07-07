@@ -12,10 +12,25 @@ import {
   __resetMoodVideoPoolForTesting,
   isVideoReadyForDraw,
   prepareUpcoming,
+  restartVideosAtPeriodBoundary,
   syncPool,
+  type MoodVideoPoolTake,
   videoForTake,
 } from "./moodVideoPool";
 import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
+
+function poolTake(overrides: Partial<MoodVideoPoolTake> = {}): MoodVideoPoolTake {
+  return {
+    takeId: "take-a",
+    url: "blob:test/a",
+    loopStart: 0,
+    loopEnd: 1,
+    loopPeriod: 1,
+    cycleMultiple: 1,
+    epoch: 0,
+    ...overrides,
+  };
+}
 
 function setVideoFrameState(
   video: HTMLVideoElement,
@@ -67,20 +82,22 @@ describe("moodVideoPool", () => {
   });
 
   it("diffs by takeId: creates new videos, keeps existing ones, and tears down removed ones", () => {
-    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0, loopEnd: 1 }]);
+    syncPool([poolTake()]);
     const first = videoForTake("take-a");
     expect(first).toBeInstanceOf(HTMLVideoElement);
     expect(first?.isConnected).toBe(true);
 
     syncPool([
-      { takeId: "take-a", url: "blob:test/a", loopStart: 0, loopEnd: 1 },
-      { takeId: "take-b", url: "blob:test/b", loopStart: 0.25, loopEnd: 1.25 },
+      poolTake(),
+      poolTake({ takeId: "take-b", url: "blob:test/b", loopStart: 0.25, loopEnd: 1.25 }),
     ]);
     expect(videoForTake("take-a")).toBe(first);
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
 
     const removedPlayback = spyVideoPlayback(first as HTMLVideoElement);
-    syncPool([{ takeId: "take-b", url: "blob:test/b", loopStart: 0.25, loopEnd: 1.25 }]);
+    syncPool([
+      poolTake({ takeId: "take-b", url: "blob:test/b", loopStart: 0.25, loopEnd: 1.25 }),
+    ]);
 
     expect(removedPlayback.pause).toHaveBeenCalledTimes(1);
     expect(removedPlayback.load).toHaveBeenCalledTimes(1);
@@ -91,7 +108,7 @@ describe("moodVideoPool", () => {
   });
 
   it("pins hidden playback attributes for mobile Safari", () => {
-    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0, loopEnd: 1 }]);
+    syncPool([poolTake()]);
     const video = videoForTake("take-a");
 
     expect(video?.muted).toBe(true);
@@ -102,7 +119,7 @@ describe("moodVideoPool", () => {
   });
 
   it("pre-seeks to loopStart at the shared video lead before the boundary", () => {
-    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0.125, loopEnd: 1.125 }]);
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125 })]);
     const video = videoForTake("take-a");
     if (!video) throw new Error("Expected pooled video");
     const playback = spyVideoPlayback(video);
@@ -120,7 +137,7 @@ describe("moodVideoPool", () => {
 
   it("seeks and plays immediately when an upcoming boundary is inside the seek lead", () => {
     toneHarness.setImmediate(11.95);
-    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0.25, loopEnd: 1.25 }]);
+    syncPool([poolTake({ loopStart: 0.25, loopEnd: 1.25 })]);
     const video = videoForTake("take-a");
     if (!video) throw new Error("Expected pooled video");
     const playback = spyVideoPlayback(video);
@@ -132,8 +149,26 @@ describe("moodVideoPool", () => {
     expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
-  it("re-seeks to loopStart when a live take passes loopEnd", () => {
-    syncPool([{ takeId: "take-a", url: "blob:test/a", loopStart: 0.125, loopEnd: 1.125 }]);
+  it("holds the last content frame at content end and restarts only on the period boundary", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 2 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    video.currentTime = 1.2;
+    video.dispatchEvent(new Event("timeupdate"));
+
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+    expect(playback.seek).not.toHaveBeenCalledWith(0.125);
+
+    restartVideosAtPeriodBoundary(1);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(0.125);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps cleanly at content end when content fills the period", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 1 })]);
     const video = videoForTake("take-a");
     if (!video) throw new Error("Expected pooled video");
     const playback = spyVideoPlayback(video);
@@ -142,7 +177,23 @@ describe("moodVideoPool", () => {
     video.dispatchEvent(new Event("timeupdate"));
 
     expect(playback.seek).toHaveBeenLastCalledWith(0.125);
+    expect(playback.play).toHaveBeenCalledTimes(1);
     expect(playback.pause).not.toHaveBeenCalled();
+  });
+
+  it("clamps loopEnd to metadata duration so untrimmed takes still wrap", () => {
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 1 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    Object.defineProperty(video, "duration", { configurable: true, value: 1 });
+    video.dispatchEvent(new Event("loadedmetadata"));
+    const playback = spyVideoPlayback(video);
+
+    video.currentTime = 1.01;
+    video.dispatchEvent(new Event("timeupdate"));
+
+    expect(playback.seek).toHaveBeenLastCalledWith(0);
+    expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
   it("guards readiness with current data, seek state, and decoded dimensions", () => {

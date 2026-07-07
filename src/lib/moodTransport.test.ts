@@ -235,6 +235,9 @@ describe("moodTransport", () => {
     createMoodWithCycle(2);
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
+    moodVideoPoolMocks.liveTakesFromSelections.mockClear();
+    moodVideoPoolMocks.syncPool.mockClear();
+    moodVideoPoolMocks.prepareUpcoming.mockClear();
     armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];

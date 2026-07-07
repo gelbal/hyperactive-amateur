@@ -103,6 +103,8 @@ export async function startMoodPerformance(): Promise<void> {
     transport.position = 0;
     scheduledBoundaryEventId = transport.scheduleRepeat(onCycleBoundary, cycleSeconds);
     useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
+    const { syncCommittedMoodEngines } = await import("./moodPerformance");
+    syncCommittedMoodEngines();
     transport.start();
   } finally {
     release();

@@ -1,16 +1,21 @@
 // ABOUTME: Hidden muted video pool for Mood live-take canvas drawing.
 // ABOUTME: Diffs live takes by id, pre-seeks boundary swaps, and exposes draw readiness guards.
 import * as Tone from "tone";
-import type { MoodPiece, MoodSelectionEntry } from "../types";
+import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
+import { takeLoopPeriod } from "./moodClock";
 import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
 
 const HAVE_CURRENT_DATA = 2;
+const LOOP_EPSILON_SECONDS = 1e-6;
 
 export interface MoodVideoPoolTake {
   takeId: string;
   url: string;
   loopStart: number;
   loopEnd: number;
+  loopPeriod?: number;
+  cycleMultiple?: MoodTake["cycleMultiple"];
+  epoch?: number | null;
 }
 
 interface PooledMoodVideo {
@@ -18,7 +23,15 @@ interface PooledMoodVideo {
   url: string;
   loopStart: number;
   loopEnd: number;
+  effectiveLoopEnd: number;
+  loopPeriod: number;
+  cycleMultiple: MoodTake["cycleMultiple"];
+  epoch: number | null;
+  holdingRest: boolean;
+  lastPeriodBoundaryCycleIndex: number | null;
   onTimeUpdate: () => void;
+  onLoadedMetadata: () => void;
+  onEnded: () => void;
 }
 
 let host: HTMLDivElement | null = null;
@@ -36,6 +49,7 @@ function ensureHost(): HTMLDivElement {
 
 function seekToLoopStart(entry: PooledMoodVideo): boolean {
   try {
+    entry.holdingRest = false;
     entry.video.currentTime = entry.loopStart;
   } catch {
     // currentTime can throw before metadata loads; later boundary seeks retry.
@@ -44,16 +58,57 @@ function seekToLoopStart(entry: PooledMoodVideo): boolean {
 }
 
 function playVideo(entry: PooledMoodVideo): void {
+  entry.holdingRest = false;
   void entry.video.play().catch(() => undefined);
 }
 
+function fallbackLoopPeriod(take: MoodVideoPoolTake): number {
+  return Math.max(take.loopEnd - take.loopStart, LOOP_EPSILON_SECONDS);
+}
+
+function updateEffectiveLoopEnd(entry: PooledMoodVideo): void {
+  const duration = entry.video.duration;
+  entry.effectiveLoopEnd =
+    Number.isFinite(duration) && duration > 0
+      ? Math.min(entry.loopEnd, duration)
+      : entry.loopEnd;
+}
+
+function contentFillsPeriod(entry: PooledMoodVideo): boolean {
+  return entry.effectiveLoopEnd - entry.loopStart >= entry.loopPeriod - LOOP_EPSILON_SECONDS;
+}
+
+function holdAtContentEnd(entry: PooledMoodVideo): void {
+  if (entry.holdingRest) return;
+  entry.holdingRest = true;
+  try {
+    entry.video.currentTime = entry.effectiveLoopEnd;
+  } catch {
+    // Holding at the current decoded frame is still preferable to a content-loop seek.
+  }
+  entry.video.pause();
+}
+
+function shouldRestartAtCycle(entry: PooledMoodVideo, cycleIndex: number): boolean {
+  if (cycleIndex < 0) return false;
+  const boundaryMultiple = entry.cycleMultiple;
+  const quotient = cycleIndex / boundaryMultiple;
+  return Math.abs(quotient - Math.round(quotient)) <= LOOP_EPSILON_SECONDS;
+}
+
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
-  if (entry.loopEnd <= entry.loopStart) {
+  updateEffectiveLoopEnd(entry);
+  if (entry.effectiveLoopEnd <= entry.loopStart) {
     entry.video.pause();
     return;
   }
 
-  if (entry.video.currentTime < entry.loopEnd) return;
+  if (entry.video.currentTime < entry.effectiveLoopEnd) return;
+
+  if (!contentFillsPeriod(entry)) {
+    holdAtContentEnd(entry);
+    return;
+  }
 
   seekToLoopStart(entry);
   playVideo(entry);
@@ -61,6 +116,8 @@ function loopTrimmedWindow(entry: PooledMoodVideo): void {
 
 function teardown(entry: PooledMoodVideo): void {
   entry.video.removeEventListener("timeupdate", entry.onTimeUpdate);
+  entry.video.removeEventListener("loadedmetadata", entry.onLoadedMetadata);
+  entry.video.removeEventListener("ended", entry.onEnded);
   entry.video.pause();
   entry.video.removeAttribute("src");
   entry.video.load();
@@ -74,9 +131,27 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     url: take.url,
     loopStart: take.loopStart,
     loopEnd: take.loopEnd,
+    effectiveLoopEnd: take.loopEnd,
+    loopPeriod: take.loopPeriod ?? fallbackLoopPeriod(take),
+    cycleMultiple: take.cycleMultiple ?? 1,
+    epoch: take.epoch ?? null,
+    holdingRest: false,
+    lastPeriodBoundaryCycleIndex: null,
     onTimeUpdate: () => undefined,
+    onLoadedMetadata: () => undefined,
+    onEnded: () => undefined,
   };
   entry.onTimeUpdate = () => loopTrimmedWindow(entry);
+  entry.onLoadedMetadata = () => updateEffectiveLoopEnd(entry);
+  entry.onEnded = () => {
+    updateEffectiveLoopEnd(entry);
+    if (contentFillsPeriod(entry)) {
+      seekToLoopStart(entry);
+      playVideo(entry);
+      return;
+    }
+    holdAtContentEnd(entry);
+  };
 
   video.muted = true;
   video.playsInline = true;
@@ -84,6 +159,8 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
   video.preload = "auto";
   video.src = take.url;
   video.addEventListener("timeupdate", entry.onTimeUpdate);
+  video.addEventListener("loadedmetadata", entry.onLoadedMetadata);
+  video.addEventListener("ended", entry.onEnded);
   ensureHost().appendChild(video);
   seekToLoopStart(entry);
   playVideo(entry);
@@ -108,6 +185,10 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
     if (existing && existing.url === take.url) {
       existing.loopStart = take.loopStart;
       existing.loopEnd = take.loopEnd;
+      existing.loopPeriod = take.loopPeriod ?? fallbackLoopPeriod(take);
+      existing.cycleMultiple = take.cycleMultiple ?? 1;
+      existing.epoch = take.epoch ?? null;
+      updateEffectiveLoopEnd(existing);
       continue;
     }
 
@@ -121,6 +202,7 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
 export function liveTakesFromSelections(
   piece: MoodPiece,
   selections: Record<string, MoodSelectionEntry>,
+  epoch: number | null = null,
 ): MoodVideoPoolTake[] {
   const live = new Map<string, MoodVideoPoolTake>();
   for (const mic of piece.mics) {
@@ -133,9 +215,25 @@ export function liveTakesFromSelections(
       url: take.url,
       loopStart: take.trimStartMs / 1000,
       loopEnd: take.trimEndMs / 1000,
+      loopPeriod:
+        piece.cycleSeconds === null
+          ? Math.max(take.trimEndMs / 1000 - take.trimStartMs / 1000, LOOP_EPSILON_SECONDS)
+          : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
+      cycleMultiple: take.cycleMultiple,
+      epoch,
     });
   }
   return [...live.values()];
+}
+
+export function restartVideosAtPeriodBoundary(cycleIndex: number): void {
+  for (const entry of videos.values()) {
+    if (!shouldRestartAtCycle(entry, cycleIndex)) continue;
+    if (entry.lastPeriodBoundaryCycleIndex === cycleIndex) continue;
+    entry.lastPeriodBoundaryCycleIndex = cycleIndex;
+    seekToLoopStart(entry);
+    playVideo(entry);
+  }
 }
 
 export function prepareUpcoming(takeId: string, atAudioTime: number): void {

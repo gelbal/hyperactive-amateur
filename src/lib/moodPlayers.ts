@@ -4,7 +4,7 @@ import * as Tone from "tone";
 import type { MoodTake } from "../types";
 import { getAudioContext } from "./audio";
 import { sliceAudioBuffer } from "./audioBufferSlice";
-import { nextCycleBoundary, takeLoopPeriod } from "./moodClock";
+import { takeLoopPeriod } from "./moodClock";
 
 export interface MoodPlayerLiveTake {
   takeId: string;
@@ -61,17 +61,17 @@ function buildPaddedLoopBuffer(take: MoodTake, loopPeriodSeconds: number): Audio
 
 function startPhaseOffset(
   epoch: number,
-  startAt: number,
+  startTime: number,
   loopPeriodSeconds: number,
   syncOffsetMs: number,
 ): number {
-  return positiveModulo(startAt - epoch + syncOffsetMs / 1000, loopPeriodSeconds);
+  return positiveModulo(startTime - epoch + syncOffsetMs / 1000, loopPeriodSeconds);
 }
 
 function createMoodPlayer(take: MoodTake, epoch: number, cycleSeconds: number): Tone.Player {
   const loopPeriodSeconds = takeLoopPeriod(take.cycleMultiple, cycleSeconds);
   const loopBuffer = buildPaddedLoopBuffer(take, loopPeriodSeconds);
-  const startAt = nextCycleBoundary(epoch, cycleSeconds, Tone.now());
+  const startAt = Tone.now();
   const offset = startPhaseOffset(
     epoch,
     startAt,

@@ -240,6 +240,22 @@ describe("moodPerformance", () => {
     expect(moodPlayersMocks.syncMoodPlayers).not.toHaveBeenCalled();
   });
 
+  it("seeds the already committed mix when performance starts", async () => {
+    const { takeA } = createMoodWithStack(2);
+    armSelection("mic-0", "take-a");
+    moodPlayersMocks.syncMoodPlayers.mockClear();
+
+    toneMocks.setNow(20);
+    await startMoodPerformance();
+
+    expect(moodPlayersMocks.syncMoodPlayers).toHaveBeenCalledTimes(1);
+    expect(moodPlayersMocks.syncMoodPlayers).toHaveBeenCalledWith(
+      [{ takeId: "take-a", take: takeA }],
+      20,
+      2,
+    );
+  });
+
   it("replaces a prior arm for the same mic before the boundary", async () => {
     const { takeB } = createMoodWithStack(2);
     toneMocks.setNow(10);

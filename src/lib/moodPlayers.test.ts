@@ -209,17 +209,31 @@ describe("moodPlayers", () => {
   });
 
   it.each([
-    { now: 10, startAt: 10, offset: 0 },
-    { now: 11.5, startAt: 14, offset: 4 },
-    { now: 14, startAt: 14, offset: 4 },
-    { now: 18.1, startAt: 22, offset: 4 },
-  ])("starts at the next cycle boundary with a phase offset for now=$now", (row) => {
+    { now: 10, offset: 0 },
+    { now: 11.5, offset: 1.5 },
+    { now: 14, offset: 4 },
+    { now: 18.1, offset: 0.1 },
+  ])("starts immediately with a phase offset for now=$now", (row) => {
     toneMocks.now.mockReturnValue(row.now);
     const take = makeTake({ id: `phase-${row.now}`, cycleMultiple: 2 });
 
     syncMoodPlayers([{ takeId: take.id, take }], 10, 4);
 
-    expect(toneMocks.players[0].start).toHaveBeenCalledWith(row.startAt, row.offset);
+    const [startAt, offset] = toneMocks.players[0].start.mock.calls[0];
+    expect(startAt).toBe(row.now);
+    expect(offset).toBeCloseTo(row.offset);
+  });
+
+  it("joins immediately just after a cycle boundary instead of waiting a full cycle", () => {
+    toneMocks.now.mockReturnValue(4.02);
+    const take = makeTake({ id: "late-boundary", cycleMultiple: 1 });
+
+    syncMoodPlayers([{ takeId: "late-boundary", take }], 0, 4);
+
+    const [startAt, offset] = toneMocks.players[0].start.mock.calls[0];
+    expect(startAt).toBe(4.02);
+    expect(startAt).not.toBe(8);
+    expect(offset).toBeCloseTo(0.02);
   });
 
   it("applies syncOffsetMs to the phase offset and wraps inside the loop", () => {
@@ -227,11 +241,19 @@ describe("moodPlayers", () => {
     const take = makeTake({ id: "nudged", cycleMultiple: 1, syncOffsetMs: 250 });
 
     syncMoodPlayers([{ takeId: "nudged", take }], 10, 4);
-    expect(toneMocks.players[0].start).toHaveBeenCalledWith(14, 0.25);
+    {
+      const [startAt, offset] = toneMocks.players[0].start.mock.calls[0];
+      expect(startAt).toBe(13.9);
+      expect(offset).toBeCloseTo(0.15);
+    }
 
     const early = makeTake({ id: "early", cycleMultiple: 1, syncOffsetMs: -250 });
     syncMoodPlayers([{ takeId: "early", take: early }], 10, 4);
-    expect(toneMocks.players[1].start).toHaveBeenCalledWith(14, 3.75);
+    {
+      const [startAt, offset] = toneMocks.players[1].start.mock.calls[0];
+      expect(startAt).toBe(13.9);
+      expect(offset).toBeCloseTo(3.65);
+    }
   });
 
   it("creates one shared capture gain node and routes players through it", () => {
