@@ -45,6 +45,10 @@ import {
   initMoodRenderer,
 } from "./moodRenderer";
 import {
+  __resetMoodVideoPoolForTesting,
+  videoForTake,
+} from "./moodVideoPool";
+import {
   __resetMoodTransportForTesting,
   armMoodSelectionCommit,
   startMoodPerformance,
@@ -166,6 +170,28 @@ function currentRenderState(): { piece: MoodPiece; performance: MoodPerformanceS
   return { piece: state.piece, performance: state.performance };
 }
 
+function setVideoFrameState(
+  video: HTMLVideoElement,
+  state: { readyState?: number; seeking?: boolean; width?: number; height?: number },
+): void {
+  Object.defineProperty(video, "readyState", {
+    configurable: true,
+    value: state.readyState ?? 2,
+  });
+  Object.defineProperty(video, "seeking", {
+    configurable: true,
+    value: state.seeking ?? false,
+  });
+  Object.defineProperty(video, "videoWidth", {
+    configurable: true,
+    value: state.width ?? 640,
+  });
+  Object.defineProperty(video, "videoHeight", {
+    configurable: true,
+    value: state.height ?? 480,
+  });
+}
+
 describe("moodRenderer", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -174,6 +200,7 @@ describe("moodRenderer", () => {
     __resetPendingAudibleClaimForTesting();
     __resetMoodTransportForTesting();
     __resetMoodRendererForTesting();
+    __resetMoodVideoPoolForTesting();
     audioLifecycleMocks.ensureAudioRunning.mockReset();
     audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
     toneMocks.now.mockReset();
@@ -191,6 +218,7 @@ describe("moodRenderer", () => {
     stopMoodPerformance();
     __resetMoodTransportForTesting();
     __resetMoodRendererForTesting();
+    __resetMoodVideoPoolForTesting();
     __resetPendingAudibleClaimForTesting();
     restoreImages();
     vi.restoreAllMocks();
@@ -292,5 +320,64 @@ describe("moodRenderer", () => {
     expect(imageCalls).toHaveLength(2);
     expect(imageCalls[0].globalAlpha).toBe(1);
     expect(imageCalls[1].globalAlpha).toBeCloseTo(0.28);
+  });
+
+  it("falls back to the live poster until the pooled take video is drawable", () => {
+    const piece = createEmptyMoodPiece("corners", "pocket");
+    const liveTake = makeMoodTake({
+      id: "live",
+      posterUrl: "blob:test/live-poster",
+      trimStartMs: 250,
+      trimEndMs: 1250,
+    });
+    const dormantTake = makeMoodTake({ id: "dormant", posterUrl: "blob:test/dormant-poster" });
+    const renderPiece: MoodPiece = {
+      ...piece,
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [liveTake, dormantTake] } : mic,
+      ),
+    };
+    const performance: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "live",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    const ctx = createRenderer("corners");
+
+    drawMoodFrame(1, { piece: renderPiece, performance });
+
+    const video = videoForTake("live");
+    expect(video).toBeInstanceOf(HTMLVideoElement);
+    expect(videoForTake("dormant")).toBeNull();
+    let imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+    expect(imageCalls).toHaveLength(1);
+    expect(imageCalls[0].args[0]).not.toBe(video);
+
+    ctx.__haCanvasCalls.length = 0;
+    setVideoFrameState(video as HTMLVideoElement, {
+      readyState: 2,
+      seeking: false,
+      width: 640,
+      height: 480,
+    });
+    drawMoodFrame(1.1, { piece: renderPiece, performance });
+
+    imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+    expect(imageCalls).toHaveLength(1);
+    expect(imageCalls[0].args[0]).toBe(video);
   });
 });

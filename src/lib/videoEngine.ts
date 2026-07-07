@@ -5,6 +5,7 @@ import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { drawCover } from "./canvasDraw";
 import { LOG_EVENTS, logger } from "./logger";
+import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
 
 export type TagOrUntagged = Tag | "untagged";
 
@@ -36,7 +37,6 @@ export interface TriggerEvent {
 // seek + play at the same moment the audio fires, the first ~30–60 ms of
 // the hard-cut shows a stale paused frame. Doing the seek slightly early
 // (and the play exactly on time) leaves the element ready to render.
-const LOOKAHEAD_S = 0.08;
 const HAVE_CURRENT_DATA = 2;
 
 let host: HTMLDivElement | null = null;
@@ -168,7 +168,7 @@ function startPlayback(trackId: number, when: number): void {
   // Within (or past) the lookahead window: seek + play back-to-back on
   // the next audio-aligned tick. Preserves the pre-1.1 behavior for pad
   // clicks and live keyboard hits while the transport is stopped.
-  if (when - now <= LOOKAHEAD_S) {
+  if (when - now <= VIDEO_SEEK_LEAD_SECONDS) {
     draw.schedule(() => {
       seek();
       play();
@@ -177,7 +177,7 @@ function startPlayback(trackId: number, when: number): void {
   }
   // Comfortable lead time: seek early so the decoder has time to settle,
   // then play exactly on the audio beat.
-  draw.schedule(seek, when - LOOKAHEAD_S);
+  draw.schedule(seek, when - VIDEO_SEEK_LEAD_SECONDS);
   draw.schedule(play, when);
 }
 

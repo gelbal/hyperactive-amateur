@@ -1,11 +1,24 @@
 // ABOUTME: Canvas renderer for Mood's stage-native Wall lens.
 // ABOUTME: Promotes boundary commits, lays out mics, and paints take posters into export pixels.
 import { useAppStore } from "../store/useAppStore";
-import type { MoodMic, MoodPerformanceState, MoodPiece, MoodSelectionEntry, MoodStageId, MoodTake } from "../types";
+import type {
+  MoodMic,
+  MoodPerformanceState,
+  MoodPiece,
+  MoodSelectionEntry,
+  MoodStageId,
+  MoodTake,
+} from "../types";
 import { drawCover } from "./canvasDraw";
 import { applyDueCommits } from "./moodCommits";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import { layoutFor, type TileRect } from "./moodTilers";
+import {
+  isVideoReadyForDraw,
+  liveTakesFromSelections,
+  syncPool,
+  videoForTake,
+} from "./moodVideoPool";
 
 const TILE_BLACK = "#050505";
 const OFF_POSTER_ALPHA = 0.28;
@@ -129,6 +142,16 @@ function drawWallTile(
   fillTile(ctx, rect);
   const liveTake = liveTakeFor(mic, entry);
   if (liveTake) {
+    const video = videoForTake(liveTake.id);
+    if (video && isVideoReadyForDraw(video)) {
+      drawCover(ctx, video, {
+        x: rect.x,
+        y: rect.y,
+        width: rect.w,
+        height: rect.h,
+      });
+      return;
+    }
     drawPoster(ctx, liveTake, rect, 1);
     return;
   }
@@ -147,6 +170,8 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const { piece, performance } = renderState;
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
+
+  syncPool(liveTakesFromSelections(piece, performance.selections));
 
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
