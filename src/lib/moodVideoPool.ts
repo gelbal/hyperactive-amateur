@@ -28,7 +28,11 @@ interface PooledMoodVideo {
   cycleMultiple: MoodTake["cycleMultiple"];
   epoch: number | null;
   holdingRest: boolean;
-  lastPeriodBoundaryCycleIndex: number | null;
+  // Period-lock dedup: the index of the take's own loop period (which can be a
+  // half-cycle for cycleMultiple 0.5), scoped to the epoch it was computed
+  // under so a stop/restart re-seeks even inside the same period index.
+  restartEpoch: number | null;
+  lastPeriodIndex: number | null;
   onTimeUpdate: () => void;
   onLoadedMetadata: () => void;
   onEnded: () => void;
@@ -89,11 +93,11 @@ function holdAtContentEnd(entry: PooledMoodVideo): void {
   entry.video.pause();
 }
 
-function shouldRestartAtCycle(entry: PooledMoodVideo, cycleIndex: number): boolean {
-  if (cycleIndex < 0) return false;
-  const boundaryMultiple = entry.cycleMultiple;
-  const quotient = cycleIndex / boundaryMultiple;
-  return Math.abs(quotient - Math.round(quotient)) <= LOOP_EPSILON_SECONDS;
+// The index of the take's OWN loop period at audioTime, phase-locked to the
+// epoch. loopPeriod = cycleMultiple × cycleSeconds, so this correctly counts
+// half-cycle periods (0.5) as well as multi-cycle ones (2, 4).
+function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
+  return Math.floor((audioTime - epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
 }
 
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
@@ -136,7 +140,8 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     cycleMultiple: take.cycleMultiple ?? 1,
     epoch: take.epoch ?? null,
     holdingRest: false,
-    lastPeriodBoundaryCycleIndex: null,
+    restartEpoch: null,
+    lastPeriodIndex: null,
     onTimeUpdate: () => undefined,
     onLoadedMetadata: () => undefined,
     onEnded: () => undefined,
@@ -226,11 +231,18 @@ export function liveTakesFromSelections(
   return [...live.values()];
 }
 
-export function restartVideosAtPeriodBoundary(cycleIndex: number): void {
+export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number): void {
   for (const entry of videos.values()) {
-    if (!shouldRestartAtCycle(entry, cycleIndex)) continue;
-    if (entry.lastPeriodBoundaryCycleIndex === cycleIndex) continue;
-    entry.lastPeriodBoundaryCycleIndex = cycleIndex;
+    // A new performance epoch resets the dedup so the first period of the new
+    // run always re-seeks, even if it lands on the same index as the old run.
+    if (entry.restartEpoch !== epoch) {
+      entry.restartEpoch = epoch;
+      entry.lastPeriodIndex = null;
+    }
+    const periodIndex = periodIndexAt(entry, audioTime, epoch);
+    if (periodIndex < 0) continue;
+    if (entry.lastPeriodIndex === periodIndex) continue;
+    entry.lastPeriodIndex = periodIndex;
     seekToLoopStart(entry);
     playVideo(entry);
   }

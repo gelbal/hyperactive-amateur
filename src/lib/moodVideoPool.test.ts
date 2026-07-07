@@ -161,10 +161,49 @@ describe("moodVideoPool", () => {
     expect(playback.pause).toHaveBeenCalledTimes(1);
     expect(playback.seek).not.toHaveBeenCalledWith(0.125);
 
-    restartVideosAtPeriodBoundary(1);
+    // Period boundary for a 2s-period take at epoch 0 lands at audioTime 2.
+    restartVideosAtPeriodBoundary(2, 0);
 
     expect(playback.seek).toHaveBeenLastCalledWith(0.125);
     expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts a half-cycle (cycleMultiple 0.5) take on its half-cycle period boundaries", () => {
+    // period = 0.5s: boundaries at epoch + 0, 0.5, 1.0, ...
+    syncPool([poolTake({ loopStart: 0, loopEnd: 0.25, loopPeriod: 0.5, cycleMultiple: 0.5 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    restartVideosAtPeriodBoundary(0.5, 0);
+    expect(playback.seek).toHaveBeenLastCalledWith(0);
+    const seeksAfterFirst = playback.seek.mock.calls.length;
+
+    // Same period index → no double re-seek.
+    restartVideosAtPeriodBoundary(0.5, 0);
+    expect(playback.seek.mock.calls.length).toBe(seeksAfterFirst);
+
+    // The next half-cycle boundary DOES re-seek (a full-cycle-only restart would miss this).
+    restartVideosAtPeriodBoundary(1.0, 0);
+    expect(playback.seek.mock.calls.length).toBe(seeksAfterFirst + 1);
+    expect(playback.seek).toHaveBeenLastCalledWith(0);
+  });
+
+  it("re-seeks after an epoch reset even at the same period index", () => {
+    syncPool([poolTake({ loopStart: 0, loopEnd: 0.5, loopPeriod: 1, cycleMultiple: 1 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    restartVideosAtPeriodBoundary(1, 0);
+    const seeksAfterFirst = playback.seek.mock.calls.length;
+    expect(seeksAfterFirst).toBeGreaterThan(0);
+
+    // A stop/restart gives a new epoch; period index resolves to 1 again but the
+    // dedup must not swallow the new run's re-seek.
+    restartVideosAtPeriodBoundary(11, 10);
+    expect(playback.seek.mock.calls.length).toBe(seeksAfterFirst + 1);
+    expect(playback.seek).toHaveBeenLastCalledWith(0);
   });
 
   it("wraps cleanly at content end when content fills the period", () => {

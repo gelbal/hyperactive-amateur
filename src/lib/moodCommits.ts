@@ -2,7 +2,6 @@
 // ABOUTME: Drains due transport commits once and applies store-visible performance state.
 import { useAppStore } from "../store/useAppStore";
 import type { MoodSelectionCommit } from "../types";
-import { cycleIndexAt } from "./moodClock";
 import { syncCommittedMoodEngines } from "./moodPerformance";
 import { consumeDueCommits } from "./moodTransport";
 import { restartVideosAtPeriodBoundary } from "./moodVideoPool";
@@ -35,5 +34,5 @@ export function applyDueCommits(audioTime: number): void {
     return;
   }
 
-  restartVideosAtPeriodBoundary(cycleIndexAt(epoch, piece.cycleSeconds, audioTime));
+  restartVideosAtPeriodBoundary(audioTime, epoch);
 }
