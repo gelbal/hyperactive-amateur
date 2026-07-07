@@ -105,7 +105,7 @@ function StageGlyph({ stage }: { stage: MoodStageId }) {
   );
 }
 
-function StagePicker() {
+function StagePicker({ disabled }: { disabled: boolean }) {
   const createMoodPiece = useAppStore((s) => s.actions.createMoodPiece);
   const [timeFeel, setTimeFeel] = useState<FeelOption["id"]>("pocket");
   const [clickBpm, setClickBpm] = useState(90);
@@ -126,8 +126,9 @@ function StagePicker() {
           <button
             key={stage}
             type="button"
+            disabled={disabled}
             onClick={() => birthMood(stage)}
-            className="flex min-h-44 flex-col items-center justify-center gap-3 rounded border border-zinc-800 bg-zinc-900 p-5 text-zinc-200 transition-colors hover:border-orange-500 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+            className="flex min-h-44 flex-col items-center justify-center gap-3 rounded border border-zinc-800 bg-zinc-900 p-5 text-zinc-200 transition-colors hover:border-orange-500 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-800 disabled:hover:bg-zinc-900"
           >
             <span className="text-orange-500">
               <StageGlyph stage={stage} />
@@ -149,9 +150,10 @@ function StagePicker() {
                 key={feel.id}
                 type="button"
                 aria-pressed={selected}
+                disabled={disabled}
                 onClick={() => setTimeFeel(feel.id)}
                 className={
-                  "flex min-h-16 flex-col justify-center rounded border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
+                  "flex min-h-16 flex-col justify-center rounded border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
                   (selected
                     ? "border-orange-500 bg-orange-500/10 text-orange-100"
                     : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900")
@@ -166,7 +168,7 @@ function StagePicker() {
 
         {timeFeel === "click" && (
           <div className="flex w-full flex-col gap-4 rounded border border-zinc-800 bg-zinc-950 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <BpmDialControl bpm={clickBpm} onChange={setClickBpm} />
+            <BpmDialControl bpm={clickBpm} onChange={setClickBpm} disabled={disabled} />
             <div role="group" aria-label="Cycle bars" className="grid grid-cols-3 gap-2">
               {CYCLE_BAR_OPTIONS.map((bars) => {
                 const selected = cycleBars === bars;
@@ -175,9 +177,10 @@ function StagePicker() {
                     key={bars}
                     type="button"
                     aria-pressed={selected}
+                    disabled={disabled}
                     onClick={() => setCycleBars(bars)}
                     className={
-                      "min-h-11 rounded border px-3 py-2 text-sm font-medium tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
+                      "min-h-11 rounded border px-3 py-2 text-sm font-medium tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
                       (selected
                         ? "border-orange-500 bg-orange-500 text-zinc-950"
                         : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:border-zinc-500")
@@ -195,7 +198,7 @@ function StagePicker() {
   );
 }
 
-function ScratchMoodControl() {
+function ScratchMoodControl({ disabled }: { disabled: boolean }) {
   const [armed, setArmed] = useState(false);
 
   useEffect(() => {
@@ -208,8 +211,9 @@ function ScratchMoodControl() {
     return (
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setArmed(true)}
-        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:bg-transparent"
       >
         Scratch this mood
       </button>
@@ -224,11 +228,12 @@ function ScratchMoodControl() {
       <div className="flex gap-2">
         <button
           type="button"
+          disabled={disabled}
           onClick={() => {
             useAppStore.getState().actions.scratchMoodPiece();
             setArmed(false);
           }}
-          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600"
         >
           Yes, scratch it
         </button>
@@ -250,7 +255,13 @@ function moodFeelLabel(piece: MoodPiece): string {
   return `Click · ${piece.bpm} · ${piece.cycleBars} ${piece.cycleBars === 1 ? "bar" : "bars"}`;
 }
 
-function MoodPieceControls({ piece }: { piece: MoodPiece }) {
+function MoodPieceControls({
+  piece,
+  scratchDisabled,
+}: {
+  piece: MoodPiece;
+  scratchDisabled: boolean;
+}) {
   return (
     <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
       <span
@@ -259,15 +270,17 @@ function MoodPieceControls({ piece }: { piece: MoodPiece }) {
       >
         {moodFeelLabel(piece)}
       </span>
-      <ScratchMoodControl />
+      <ScratchMoodControl disabled={scratchDisabled} />
     </div>
   );
 }
 
 export function MoodMode() {
   const piece = useAppStore((s) => s.mood.piece);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
 
-  if (!piece) return <StagePicker />;
+  if (!piece) return <StagePicker disabled={isExporting} />;
 
   const stageName = STAGE_LABELS[piece.stage];
   const micCount = piece.mics.length;
@@ -284,7 +297,7 @@ export function MoodMode() {
           {descriptor.canvasSize.w} x {descriptor.canvasSize.h}
         </span>
       </div>
-      <MoodPieceControls piece={piece} />
+      <MoodPieceControls piece={piece} scratchDisabled={isExporting || isPerforming} />
     </section>
   );
 }
