@@ -9,8 +9,8 @@ export function RecoveryBanner() {
 
   const visibleWarnings = warnings.slice(0, 3);
   const hiddenCount = warnings.length - visibleWarnings.length;
-  const audioRepairCount = warnings.filter((warning) =>
-    warning.includes("audio unavailable"),
+  const audioRepairCount = warnings.filter(
+    (warning) => warning.startsWith("Track ") && warning.includes("audio unavailable"),
   ).length;
   const audioRepairSummary =
     audioRepairCount === 1
@@ -28,8 +28,8 @@ export function RecoveryBanner() {
           <h2 className="text-sm font-semibold text-amber-100">Recovered saved project</h2>
           <ul className="mt-1 space-y-1 text-xs text-amber-100/80">
             {audioRepairCount > 0 && <li>{audioRepairSummary}</li>}
-            {visibleWarnings.map((warning) => (
-              <li key={warning}>{warning}</li>
+            {visibleWarnings.map((warning, index) => (
+              <li key={`${warning}-${index}`}>{warning}</li>
             ))}
             {hiddenCount > 0 && <li>{hiddenCount} more recovery fixes were applied.</li>}
           </ul>
@@ -37,7 +37,7 @@ export function RecoveryBanner() {
         <button
           type="button"
           aria-label="Dismiss recovery notice"
-          onClick={() => useAppStore.getState().actions.setRecoveryWarnings([])}
+          onClick={() => useAppStore.getState().actions.clearRecoveryWarnings()}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-amber-400/30 text-amber-100 hover:bg-amber-900/50"
         >
           <X size={16} />

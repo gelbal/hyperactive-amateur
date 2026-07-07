@@ -7,6 +7,11 @@ const rehydrateMocks = vi.hoisted(() => ({
   rehydrateFromStorage: vi.fn(),
 }));
 
+const moodRehydrateMocks = vi.hoisted(() => ({
+  rehydrateMoodFromStorage: vi.fn(),
+  decodeMoodTakes: vi.fn(),
+}));
+
 const autoSaveMocks = vi.hoisted(() => ({
   startAutoSave: vi.fn(),
   shutdownAutoSave: vi.fn(),
@@ -21,6 +26,10 @@ vi.mock("./lib/install", () => ({
 }));
 vi.mock("./lib/rehydrate", () => ({
   rehydrateFromStorage: rehydrateMocks.rehydrateFromStorage,
+}));
+vi.mock("./lib/moodRehydrate", () => ({
+  rehydrateMoodFromStorage: moodRehydrateMocks.rehydrateMoodFromStorage,
+  decodeMoodTakes: moodRehydrateMocks.decodeMoodTakes,
 }));
 vi.mock("./lib/autoSave", () => ({
   startAutoSave: autoSaveMocks.startAutoSave,
@@ -122,6 +131,13 @@ describe("App autosave gating", () => {
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });
 
+  it("does not hydrate Mood at App boot", async () => {
+    await renderApp();
+
+    expect(moodRehydrateMocks.rehydrateMoodFromStorage).not.toHaveBeenCalled();
+    expect(moodRehydrateMocks.decodeMoodTakes).not.toHaveBeenCalled();
+  });
+
   it("does not start autosave for a degraded-but-hydrated load", async () => {
     rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
       useAppStore.getState().actions.setRecoveryWarnings([REPAIR_WARNING]);
@@ -142,6 +158,34 @@ describe("App autosave gating", () => {
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
+
+    expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume Chop autosave when only Mood recovery warnings are cleared", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
+      useAppStore.getState().actions.setRecoveryWarnings([REPAIR_WARNING]);
+      return { ok: true, degraded: true, warnings: [REPAIR_WARNING] };
+    });
+    await renderApp();
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+
+    act(() => {
+      useAppStore
+        .getState()
+        .actions.setRecoveryWarningsForScope(
+          "mood",
+          ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+          true,
+        );
+      useAppStore.getState().actions.clearRecoveryWarnings("mood");
+    });
+
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+
+    act(() => {
+      useAppStore.getState().actions.clearRecoveryWarnings("chop");
+    });
 
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });

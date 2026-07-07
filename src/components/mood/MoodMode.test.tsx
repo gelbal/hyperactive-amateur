@@ -1,22 +1,143 @@
 // ABOUTME: MoodMode tests — verifies the first lazy Mood shell and stage picker.
 // ABOUTME: Covers piece birth, placeholder stage display, and scratch confirmation.
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import "fake-indexeddb/auto";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const audioMocks = vi.hoisted(() => ({
+  decodeAudioData: vi.fn(),
+}));
+
+vi.mock("../../lib/audio", () => ({
+  getAudioContext: () => ({
+    decodeAudioData: audioMocks.decodeAudioData,
+  }),
+}));
+
 import { MoodMode } from "./MoodMode";
+import { createEmptyMoodPiece } from "../../lib/moodStages";
+import { clearMoodPiece, saveMoodPiece } from "../../lib/moodPersistence";
+import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useAppStore } from "../../store/useAppStore";
+import type { MoodTake } from "../../types";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeBlob(bytes: number[], type: string): Blob {
+  return new Blob([new Uint8Array(bytes)], { type });
+}
+
+function makeTake(overrides: Partial<MoodTake> = {}): MoodTake {
+  const id = overrides.id ?? "saved-take";
+  return {
+    id,
+    videoBlob: makeBlob([1, 2, 3], "video/webm"),
+    audioBlob: makeBlob([4, 5, 6], "audio/wav"),
+    posterBlob: makeBlob([7, 8, 9], "image/jpeg"),
+    url: `blob:test/${id}`,
+    audioBuffer: { duration: 1.5, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
+    posterUrl: `blob:test/${id}-poster`,
+    trimStartMs: 0,
+    trimEndMs: 1500,
+    durationSeconds: 1.5,
+    cycleMultiple: 1,
+    syncOffsetMs: 0,
+    part: null,
+    partSource: null,
+    recordedAt: 1,
+    ...overrides,
+  };
+}
 
 describe("MoodMode", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     window.localStorage.clear();
+    await clearMoodPiece();
+    audioMocks.decodeAudioData.mockReset();
+    audioMocks.decodeAudioData.mockResolvedValue({ duration: 1.5, sampleRate: 48000 } as AudioBuffer);
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
+    useAppStore.getState().actions.setMoodHydration("ready");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     act(() => {
       useAppStore.getState().actions.setIsExporting(false);
+    });
+  });
+
+  it("hydrates lazily on the first cold Mood entry", async () => {
+    const load = deferred<moodRehydrate.MoodRehydrateResult>();
+    const rehydrate = vi
+      .spyOn(moodRehydrate, "rehydrateMoodFromStorage")
+      .mockReturnValue(load.promise);
+    const decode = vi.spyOn(moodRehydrate, "decodeMoodTakes").mockResolvedValue({
+      ok: true,
+      degraded: false,
+      piece: null,
+      warnings: [],
+    });
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    render(<MoodMode />);
+
+    expect(rehydrate).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().mood.hydration).toBe("hydrating");
+    expect(screen.getByText("Loading mood...")).toBeInTheDocument();
+
+    await act(async () => {
+      load.resolve({
+        status: "empty",
+        ok: false,
+        degraded: false,
+        piece: null,
+        warnings: [],
+      });
+      await load.promise;
+    });
+
+    await waitFor(() => expect(useAppStore.getState().mood.hydration).toBe("ready"));
+    expect(decode).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
+  });
+
+  it("restores a saved Mood piece from storage on first entry", async () => {
+    const piece = createEmptyMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
+    const take = makeTake({ id: "saved-take" });
+    await saveMoodPiece({
+      ...piece,
+      cycleSeconds: 4,
+      oneMicId: "mic-0",
+      oneTakeId: "saved-take",
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [take] } : mic,
+      ),
+      updatedAt: 5000,
+    });
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    render(<MoodMode />);
+
+    expect(screen.getByText("Loading mood...")).toBeInTheDocument();
+    expect(await screen.findByText("Row stage")).toBeInTheDocument();
+    expect(useAppStore.getState().mood.piece).toMatchObject({
+      stage: "row",
+      timeFeel: "click",
+      oneTakeId: "saved-take",
+    });
+    expect(useAppStore.getState().mood.piece?.mics[0].takes[0]).toMatchObject({
+      id: "saved-take",
+      audioStatus: "ok",
     });
   });
 

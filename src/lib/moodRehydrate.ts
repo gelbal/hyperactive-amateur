@@ -17,6 +17,23 @@ import type {
   PersistedMoodPiece,
   PersistedMoodTake,
 } from "./moodPersistence";
+import { captureFirstFrame } from "./posterFrame";
+
+export type MoodAudioContextLike = Pick<AudioContext, "decodeAudioData">;
+
+export interface MoodPosterRegenerationJob {
+  micId: string;
+  takeId: string;
+  posterPromise: Promise<Blob | null>;
+}
+
+export interface MoodHydrateResult {
+  ok: boolean;
+  degraded: boolean;
+  piece: MoodPiece | null;
+  warnings: string[];
+  posterJobs?: MoodPosterRegenerationJob[];
+}
 
 type MoodRehydrateEmptyResult = {
   status: "empty";
@@ -68,6 +85,34 @@ const MOOD_CYCLE_MULTIPLES = [0.5, 1, 2, 4] as const;
 
 function warn(warnings: string[], message: string): void {
   warnings.push(message);
+}
+
+function warnMoodAudioUnavailable(warnings: string[], micId: string, takeId: string): void {
+  const message = `Mood take ${takeId} in ${micId} audio unavailable — re-record to restore sound.`;
+  if (!warnings.includes(message)) warn(warnings, message);
+}
+
+async function decodeMoodBlob(
+  blob: Blob,
+  audioContext: MoodAudioContextLike,
+): Promise<AudioBuffer> {
+  const buffer = await blob.arrayBuffer();
+  return audioContext.decodeAudioData(buffer.slice(0));
+}
+
+export async function decodeMoodTakeAudio(
+  take: Pick<PersistedMoodTake, "videoBlob" | "audioBlob">,
+  audioContext: MoodAudioContextLike,
+): Promise<AudioBuffer> {
+  if (take.audioBlob) {
+    try {
+      return await decodeMoodBlob(take.audioBlob, audioContext);
+    } catch {
+      // Fall through to legacy mixed-container decode below.
+    }
+  }
+  if (!take.videoBlob) throw new Error("Mood take video blob is missing");
+  return decodeMoodBlob(take.videoBlob, audioContext);
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -386,6 +431,89 @@ function failedResult(warnings: string[]): MoodRehydrateFailedResult {
     degraded: true,
     piece: null,
     warnings,
+  };
+}
+
+export async function decodeMoodTakes(
+  piece: PersistedMoodPiece,
+  audioContext: MoodAudioContextLike,
+): Promise<MoodHydrateResult> {
+  const warnings: string[] = [];
+  const posterJobs: MoodPosterRegenerationJob[] = [];
+  const mics = await Promise.all(
+    piece.mics.map(async (mic) => ({
+      id: mic.id,
+      takes: (
+        await Promise.all(
+          mic.takes.map(async (take): Promise<MoodTake | null> => {
+            if (!take.videoBlob) {
+              warn(warnings, `Mood take ${take.id} in ${mic.id} videoBlob was missing and dropped.`);
+              return null;
+            }
+
+            const wasUnavailable = take.audioStatus === "unavailable";
+            let audioBuffer: AudioBuffer | null = null;
+            let audioStatus: MoodTake["audioStatus"] = "ok";
+            try {
+              audioBuffer = await decodeMoodTakeAudio(take, audioContext);
+            } catch {
+              audioStatus = "unavailable";
+              if (!wasUnavailable) warnMoodAudioUnavailable(warnings, mic.id, take.id);
+            }
+
+            const posterBlob = take.posterBlob ?? null;
+            const posterUrl = posterBlob ? URL.createObjectURL(posterBlob) : null;
+            if (!posterBlob) {
+              posterJobs.push({
+                micId: mic.id,
+                takeId: take.id,
+                posterPromise: captureFirstFrame(take.videoBlob).catch(() => null),
+              });
+            }
+
+            return {
+              id: take.id,
+              videoBlob: take.videoBlob,
+              audioBlob: take.audioBlob ?? null,
+              posterBlob,
+              url: URL.createObjectURL(take.videoBlob),
+              audioBuffer,
+              audioStatus,
+              posterUrl,
+              trimStartMs: take.trimStartMs,
+              trimEndMs: take.trimEndMs,
+              durationSeconds: take.durationSeconds,
+              cycleMultiple: take.cycleMultiple,
+              syncOffsetMs: take.syncOffsetMs,
+              part: take.part,
+              partSource: take.partSource,
+              recordedAt: take.recordedAt,
+            };
+          }),
+        )
+      ).filter((take): take is MoodTake => take !== null),
+    })),
+  );
+
+  return {
+    ok: true,
+    degraded: warnings.length > 0,
+    piece: {
+      moodSchemaVersion: piece.moodSchemaVersion,
+      stage: piece.stage,
+      timeFeel: piece.timeFeel,
+      bpm: piece.bpm,
+      cycleBars: piece.cycleBars,
+      cycleSeconds: piece.cycleSeconds,
+      oneMicId: piece.oneMicId,
+      oneTakeId: piece.oneTakeId,
+      vibe: piece.vibe,
+      lens: piece.lens,
+      mics,
+      updatedAt: piece.updatedAt,
+    },
+    warnings,
+    ...(posterJobs.length > 0 ? { posterJobs } : {}),
   };
 }
 

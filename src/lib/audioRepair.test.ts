@@ -15,7 +15,7 @@ vi.mock("./audio", () => ({
 import { attemptAudioRepair, initAudioRepair, __resetAudioRepairForTesting } from "./audioRepair";
 import { useAppStore } from "../store/useAppStore";
 import { logger, LOG_EVENTS } from "./logger";
-import type { Clip } from "../types";
+import type { Clip, MoodTake } from "../types";
 
 const healedBuffer = { duration: 0.6, sampleRate: 48000 } as AudioBuffer;
 const richBuffer = {
@@ -38,6 +38,29 @@ function makeRepairClip(overrides: Partial<Clip> = {}): Clip {
     durationMs: 1000,
     posterBlob: null,
     posterUrl: null,
+    ...overrides,
+  };
+}
+
+function makeRepairTake(overrides: Partial<MoodTake> = {}): MoodTake {
+  const durationSeconds = overrides.durationSeconds ?? 1.5;
+  return {
+    id: "mood-take-1",
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    audioBlob: new Blob([new Uint8Array([2])], { type: "audio/wav" }),
+    posterBlob: null,
+    url: "blob:test/mood-take",
+    audioBuffer: null,
+    audioStatus: "unavailable",
+    posterUrl: null,
+    trimStartMs: 0,
+    trimEndMs: durationSeconds * 1000,
+    durationSeconds,
+    cycleMultiple: 1,
+    syncOffsetMs: 0,
+    part: null,
+    partSource: null,
+    recordedAt: 1,
     ...overrides,
   };
 }
@@ -102,6 +125,18 @@ describe("attemptAudioRepair", () => {
     expect(track.clip?.audioStatus).toBe("unavailable");
     expect(track.muted).toBe(true);
     expect(track.mutedByRepair).toBe(true);
+  });
+
+  it("heals unavailable Mood takes when a Mood piece exists", async () => {
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+    useAppStore.getState().actions.setMoodTake("mic-0", makeRepairTake());
+
+    await attemptAudioRepair();
+
+    const take = useAppStore.getState().mood.piece?.mics[0].takes[0];
+    expect(take?.audioStatus).toBe("ok");
+    expect(take?.audioBuffer).toBe(healedBuffer);
+    expect(take?.audioBlob?.type).toBe("audio/wav");
   });
 
   it("does nothing while an export owns playback", async () => {

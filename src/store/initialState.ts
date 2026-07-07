@@ -96,6 +96,8 @@ export function createInitialState(): AppState {
       selectedTrackId: null,
       showExportDialog: false,
       recoveryWarnings: [],
+      recoveryWarningScopes: [],
+      degradedRecoveryScopes: [],
     },
     media: {
       stream: null,

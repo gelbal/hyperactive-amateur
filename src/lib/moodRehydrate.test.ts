@@ -13,7 +13,8 @@ import {
 import * as moodPersistence from "./moodPersistence";
 import { clearProject } from "./persistence";
 import { createEmptyMoodPiece } from "./moodStages";
-import { normalizeMoodMeta, rehydrateMoodFromStorage } from "./moodRehydrate";
+import { decodeMoodTakes, normalizeMoodMeta, rehydrateMoodFromStorage } from "./moodRehydrate";
+import * as posterFrame from "./posterFrame";
 import type { MoodMic, MoodPiece, MoodTake } from "../types";
 
 function makeBlob(bytes: number[], type: string): Blob {
@@ -60,6 +61,10 @@ function cleanMoodPiece(): MoodPiece {
 
 function emptyMic(id: string): MoodMic {
   return { id, takes: [] };
+}
+
+function decodeContext(decodeAudioData: ReturnType<typeof vi.fn>): AudioContext {
+  return { decodeAudioData } as unknown as AudioContext;
 }
 
 function isBlobLike(value: unknown): boolean {
@@ -331,5 +336,89 @@ describe("rehydrateMoodFromStorage", () => {
     );
     expect(await get(MOOD_KEY)).toEqual(invalidMeta);
     expect(await get(MOOD_BACKUP_KEY)).toBeUndefined();
+  });
+});
+
+describe("decodeMoodTakes", () => {
+  const healedBuffer = { duration: 1.2, sampleRate: 48000 } as AudioBuffer;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the audio sidecar when a new decode failure enters repair state", async () => {
+    const piece = cleanMoodPiece();
+    const originalAudioBlob = piece.mics[0].takes[0].audioBlob;
+    const decodeAudioData = vi.fn().mockRejectedValue(new Error("decode failed"));
+
+    const result = await decodeMoodTakes(piece, decodeContext(decodeAudioData));
+
+    expect(result.degraded).toBe(true);
+    expect(result.warnings).toEqual([
+      "Mood take take-1 in mic-0 audio unavailable — re-record to restore sound.",
+    ]);
+    expect(decodeAudioData).toHaveBeenCalledTimes(2);
+    const take = result.piece?.mics[0].takes[0];
+    expect(take?.audioBlob).toBe(originalAudioBlob);
+    expect(take?.audioStatus).toBe("unavailable");
+    expect(take?.audioBuffer).toBeNull();
+    expect(take?.url).toMatch(/^blob:test\//);
+    expect(take?.posterUrl).toMatch(/^blob:test\//);
+  });
+
+  it("heals a persisted-unavailable take quietly when decode succeeds", async () => {
+    const piece = cleanMoodPiece();
+    piece.mics[0].takes[0] = {
+      ...piece.mics[0].takes[0],
+      audioBuffer: null,
+      audioStatus: "unavailable",
+    };
+    const decodeAudioData = vi.fn().mockResolvedValue(healedBuffer);
+
+    const result = await decodeMoodTakes(piece, decodeContext(decodeAudioData));
+
+    expect(result.degraded).toBe(false);
+    expect(result.warnings).toEqual([]);
+    const take = result.piece?.mics[0].takes[0];
+    expect(take?.audioStatus).toBe("ok");
+    expect(take?.audioBuffer).toBe(healedBuffer);
+  });
+
+  it("keeps a still-failing persisted-unavailable take quiet and retryable", async () => {
+    const piece = cleanMoodPiece();
+    const originalAudioBlob = piece.mics[0].takes[0].audioBlob;
+    piece.mics[0].takes[0] = {
+      ...piece.mics[0].takes[0],
+      audioBuffer: null,
+      audioStatus: "unavailable",
+    };
+    const decodeAudioData = vi.fn().mockRejectedValue(new Error("still unavailable"));
+
+    const result = await decodeMoodTakes(piece, decodeContext(decodeAudioData));
+
+    expect(result.degraded).toBe(false);
+    expect(result.warnings).toEqual([]);
+    const take = result.piece?.mics[0].takes[0];
+    expect(take?.audioBlob).toBe(originalAudioBlob);
+    expect(take?.audioStatus).toBe("unavailable");
+    expect(take?.audioBuffer).toBeNull();
+  });
+
+  it("starts best-effort poster regeneration for missing posters without failing hydration", async () => {
+    const capture = vi.spyOn(posterFrame, "captureFirstFrame").mockResolvedValue(null);
+    const piece = cleanMoodPiece();
+    piece.mics[0].takes[0] = {
+      ...piece.mics[0].takes[0],
+      posterBlob: null,
+      posterUrl: null,
+    };
+    const videoBlob = piece.mics[0].takes[0].videoBlob;
+    const decodeAudioData = vi.fn().mockResolvedValue(healedBuffer);
+
+    const result = await decodeMoodTakes(piece, decodeContext(decodeAudioData));
+
+    expect(result.ok).toBe(true);
+    expect(result.piece?.mics[0].takes[0].posterBlob).toBeNull();
+    expect(capture).toHaveBeenCalledWith(videoBlob);
   });
 });
