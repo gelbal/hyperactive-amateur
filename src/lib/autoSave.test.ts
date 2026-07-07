@@ -193,6 +193,31 @@ describe("autoSave", () => {
     expect(savedBpm).toEqual([132, 133]);
   });
 
+  it("shutdownAutoSave still writes a change queued behind an in-flight save", async () => {
+    const firstSave = makeDeferred();
+    const savedBpm: number[] = [];
+    vi.spyOn(persistence, "saveProject").mockImplementation(async (state) => {
+      savedBpm.push(state.project.bpm);
+      if (savedBpm.length === 1) await firstSave.promise;
+    });
+
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(150);
+    const first = saveNow();
+    expect(savedBpm).toEqual([150]);
+
+    // A newer change lands, then a clean shutdown fires while the first save is
+    // still in flight. flushPending queues the change behind the in-flight
+    // drain; stopAutoSave must not discard it — a clean shutdown is a flush.
+    useAppStore.getState().actions.setBpm(151);
+    shutdownAutoSave();
+
+    firstSave.resolve();
+    await first;
+
+    expect(savedBpm).toEqual([150, 151]);
+  });
+
   it("does not save while recording is in progress", async () => {
     startAutoSave();
     useAppStore.getState().actions.setRecordingState("recording", 0);

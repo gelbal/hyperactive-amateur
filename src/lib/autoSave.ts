@@ -199,8 +199,12 @@ export function stopAutoSave(): void {
   clearPendingTimer();
   clearFlags(dirtyScopes);
   clearFlags(dirtyWhileRecording);
-  clearFlags(queuedScopes);
   clearFlags(pausedScopes);
+  // Only discard queued scopes when nothing is draining. A clean shutdown
+  // (flushPending -> stopAutoSave) queues a last change behind an in-flight
+  // save; that drain must still write it to disk. When a save is in flight
+  // the running drain owns queuedScopes and clears each as it persists it.
+  if (!saveInProgress) clearFlags(queuedScopes);
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
