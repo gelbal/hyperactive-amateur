@@ -370,18 +370,40 @@ describe("MoodMode", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     render(<MoodMode />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Scratch this mood" }));
-    fireEvent.click(screen.getByRole("button", { name: "Yes, scratch it" }));
+    const scratchButton = screen.getByRole("button", { name: "Scratch this mood" });
+    expect(scratchButton).toHaveClass("pointer-coarse:min-h-11");
+
+    fireEvent.click(scratchButton);
+
+    const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    expect(confirmButton).toHaveClass("pointer-coarse:min-h-11");
+    expect(cancelButton).toHaveClass("pointer-coarse:min-h-11");
+
+    fireEvent.click(confirmButton);
 
     expect(useAppStore.getState().mood.piece).toBeNull();
   });
 
-  it("disables scratch while exporting", () => {
+  it("disables scratch while exporting and keeps disabled clicks inert", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
-    useAppStore.getState().actions.setIsExporting(true);
+    const scratchMoodPiece = vi.spyOn(useAppStore.getState().actions, "scratchMoodPiece");
     render(<MoodMode />);
 
-    expect(screen.getByRole("button", { name: "Scratch this mood" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Scratch this mood" }));
+
+    act(() => {
+      useAppStore.getState().actions.setIsExporting(true);
+    });
+
+    const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.click(confirmButton);
+
+    expect(scratchMoodPiece).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.piece).not.toBeNull();
+    scratchMoodPiece.mockRestore();
   });
 
   it("disables scratch while performing", () => {

@@ -227,7 +227,7 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
         type="button"
         disabled={disabled}
         onClick={() => setArmed(true)}
-        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:bg-transparent"
+        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors pointer-coarse:min-h-11 hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:bg-transparent"
       >
         Scratch this mood
       </button>
@@ -245,14 +245,14 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
             useAppStore.getState().actions.scratchMoodPiece();
             setArmed(false);
           }}
-          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600"
+          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors pointer-coarse:min-h-11 hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600"
         >
           Yes, scratch it
         </button>
         <button
           type="button"
           onClick={() => setArmed(false)}
-          className="rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+          className="rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 transition-colors pointer-coarse:min-h-11 hover:bg-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
         >
           Cancel
         </button>
