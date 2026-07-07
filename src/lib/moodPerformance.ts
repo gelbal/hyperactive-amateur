@@ -3,6 +3,7 @@
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
+import { canStartMoodPerformanceTap } from "./audibleActionGate";
 import { nextCycleBoundary, takeLoopPeriod } from "./moodClock";
 import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
 import { armMoodSelectionCommit } from "./moodTransport";
@@ -101,7 +102,7 @@ export function syncCommittedMoodEngines(
 
 export function armSelection(micId: string, entry: MoodSelectionEntry): void {
   const state = useAppStore.getState();
-  if (state.playback.isExporting) return;
+  if (!canStartMoodPerformanceTap(state)) return;
 
   const piece = state.mood.piece;
   if (!piece || !isValidEntry(piece, micId, entry)) return;
