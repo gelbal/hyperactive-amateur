@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
+import { getDisplayBackingSize } from "../lib/canvasDraw";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
@@ -13,12 +14,6 @@ import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
 
 const RENDER_CANVAS_SIZE = 480;
-const DISPLAY_DPR_CAP = 2;
-
-function getDisplayBackingSize(cssSize: number): number {
-  const dpr = Math.min(window.devicePixelRatio || 1, DISPLAY_DPR_CAP);
-  return Math.max(1, Math.round(cssSize * dpr));
-}
 
 export function Viewport() {
   const frameRef = useRef<HTMLDivElement | null>(null);

@@ -3,6 +3,7 @@
 import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
+import { drawCover } from "./canvasDraw";
 import { LOG_EVENTS, logger } from "./logger";
 
 export type TagOrUntagged = Tag | "untagged";
@@ -454,11 +455,8 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
     clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
     return;
   }
-  const side = Math.min(vw, vh);
-  const sx = (vw - side) / 2;
-  const sy = (vh - side) / 2;
   try {
-    ctx.drawImage(video, sx, sy, side, side, 0, 0, w, h);
+    drawCover(ctx, video, { x: 0, y: 0, width: w, height: h });
     lastDrawn = displayed;
   } catch (err) {
     if (!drawErrorLogged) {
