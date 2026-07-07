@@ -1,7 +1,7 @@
 // ABOUTME: Vitest setup file — jest-dom matchers + small JSDOM polyfills for browser APIs.
 // ABOUTME: Referenced by vite.config.ts under test.setupFiles.
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 const originalConsoleError = console.error.bind(console);
 const originalConsoleWarn = console.warn.bind(console);
@@ -120,25 +120,79 @@ if (typeof HTMLCanvasElement !== "undefined") {
     getContext: (id: string) => unknown;
   };
   const original = proto.getContext;
+  const contexts = new WeakMap<HTMLCanvasElement, Record<string, unknown>>();
   proto.getContext = function (this: HTMLCanvasElement, contextId: string) {
     if (contextId === "2d") {
-      return {
+      const existing = contexts.get(this);
+      if (existing) return existing;
+
+      const stateStack: Array<{ fillStyle: string; globalAlpha: number }> = [];
+      const calls: Array<{
+        method: string;
+        args: unknown[];
+        fillStyle: string;
+        globalAlpha: number;
+      }> = [];
+      const context: Record<string, unknown> = {
         canvas: this,
         fillStyle: "",
+        globalAlpha: 1,
+        imageSmoothingEnabled: true,
         font: "",
         textAlign: "",
         textBaseline: "",
-        fillRect: () => undefined,
-        clearRect: () => undefined,
-        fillText: () => undefined,
-        drawImage: () => undefined,
-        save: () => undefined,
-        restore: () => undefined,
-        scale: () => undefined,
-        translate: () => undefined,
+        __haCanvasCalls: calls,
+        fillRect: vi.fn((...args: unknown[]) => {
+          calls.push({
+            method: "fillRect",
+            args,
+            fillStyle: context.fillStyle as string,
+            globalAlpha: context.globalAlpha as number,
+          });
+        }),
+        clearRect: vi.fn((...args: unknown[]) => {
+          calls.push({
+            method: "clearRect",
+            args,
+            fillStyle: context.fillStyle as string,
+            globalAlpha: context.globalAlpha as number,
+          });
+        }),
+        fillText: vi.fn((...args: unknown[]) => {
+          calls.push({
+            method: "fillText",
+            args,
+            fillStyle: context.fillStyle as string,
+            globalAlpha: context.globalAlpha as number,
+          });
+        }),
+        drawImage: vi.fn((...args: unknown[]) => {
+          calls.push({
+            method: "drawImage",
+            args,
+            fillStyle: context.fillStyle as string,
+            globalAlpha: context.globalAlpha as number,
+          });
+        }),
+        save: vi.fn(() => {
+          stateStack.push({
+            fillStyle: context.fillStyle as string,
+            globalAlpha: context.globalAlpha as number,
+          });
+        }),
+        restore: vi.fn(() => {
+          const state = stateStack.pop();
+          if (!state) return;
+          context.fillStyle = state.fillStyle;
+          context.globalAlpha = state.globalAlpha;
+        }),
+        scale: vi.fn(),
+        translate: vi.fn(),
         getImageData: () => ({ data: new Uint8ClampedArray(4) }),
         putImageData: () => undefined,
       };
+      contexts.set(this, context);
+      return context;
     }
     return original.call(this, contextId);
   };

@@ -9,6 +9,7 @@ const audioMocks = vi.hoisted(() => ({
 }));
 
 const moodTransportMocks = vi.hoisted(() => ({
+  consumeDueCommits: vi.fn(() => []),
   startMoodPerformance: vi.fn(),
   stopMoodPerformance: vi.fn(),
 }));
@@ -20,6 +21,7 @@ vi.mock("../../lib/audio", () => ({
 }));
 
 vi.mock("../../lib/moodTransport", () => ({
+  consumeDueCommits: moodTransportMocks.consumeDueCommits,
   startMoodPerformance: moodTransportMocks.startMoodPerformance,
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
@@ -77,6 +79,8 @@ describe("MoodMode", () => {
     moodTransportMocks.startMoodPerformance.mockReset();
     moodTransportMocks.startMoodPerformance.mockResolvedValue(undefined);
     moodTransportMocks.stopMoodPerformance.mockReset();
+    moodTransportMocks.consumeDueCommits.mockReset();
+    moodTransportMocks.consumeDueCommits.mockReturnValue([]);
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setMoodHydration("ready");
