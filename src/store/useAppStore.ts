@@ -108,6 +108,10 @@ function stopMoodPerformanceState(
     dropActive: false,
     hotMicId: null,
     cycleCount: 0,
+    // The committed mix (selections) survives a stop/mode-switch, but pending
+    // arms do not: stopping resets the boundary queue, so a preserved arm would
+    // pulse forever with no boundary to commit at. Clear armed, keep selections.
+    armed: Object.fromEntries(Object.keys(performance.selections).map((micId) => [micId, null])),
   };
 }
 

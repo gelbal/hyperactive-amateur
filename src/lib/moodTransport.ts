@@ -155,7 +155,7 @@ export function __resetMoodTransportForTesting(): void {
 useAppStore.subscribe((state, previousState) => {
   if (
     previousState.appMode === "mood" &&
-    state.appMode === "chop" &&
+    state.appMode !== "mood" &&
     previousState.mood.performance.isPerforming
   ) {
     stopMoodPerformance();

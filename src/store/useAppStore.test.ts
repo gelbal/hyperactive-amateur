@@ -772,14 +772,13 @@ describe("useAppStore", () => {
       expect(get().mood.performance).toEqual({
         isPerforming: false,
         epoch: null,
+        // The committed mix survives the switch; pending arms do not (a stop
+        // resets the boundary queue, so a preserved arm could never commit).
         selections: {
           ...Object.fromEntries(micIds.map((micId) => [micId, "off"])),
           "mic-0": "take-a",
         },
-        armed: {
-          ...Object.fromEntries(micIds.map((micId) => [micId, null])),
-          "mic-1": "take-b",
-        },
+        armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
