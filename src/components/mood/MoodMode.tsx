@@ -1,9 +1,10 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
 // ABOUTME: Starts with a stage picker and shows the placeholder stage until real performance UI lands.
 import { useEffect, useState } from "react";
+import { BpmDialControl } from "../BpmDial";
 import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodStageId } from "../../types";
+import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
 
 const STAGE_LABELS: Record<MoodStageId, string> = {
   corners: "Corners",
@@ -18,6 +19,29 @@ const STAGE_SUBTITLES: Record<MoodStageId, string> = {
 };
 
 const STAGE_ORDER: MoodStageId[] = ["corners", "row", "stack"];
+
+type MoodCycleBars = NonNullable<MoodPiece["cycleBars"]>;
+
+type FeelOption = {
+  id: Exclude<MoodTimeFeel, "freestyle">;
+  label: string;
+  subtitle: string;
+};
+
+const FEEL_OPTIONS: FeelOption[] = [
+  {
+    id: "pocket",
+    label: "Pocket",
+    subtitle: "your first loop sets the length",
+  },
+  {
+    id: "click",
+    label: "Click",
+    subtitle: "steady tempo you set",
+  },
+];
+
+const CYCLE_BAR_OPTIONS: MoodCycleBars[] = [1, 2, 4];
 
 function StageGlyph({ stage }: { stage: MoodStageId }) {
   if (stage === "corners") {
@@ -83,6 +107,17 @@ function StageGlyph({ stage }: { stage: MoodStageId }) {
 
 function StagePicker() {
   const createMoodPiece = useAppStore((s) => s.actions.createMoodPiece);
+  const [timeFeel, setTimeFeel] = useState<FeelOption["id"]>("pocket");
+  const [clickBpm, setClickBpm] = useState(90);
+  const [cycleBars, setCycleBars] = useState<MoodCycleBars>(2);
+
+  const birthMood = (stage: MoodStageId) => {
+    createMoodPiece(
+      stage,
+      timeFeel,
+      timeFeel === "click" ? { bpm: clickBpm, cycleBars } : undefined,
+    );
+  };
 
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
@@ -91,7 +126,7 @@ function StagePicker() {
           <button
             key={stage}
             type="button"
-            onClick={() => createMoodPiece(stage, "pocket")}
+            onClick={() => birthMood(stage)}
             className="flex min-h-44 flex-col items-center justify-center gap-3 rounded border border-zinc-800 bg-zinc-900 p-5 text-zinc-200 transition-colors hover:border-orange-500 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
           >
             <span className="text-orange-500">
@@ -103,6 +138,58 @@ function StagePicker() {
             </span>
           </button>
         ))}
+      </div>
+
+      <div className="flex w-full flex-col gap-3">
+        <div role="group" aria-label="Time feel" className="grid gap-2 sm:grid-cols-2">
+          {FEEL_OPTIONS.map((feel) => {
+            const selected = timeFeel === feel.id;
+            return (
+              <button
+                key={feel.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setTimeFeel(feel.id)}
+                className={
+                  "flex min-h-16 flex-col justify-center rounded border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
+                  (selected
+                    ? "border-orange-500 bg-orange-500/10 text-orange-100"
+                    : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900")
+                }
+              >
+                <span className="text-sm font-semibold">{feel.label}</span>
+                <span className="text-xs text-zinc-500">{feel.subtitle}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {timeFeel === "click" && (
+          <div className="flex w-full flex-col gap-4 rounded border border-zinc-800 bg-zinc-950 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <BpmDialControl bpm={clickBpm} onChange={setClickBpm} />
+            <div role="group" aria-label="Cycle bars" className="grid grid-cols-3 gap-2">
+              {CYCLE_BAR_OPTIONS.map((bars) => {
+                const selected = cycleBars === bars;
+                return (
+                  <button
+                    key={bars}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setCycleBars(bars)}
+                    className={
+                      "min-h-11 rounded border px-3 py-2 text-sm font-medium tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
+                      (selected
+                        ? "border-orange-500 bg-orange-500 text-zinc-950"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:border-zinc-500")
+                    }
+                  >
+                    {bars} {bars === 1 ? "bar" : "bars"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -157,6 +244,26 @@ function ScratchMoodControl() {
   );
 }
 
+function moodFeelLabel(piece: MoodPiece): string {
+  if (piece.timeFeel !== "click") return "Pocket";
+  if (piece.bpm === null || piece.cycleBars === null) return "Click";
+  return `Click · ${piece.bpm} · ${piece.cycleBars} ${piece.cycleBars === 1 ? "bar" : "bars"}`;
+}
+
+function MoodPieceControls({ piece }: { piece: MoodPiece }) {
+  return (
+    <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
+      <span
+        aria-label="Time feel"
+        className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
+      >
+        {moodFeelLabel(piece)}
+      </span>
+      <ScratchMoodControl />
+    </div>
+  );
+}
+
 export function MoodMode() {
   const piece = useAppStore((s) => s.mood.piece);
 
@@ -177,7 +284,7 @@ export function MoodMode() {
           {descriptor.canvasSize.w} x {descriptor.canvasSize.h}
         </span>
       </div>
-      <ScratchMoodControl />
+      <MoodPieceControls piece={piece} />
     </section>
   );
 }
