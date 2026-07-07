@@ -29,10 +29,22 @@ describe("tailwind pointer-coarse variants", () => {
     // 44px step cells (StepGrid) and the camera Flip button (RecordingStation).
     expect(css).toMatch(/pointer-coarse\\:h-11/);
     expect(css).toMatch(/\.pointer-coarse\\:min-h-11\s*{\s*min-height: 2\.75rem;/);
+    // Mood stack sheet rows/chips grow past 44px on coarse pointers.
+    expect(css).toMatch(/\.pointer-coarse\\:min-h-12\s*{\s*min-height: 3rem;/);
     expect(css).toMatch(/any-pointer-coarse\\:flex/);
     // Subtle always-visible block-remove affordance (StepGrid).
     expect(css).toMatch(/any-pointer-coarse\\:opacity-60/);
     expect(css).toMatch(/any-pointer-coarse\\:pointer-events-auto/);
+  }, 20_000);
+
+  it("emits concrete bottom-sheet rules for the Mood stack sheet", async () => {
+    const css = await builtCss();
+    expect(css).toMatch(/\.pointer-coarse\\:fixed\s*{\s*position: fixed;/);
+    expect(css).toMatch(/\.pointer-coarse\\:inset-x-3\s*{\s*left: 0\.75rem;\s*right: 0\.75rem;/);
+    expect(css).toMatch(/\.pointer-coarse\\:bottom-3\s*{\s*bottom: 0\.75rem;/);
+    expect(css).toMatch(
+      /\.pointer-coarse\\:max-h-\\\[min\\\(70dvh\\2c 32rem\\\)\\\]\s*{\s*max-height: min\(70dvh, 32rem\);/,
+    );
   }, 20_000);
 
   it("emits 24px range thumbs for coarse pointers", async () => {
