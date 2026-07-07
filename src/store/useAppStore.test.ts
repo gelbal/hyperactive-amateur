@@ -692,24 +692,42 @@ describe("useAppStore", () => {
     });
 
     it("resets transient performance state on mode switch", () => {
-      get().actions.createMoodPiece("corners", "pocket");
+      get().actions.createMoodPiece("row", "pocket");
+      get().actions.setMoodTake("mic-0", makeMoodTake({ id: "baseline-a" }));
+      get().actions.setMoodTake("mic-1", makeMoodTake({ id: "baseline-b" }));
+      const micIds = get().mood.piece?.mics.map((mic) => mic.id) ?? [];
+      get().actions.setAppMode("mood");
       get().actions.setMoodPerforming(true, 12.5);
       get().actions.armMoodSelection("mic-1", "take-b");
       get().actions.setMoodDrop(true);
       get().actions.setMoodHotMic("mic-2");
       get().actions.setMoodCycleCount(7);
 
+      get().actions.setAppMode("chop");
       get().actions.setAppMode("mood");
 
+      expect(get().appMode).toBe("mood");
       expect(get().mood.performance).toEqual({
         isPerforming: false,
         epoch: null,
-        selections: {},
-        armed: {},
+        selections: Object.fromEntries(micIds.map((micId) => [micId, "off"])),
+        armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
       });
+    });
+
+    it("ignores app mode changes and preference writes while exporting", () => {
+      expect(get().appMode).toBe("chop");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBeNull();
+      get().actions.setIsExporting(true);
+
+      get().actions.setAppMode("mood");
+
+      expect(get().appMode).toBe("chop");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBeNull();
+      get().actions.setIsExporting(false);
     });
 
     it("bumps moodRevision for piece mutations but not performance mutations", () => {
@@ -824,6 +842,7 @@ describe("useAppStore", () => {
         get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-with-poster" }));
         const firstPoster = new Blob([new Uint8Array([2])], { type: "image/jpeg" });
         const secondPoster = new Blob([new Uint8Array([3])], { type: "image/jpeg" });
+        const revision = get().session.moodRevision;
 
         get().actions.attachMoodTakePoster(
           "mic-0",
@@ -834,7 +853,9 @@ describe("useAppStore", () => {
 
         expect(get().mood.piece?.mics[0].takes[0].posterBlob).toBeNull();
         expect(get().mood.piece?.mics[0].takes[0].posterUrl).toBeNull();
+        expect(get().session.moodRevision).toBe(revision);
 
+        const pieceBeforeAttach = get().mood.piece;
         get().actions.attachMoodTakePoster(
           "mic-0",
           "take-with-poster",
@@ -850,6 +871,8 @@ describe("useAppStore", () => {
 
         expect(get().mood.piece?.mics[0].takes[0].posterBlob).toBe(secondPoster);
         expect(get().mood.piece?.mics[0].takes[0].posterUrl).toBe("blob:test/poster-2");
+        expect(get().mood.piece).not.toBe(pieceBeforeAttach);
+        expect(get().session.moodRevision).toBe(revision);
         expect(revoke).toHaveBeenCalledWith("blob:test/poster-1");
         revoke.mockRestore();
       });
@@ -895,7 +918,65 @@ describe("useAppStore", () => {
         revoke.mockRestore();
       });
 
-      it("revision-guards async take appliers and lets manual parts beat AI parts", () => {
+      it("revokes all take object URLs when scratching or replacing a piece", () => {
+        const revoke = vi.spyOn(URL, "revokeObjectURL");
+        get().actions.createMoodPiece("row", "pocket");
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "scratch-a", posterUrl: "blob:test/scratch-a-poster" }),
+        );
+        get().actions.setMoodTake(
+          "mic-1",
+          makeMoodTake({ id: "scratch-b", posterUrl: "blob:test/scratch-b-poster" }),
+        );
+
+        get().actions.scratchMoodPiece();
+
+        expect(get().mood.piece).toBeNull();
+        expect(revoke).toHaveBeenCalledTimes(4);
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-a");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-a-poster");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-b");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-b-poster");
+
+        revoke.mockClear();
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "replace-a", posterUrl: "blob:test/replace-a-poster" }),
+        );
+        get().actions.setMoodTake(
+          "mic-1",
+          makeMoodTake({ id: "replace-b", posterUrl: "blob:test/replace-b-poster" }),
+        );
+
+        get().actions.createMoodPiece("stack", "pocket");
+
+        expect(get().mood.piece?.stage).toBe("stack");
+        expect(revoke).toHaveBeenCalledTimes(4);
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-a");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-a-poster");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-b");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-b-poster");
+
+        revoke.mockClear();
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "frozen", posterUrl: "blob:test/frozen-poster" }),
+        );
+        const pieceBeforeExport = get().mood.piece;
+        get().actions.setIsExporting(true);
+
+        get().actions.scratchMoodPiece();
+        get().actions.createMoodPiece("row", "pocket");
+
+        expect(get().mood.piece).toBe(pieceBeforeExport);
+        expect(revoke).not.toHaveBeenCalled();
+        get().actions.setIsExporting(false);
+        revoke.mockRestore();
+      });
+
+      it("revision-guards async take appliers without churning moodRevision and lets manual parts beat AI parts", () => {
         get().actions.createMoodPiece("corners", "pocket");
         get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-ai" }));
         const staleRevision = get().session.moodRevision - 1;
@@ -912,13 +993,39 @@ describe("useAppStore", () => {
           partSource: null,
         });
 
-        let revision = get().session.moodRevision;
+        const beforeStructuralEditRevision = get().session.moodRevision;
+        get().actions.setMoodTake("mic-1", makeMoodTake({ id: "structural-edit" }));
+        expect(
+          get().actions.applyMoodSyncOffsetIfCurrent(
+            "mic-0",
+            "take-ai",
+            80,
+            beforeStructuralEditRevision,
+          ),
+        ).toBe(false);
+        expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(0);
+
+        const revision = get().session.moodRevision;
         expect(get().actions.applyMoodSyncOffsetIfCurrent("mic-0", "take-ai", 120, revision)).toBe(
           true,
         );
         expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(120);
+        expect(
+          get().actions.applyMoodPartIfCurrent(
+            "mic-0",
+            "take-ai",
+            "beatbox" satisfies MoodPart,
+            "ai",
+            revision,
+          ),
+        ).toBe(true);
+        expect(get().session.moodRevision).toBe(revision);
+        expect(get().mood.piece?.mics[0].takes[0]).toMatchObject({
+          syncOffsetMs: 120,
+          part: "beatbox",
+          partSource: "ai",
+        });
 
-        revision = get().session.moodRevision;
         expect(
           get().actions.applyMoodPartIfCurrent(
             "mic-0",
@@ -928,11 +1035,11 @@ describe("useAppStore", () => {
             revision,
           ),
         ).toBe(true);
-        revision = get().session.moodRevision;
 
         expect(get().actions.applyMoodPartIfCurrent("mic-0", "take-ai", "bass", "ai", revision)).toBe(
           false,
         );
+        expect(get().session.moodRevision).toBe(revision);
         expect(get().mood.piece?.mics[0].takes[0]).toMatchObject({
           part: "lead",
           partSource: "user",

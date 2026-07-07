@@ -113,6 +113,14 @@ function revokeMoodTakeObjectUrls(take: MoodTake): void {
   if (take.posterUrl) URL.revokeObjectURL(take.posterUrl);
 }
 
+function revokeMoodPieceObjectUrls(piece: MoodPiece): void {
+  for (const mic of piece.mics) {
+    for (const take of mic.takes) {
+      revokeMoodTakeObjectUrls(take);
+    }
+  }
+}
+
 function clearMoodTakePerformanceRefs(
   performance: AppState["mood"]["performance"],
   takeId: string,
@@ -242,11 +250,19 @@ export const useAppStore = create<AppStore>((set) => ({
   ...createInitialState(),
   actions: {
     setAppMode: (mode) => {
-      persistAppMode(mode);
-      set((state) => ({
-        appMode: mode,
-        mood: { ...state.mood, performance: createIdleMoodPerformance() },
-      }));
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        persistAppMode(mode);
+        return {
+          appMode: mode,
+          mood: {
+            ...state.mood,
+            performance: state.mood.piece
+              ? createMoodPerformanceForPiece(state.mood.piece)
+              : createIdleMoodPerformance(),
+          },
+        };
+      });
     },
 
     createMoodPiece: (stage, timeFeel, opts) =>
@@ -258,6 +274,9 @@ export const useAppStore = create<AppStore>((set) => ({
             bpm: opts?.bpm ?? null,
           });
           return state;
+        }
+        if (state.mood.piece) {
+          revokeMoodPieceObjectUrls(state.mood.piece);
         }
         const piece = createEmptyMoodPiece(stage, timeFeel, opts);
         return {
@@ -274,6 +293,7 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => {
         if (state.playback.isExporting || state.mood.performance.isPerforming) return state;
         if (!state.mood.piece) return state;
+        revokeMoodPieceObjectUrls(state.mood.piece);
         return {
           mood: {
             piece: null,
@@ -441,7 +461,6 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.mood,
             piece: { ...piece, mics, updatedAt: Date.now() },
           },
-          session: bumpMoodRevision(state.session),
         };
       }),
 
@@ -511,7 +530,6 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.mood,
             piece: { ...piece, mics, updatedAt: Date.now() },
           },
-          session: bumpMoodRevision(state.session),
         };
       });
       return applied;
@@ -546,7 +564,6 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.mood,
             piece: { ...piece, mics, updatedAt: Date.now() },
           },
-          session: bumpMoodRevision(state.session),
         };
       });
       return applied;
