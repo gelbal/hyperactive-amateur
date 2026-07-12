@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StackSheet } from "./StackSheet";
 import { useAppStore } from "../../store/useAppStore";
 import * as moodPerformance from "../../lib/moodPerformance";
+import { MAX_TAKES_PER_MIC } from "../../lib/moodStages";
 import type { MoodMic, MoodTake } from "../../types";
 
 const moodRecordingMocks = vi.hoisted(() => ({
@@ -80,7 +81,7 @@ describe("StackSheet", () => {
     moodRecordingMocks.recordMoodTake.mockResolvedValue(true);
   });
 
-  it("renders take rows, Off, and a disabled new-take row in the clamped sheet", () => {
+  it("renders take rows, Off, and an enabled overdub row in the clamped sheet", () => {
     const mic = setupMood();
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
@@ -103,10 +104,26 @@ describe("StackSheet", () => {
       "pointer-coarse:min-h-12",
     );
 
-    const newTake = screen.getByRole("button", { name: /new take Cycle set/i });
-    expect(newTake).toBeDisabled();
+    const newTake = screen.getByRole("button", {
+      name: /new take.*punches in on the One/i,
+    });
+    expect(newTake).not.toBeDisabled();
     expect(newTake).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
-    expect(screen.getByText("Cycle set")).toBeInTheDocument();
+    expect(screen.getByText("new take — punches in on the One")).toBeInTheDocument();
+  });
+
+  it("disables the overdub row when the mic stack is full", () => {
+    const mic = setupMood();
+    for (let i = mic.takes.length; i < MAX_TAKES_PER_MIC; i += 1) {
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake(`take-${i}`));
+    }
+    const fullMic = useAppStore.getState().mood.piece!.mics[0];
+    render(<StackSheet mic={fullMic} micNumber={1} open onClose={vi.fn()} />);
+
+    const newTake = screen.getByRole("button", {
+      name: /new take.*punches in on the One/i,
+    });
+    expect(newTake).toBeDisabled();
   });
 
   it("enables the add row to record the One before the piece has a cycle", () => {

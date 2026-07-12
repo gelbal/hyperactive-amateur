@@ -5,6 +5,7 @@ import { Mic2, Plus, Power } from "lucide-react";
 import { usePopoverDismiss } from "../../lib/usePopoverDismiss";
 import * as moodPerformance from "../../lib/moodPerformance";
 import { recordMoodTake } from "../../lib/moodRecordingFlow";
+import { MAX_TAKES_PER_MIC } from "../../lib/moodStages";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPart, MoodSelectionEntry, MoodTake } from "../../types";
 
@@ -62,9 +63,19 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
     (s) =>
       Boolean(s.mood.piece) &&
       s.mood.piece?.cycleSeconds === null &&
+      mic.takes.length < MAX_TAKES_PER_MIC &&
       s.recording.state === "idle" &&
       !s.playback.isExporting,
   );
+  const canRecordNewTake = useAppStore(
+    (s) =>
+      Boolean(s.mood.piece) &&
+      s.mood.piece?.cycleSeconds !== null &&
+      mic.takes.length < MAX_TAKES_PER_MIC &&
+      s.recording.state === "idle" &&
+      !s.playback.isExporting,
+  );
+  const canRecordTake = canRecordTheOne || canRecordNewTake;
   const close = useCallback(() => onClose(), [onClose]);
   usePopoverDismiss(rootRef, open, close);
 
@@ -74,8 +85,8 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
     moodPerformance.armSelection(mic.id, entry);
     onClose();
   };
-  const recordTheOne = () => {
-    if (!canRecordTheOne) return;
+  const recordNextTake = () => {
+    if (!canRecordTake) return;
     void recordMoodTake(mic.id);
     onClose();
   };
@@ -137,10 +148,10 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
 
         <button
           type="button"
-          disabled={!canRecordTheOne}
-          onClick={recordTheOne}
+          disabled={!canRecordTake}
+          onClick={recordNextTake}
           className={`flex min-h-11 w-full items-center gap-3 rounded border px-3 py-2 text-left text-sm transition-colors pointer-coarse:min-h-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 ${
-            canRecordTheOne
+            canRecordTake
               ? idleRow
               : "cursor-not-allowed border-zinc-800 bg-zinc-950/70 text-zinc-600 opacity-70"
           }`}
@@ -149,8 +160,10 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
             <Plus size={16} aria-hidden="true" />
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="font-medium">{canRecordTheOne ? "record the One" : "new take"}</span>
-            <span className="text-xs">{canRecordTheOne ? "First take" : "Cycle set"}</span>
+            <span className="font-medium">
+              {canRecordTheOne ? "record the One" : "new take — punches in on the One"}
+            </span>
+            {canRecordTheOne ? <span className="text-xs">First take</span> : null}
           </span>
         </button>
       </div>

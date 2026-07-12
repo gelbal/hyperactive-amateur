@@ -13,7 +13,22 @@ const audioMocks = vi.hoisted(() => ({
 }));
 
 const toneMocks = vi.hoisted(() => ({
+  draw: {
+    schedule: vi.fn((callback: () => void) => {
+      callback();
+      return 301;
+    }),
+  },
+  now: vi.fn(() => audioMocks.context.currentTime),
   start: vi.fn(),
+  transport: {
+    cancel: vi.fn(),
+    clear: vi.fn(),
+    position: 0 as number | string,
+    scheduleRepeat: vi.fn(() => 401),
+    start: vi.fn(),
+    stop: vi.fn(),
+  },
 }));
 
 const mediaMocks = vi.hoisted(() => ({
@@ -57,7 +72,21 @@ vi.mock("./audio", () => ({
 }));
 
 vi.mock("tone", () => ({
+  getDraw: vi.fn(() => toneMocks.draw),
+  getTransport: vi.fn(() => toneMocks.transport),
+  now: toneMocks.now,
   start: toneMocks.start,
+}));
+
+vi.mock("./moodPlayers", () => ({
+  stopAllMoodPlayers: vi.fn(),
+  syncMoodPlayers: vi.fn(),
+}));
+
+vi.mock("./moodVideoPool", () => ({
+  liveTakesFromSelections: vi.fn(() => []),
+  prepareUpcoming: vi.fn(),
+  syncPool: vi.fn(),
 }));
 
 vi.mock("./media", () => ({
@@ -108,6 +137,10 @@ import {
 } from "./moodRecordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import {
+  __resetMoodTransportForTesting,
+  startMoodPerformance,
+} from "./moodTransport";
 import { __resetPersistenceRequestForTesting } from "./recordingPersistence";
 import {
   interruptActiveRecording,
@@ -183,9 +216,34 @@ function makeRecordResult({ durationMs = 2000 }: { durationMs?: number } = {}) {
 async function advanceCountdownToDeadline(): Promise<void> {
   const deadline = useAppStore.getState().recording.countdownEndsAt;
   if (deadline === null) throw new Error("missing countdown deadline");
+  const now = audioMocks.context.currentTime;
   audioMocks.context.currentTime = deadline;
-  await vi.advanceTimersByTimeAsync(Math.ceil((deadline - 5) * 1000));
+  await vi.advanceTimersByTimeAsync(Math.ceil(Math.max(0, deadline - now) * 1000));
   await flushMicrotasks();
+}
+
+function seedMoodCycle(cycleSeconds = 2): void {
+  useAppStore.getState().actions.setMoodTake(
+    "mic-0",
+    {
+      id: "the-one",
+      videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      audioBlob: new Blob([new Uint8Array([2])], { type: "audio/wav" }),
+      posterBlob: null,
+      url: "blob:test/the-one",
+      audioBuffer: { duration: cycleSeconds, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
+      posterUrl: null,
+      trimStartMs: 0,
+      trimEndMs: Math.round(cycleSeconds * 1000),
+      durationSeconds: cycleSeconds,
+      cycleMultiple: 1,
+      syncOffsetMs: 0,
+      part: null,
+      partSource: null,
+      recordedAt: 1,
+    },
+  );
 }
 
 function makeAbortableRecordClip() {
@@ -211,6 +269,7 @@ describe("moodRecordingFlow", () => {
   beforeEach(() => {
     __resetAudioLifecycleForTesting();
     __resetMoodRecordingFlowForTesting();
+    __resetMoodTransportForTesting();
     __resetPersistenceRequestForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
@@ -220,6 +279,15 @@ describe("moodRecordingFlow", () => {
     audioMocks.context.currentTime = 5;
     toneMocks.start.mockReset();
     toneMocks.start.mockResolvedValue(undefined);
+    toneMocks.now.mockReset();
+    toneMocks.now.mockImplementation(() => audioMocks.context.currentTime);
+    toneMocks.draw.schedule.mockClear();
+    toneMocks.transport.cancel.mockClear();
+    toneMocks.transport.clear.mockClear();
+    toneMocks.transport.position = 0;
+    toneMocks.transport.scheduleRepeat.mockClear();
+    toneMocks.transport.start.mockClear();
+    toneMocks.transport.stop.mockClear();
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
@@ -245,6 +313,7 @@ describe("moodRecordingFlow", () => {
   afterEach(() => {
     cancelCurrentMoodTake();
     __resetMoodRecordingFlowForTesting();
+    __resetMoodTransportForTesting();
     useAppStore.getState().actions.setIsExporting(false);
     vi.useRealTimers();
   });
@@ -405,6 +474,143 @@ describe("moodRecordingFlow", () => {
       cycleSeconds: 4,
       oneMicId: "mic-0",
     });
+  });
+
+  it("counts down to the next cycle boundary when it has at least one beat of lead", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    audioMocks.context.currentTime = 16.6;
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(18);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+    expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+  });
+
+  it("skips to the following cycle boundary when the next One is closer than one beat", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    audioMocks.context.currentTime = 17.75;
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(22);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+    expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+  });
+
+  it("auto-starts a stopped cycle after claiming recording while public starts stay blocked", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    const audioStarted = makeDeferred();
+    toneMocks.start.mockReturnValueOnce(audioStarted.promise);
+
+    const promise = recordMoodTake("mic-1");
+
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+
+    await startMoodPerformance();
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+
+    audioStarted.resolve();
+    await vi.dynamicImportSettled();
+    await flushMicrotasks(10);
+
+    expect(useAppStore.getState().mood.performance).toMatchObject({
+      isPerforming: true,
+      epoch: 5,
+    });
+    expect(toneMocks.transport.scheduleRepeat).toHaveBeenCalledWith(expect.any(Function), 2);
+    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+  });
+
+  it("records an overdub with the cycle cap, snap multiple, save boundary, and auto-arm", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 5);
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 4100 });
+    snapMocks.snapTake.mockReturnValue({
+      ok: true,
+      isOne: false,
+      durationSeconds: 4,
+      cycleMultiple: 2,
+      trimTo: 4,
+    });
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 4200 }));
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+
+    expect(recorderMocks.recordClip).toHaveBeenCalledWith(
+      expect.anything(),
+      8_000,
+      audioMocks.context,
+      expect.anything(),
+    );
+    expect(autoTrimMocks.autoTrim).toHaveBeenCalledWith(expect.anything(), 8_000);
+    expect(snapMocks.snapTake).toHaveBeenCalledWith(4.1, 2);
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledWith("mood");
+    const savedTake = useAppStore.getState().mood.piece?.mics[1].takes[0];
+    expect(savedTake).toMatchObject({
+      durationSeconds: 4,
+      cycleMultiple: 2,
+      trimStartMs: 0,
+      trimEndMs: 4000,
+    });
+    expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBe(savedTake?.id);
+    expect(useAppStore.getState().mood.performance.selections["mic-1"]).toBe("off");
+    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
+    expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
+    expect(toneMocks.transport.clear).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+  });
+
+  it("aborts an overdub mid-wait without stopping performance or saving", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    audioMocks.context.currentTime = 16.6;
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+
+    cancelCurrentMoodTake();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().mood.performance).toMatchObject({
+      isPerforming: true,
+      epoch: 10,
+    });
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+    expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.piece?.mics[1].takes).toHaveLength(0);
+    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
+    expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
   });
 
   it("exposes tap-to-stop through the active recordClip stop controller", async () => {

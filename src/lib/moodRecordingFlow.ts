@@ -8,6 +8,7 @@ import { isAbortError } from "./aiClient";
 import { saveNow } from "./autoSave";
 import { autoTrim } from "./autoTrim";
 import { canStartMoodTake } from "./audibleActionGate";
+import { armSelection } from "./moodPerformance";
 import { acquireRecordingStreamUntilAbort } from "./recordingAcquire";
 import { requestPersistenceAfterClipSave } from "./recordingPersistence";
 import {
@@ -17,9 +18,15 @@ import {
 } from "./recorder";
 import { logger, LOG_EVENTS } from "./logger";
 import { releaseRecordingStream, requestMedia } from "./media";
-import { allowedCaptureCapSeconds, establishCycleFromClick } from "./moodClock";
+import {
+  allowedCaptureCapSeconds,
+  DROP_BEATS_PER_CYCLE,
+  establishCycleFromClick,
+  nextCycleBoundary,
+} from "./moodClock";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
 import { snapTake } from "./moodTakeSnap";
+import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
 import { captureFirstFrame } from "./posterFrame";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import { audioBufferToWav } from "./wavEncoder";
@@ -85,6 +92,16 @@ function waitMs(ms: number, signal: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", onAbort);
   });
+}
+
+function cycleCountdownDeadline(
+  epoch: number,
+  cycleSeconds: number,
+  now: number,
+): number {
+  const beatSeconds = cycleSeconds / DROP_BEATS_PER_CYCLE;
+  const boundary = nextCycleBoundary(epoch, cycleSeconds, now);
+  return boundary - now >= beatSeconds ? boundary : boundary + cycleSeconds;
 }
 
 async function waitUntilAudioTime(
@@ -264,12 +281,15 @@ async function runFlow(
 
   if (!startingPiece) return false;
   const descriptor = STAGE_DESCRIPTORS[startingPiece.stage];
-  const capSeconds = firstTakeCaptureCapSeconds(
-    startingPiece.timeFeel,
-    startingPiece.bpm,
-    startingPiece.cycleBars,
-    startingPiece.cycleSeconds,
-  );
+  const capSeconds =
+    startingPiece.cycleSeconds === null
+      ? firstTakeCaptureCapSeconds(
+          startingPiece.timeFeel,
+          startingPiece.bpm,
+          startingPiece.cycleBars,
+          startingPiece.cycleSeconds,
+        )
+      : allowedCaptureCapSeconds(startingPiece.cycleSeconds);
   const capMs = Math.round(capSeconds * 1000);
 
   try {
@@ -283,6 +303,14 @@ async function runFlow(
       // As in Chop, capture can continue because recordClip has a decode fallback.
     }
     throwIfFlowAborted(signal, "Aborted before media acquisition");
+
+    if (
+      startingPiece.cycleSeconds !== null &&
+      !useAppStore.getState().mood.performance.isPerforming
+    ) {
+      await startMoodPerformanceForRecordingFlow();
+      throwIfFlowAborted(signal, "Aborted before overdub performance start");
+    }
 
     if (externalStream) {
       stream = externalStream;
@@ -308,8 +336,19 @@ async function runFlow(
     }
 
     const audioContext = getAudioContext();
-    const beatSeconds = 60 / countInBpm(startingPiece.timeFeel, startingPiece.bpm);
-    const countdownEndsAt = audioContext.currentTime + COUNT_IN_BEATS * beatSeconds;
+    let countdownEndsAt: number;
+    if (startingPiece.cycleSeconds === null) {
+      const beatSeconds = 60 / countInBpm(startingPiece.timeFeel, startingPiece.bpm);
+      countdownEndsAt = audioContext.currentTime + COUNT_IN_BEATS * beatSeconds;
+    } else {
+      const performance = useAppStore.getState().mood.performance;
+      if (!performance.isPerforming || performance.epoch === null) return false;
+      countdownEndsAt = cycleCountdownDeadline(
+        performance.epoch,
+        startingPiece.cycleSeconds,
+        audioContext.currentTime,
+      );
+    }
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", null);
 
@@ -367,6 +406,10 @@ async function runFlow(
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }
     throwIfFlowAborted(signal, "Aborted after Mood take durability save");
+    if (startingPiece.cycleSeconds !== null) {
+      actions.setRecordingState("idle", null);
+      armSelection(micId, take.id);
+    }
     attachPosterWhenReady(micId, take.id, result.blob, signal);
     return true;
   } catch (e) {
