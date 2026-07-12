@@ -10,15 +10,38 @@ let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
 let activeAcquireToken: number | null = null;
 
+export interface CaptureAspect {
+  w: number;
+  h: number;
+}
+
+const DEFAULT_CAPTURE_ASPECT: CaptureAspect = { w: 1, h: 1 };
+const IDEAL_CAPTURE_SHORT_EDGE = 720;
+
+function idealCaptureSize(aspect: CaptureAspect): { width: number; height: number } {
+  if (aspect.w >= aspect.h) {
+    return {
+      width: Math.round(IDEAL_CAPTURE_SHORT_EDGE * (aspect.w / aspect.h)),
+      height: IDEAL_CAPTURE_SHORT_EDGE,
+    };
+  }
+
+  return {
+    width: IDEAL_CAPTURE_SHORT_EDGE,
+    height: Math.round(IDEAL_CAPTURE_SHORT_EDGE * (aspect.h / aspect.w)),
+  };
+}
+
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
 // OverconstrainedError on cameras that don't natively shoot 720x720.
-export function buildConstraints(): MediaStreamConstraints {
+export function buildConstraints(aspect = DEFAULT_CAPTURE_ASPECT): MediaStreamConstraints {
   const { videoDeviceId, audioDeviceId, videoFacingMode } = useAppStore.getState().media;
+  const { width, height } = idealCaptureSize(aspect);
   const video: MediaTrackConstraints = {
-    width: { ideal: 720 },
-    height: { ideal: 720 },
-    aspectRatio: { ideal: 1 },
+    width: { ideal: width },
+    height: { ideal: height },
+    aspectRatio: { ideal: aspect.w / aspect.h },
   };
   // deviceId wins over facingMode: when the user picks a specific camera in
   // the Sources picker we must honor that exact device, otherwise the front/
@@ -96,14 +119,17 @@ function isStaleDeviceError(err: unknown): boolean {
 // newer device choices or fire the retry — it just rethrows and lets the
 // caller's stale handling run. requestMedia passes no token: its single-flight
 // guard means the fallback is always current there.
-async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStream> {
+async function getUserMediaWithDeviceFallback(
+  token?: number,
+  aspect?: CaptureAspect,
+): Promise<MediaStream> {
   try {
-    return await navigator.mediaDevices.getUserMedia(buildConstraints());
+    return await navigator.mediaDevices.getUserMedia(buildConstraints(aspect));
   } catch (err) {
     if (!isStaleDeviceError(err)) throw err;
     if (token !== undefined && token !== acquireGeneration) throw err;
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
-    return navigator.mediaDevices.getUserMedia(buildConstraints());
+    return navigator.mediaDevices.getUserMedia(buildConstraints(aspect));
   }
 }
 
@@ -112,11 +138,11 @@ async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStre
 // requestMedia is callable again because we no longer short-circuit on
 // status === 'granted'. If the failure looks like a stale deviceId, clear the
 // preference and retry once with the browser default.
-export async function acquireRecordingStream(): Promise<MediaStream> {
+export async function acquireRecordingStream(aspect?: CaptureAspect): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
   try {
-    const stream = await getUserMediaWithDeviceFallback(token);
+    const stream = await getUserMediaWithDeviceFallback(token, aspect);
     if (token !== acquireGeneration) {
       releaseMediaStream(stream);
       throw new DOMException("Stale media acquisition", "AbortError");
