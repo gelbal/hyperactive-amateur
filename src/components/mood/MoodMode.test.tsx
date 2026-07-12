@@ -14,6 +14,15 @@ const moodTransportMocks = vi.hoisted(() => ({
   stopMoodPerformance: vi.fn(),
 }));
 
+const moodRecordingMocks = vi.hoisted(() => ({
+  countInBeatSeconds: vi.fn(() => 0.5),
+  recordMoodTake: vi.fn(),
+}));
+
+const recordingInterruptMocks = vi.hoisted(() => ({
+  interruptActiveRecording: vi.fn(),
+}));
+
 vi.mock("../../lib/audio", () => ({
   getAudioContext: () => ({
     decodeAudioData: audioMocks.decodeAudioData,
@@ -24,6 +33,15 @@ vi.mock("../../lib/moodTransport", () => ({
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
   startMoodPerformance: moodTransportMocks.startMoodPerformance,
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
+}));
+
+vi.mock("../../lib/moodRecordingFlow", () => ({
+  countInBeatSeconds: moodRecordingMocks.countInBeatSeconds,
+  recordMoodTake: moodRecordingMocks.recordMoodTake,
+}));
+
+vi.mock("../../lib/recordingInterrupt", () => ({
+  interruptActiveRecording: recordingInterruptMocks.interruptActiveRecording,
 }));
 
 vi.mock("../../lib/useMoodKeys", () => ({
@@ -85,6 +103,10 @@ describe("MoodMode", () => {
     moodTransportMocks.stopMoodPerformance.mockReset();
     moodTransportMocks.consumeDueCommits.mockReset();
     moodTransportMocks.consumeDueCommits.mockReturnValue([]);
+    moodRecordingMocks.recordMoodTake.mockReset();
+    moodRecordingMocks.recordMoodTake.mockResolvedValue(true);
+    moodRecordingMocks.countInBeatSeconds.mockReturnValue(0.5);
+    recordingInterruptMocks.interruptActiveRecording.mockReset();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setMoodHydration("ready");
@@ -270,6 +292,52 @@ describe("MoodMode", () => {
     expect(screen.getByText("2 mics")).toBeInTheDocument();
     expect(screen.getByLabelText("Time feel")).toHaveTextContent("Pocket");
     expect(screen.queryByRole("button", { name: /Pocket/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a single takeless invitation on the stage that records the One on mic 0", () => {
+    render(<MoodMode />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Corners/i }));
+
+    expect(screen.getByLabelText("Corners stage")).toBeInTheDocument();
+    expect(screen.getByText("record the One")).toBeInTheDocument();
+    expect(screen.getByText("your first loop sets the length")).toBeInTheDocument();
+    expect(screen.getByLabelText("I've got headphones on")).not.toBeChecked();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "record the One" }));
+
+    expect(moodRecordingMocks.recordMoodTake).toHaveBeenCalledWith("mic-0");
+  });
+
+  it("removes the One invitation once any take exists", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+
+    render(<MoodMode />);
+
+    expect(screen.queryByRole("button", { name: "record the One" })).not.toBeInTheDocument();
+    expect(screen.queryByText("your first loop sets the length")).not.toBeInTheDocument();
+  });
+
+  it("surfaces mood recording errors with the shared recording alert pattern", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setRecordingError("camera failed");
+
+    render(<MoodMode />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("camera failed");
+  });
+
+  it("uses the shared Escape cancellation host while mood recording is active", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+
+    render(<MoodMode />);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledWith("user");
   });
 
   it("disables Mood play until the One sets a cycle", () => {

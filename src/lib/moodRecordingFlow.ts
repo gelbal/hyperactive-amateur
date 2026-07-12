@@ -445,10 +445,8 @@ async function runFlow(
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }
     throwIfFlowAborted(signal, "Aborted after Mood take durability save");
-    if (startingPiece.cycleSeconds !== null) {
-      actions.setRecordingState("idle", null);
-      armSelection(micId, take.id);
-    }
+    actions.setRecordingState("idle", null);
+    armSelection(micId, take.id);
     attachPosterWhenReady(micId, take.id, result.blob, signal);
     return true;
   } catch (e) {

@@ -497,6 +497,9 @@ describe("moodRecordingFlow", () => {
       cycleSeconds: 4,
       oneMicId: "mic-0",
     });
+    const oneTakeId = useAppStore.getState().mood.piece?.oneTakeId;
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe(oneTakeId);
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
   });
 
   it("schedules count-in synth clicks on the audio clock and stops before punch-in", async () => {

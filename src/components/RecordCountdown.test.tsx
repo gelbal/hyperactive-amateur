@@ -11,17 +11,17 @@ const audioMocks = vi.hoisted(() => {
   };
 });
 
-const recordingFlowMocks = vi.hoisted(() => ({
-  cancelCurrentRecording: vi.fn(),
+const recordingInterruptMocks = vi.hoisted(() => ({
+  interruptActiveRecording: vi.fn(),
 }));
 
 vi.mock("../lib/audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
 
-vi.mock("../lib/recordingFlow", () => ({
-  cancelCurrentRecording: (...args: unknown[]) =>
-    recordingFlowMocks.cancelCurrentRecording(...args),
+vi.mock("../lib/recordingInterrupt", () => ({
+  interruptActiveRecording: (...args: unknown[]) =>
+    recordingInterruptMocks.interruptActiveRecording(...args),
 }));
 
 import { useAppStore } from "../store/useAppStore";
@@ -41,7 +41,7 @@ function renderForState(
 describe("RecordCountdown", () => {
   beforeEach(() => {
     useAppStore.getState().actions.reset();
-    recordingFlowMocks.cancelCurrentRecording.mockReset();
+    recordingInterruptMocks.interruptActiveRecording.mockReset();
     audioMocks.context.currentTime = 0;
     audioMocks.getAudioContext.mockClear();
   });
@@ -85,12 +85,12 @@ describe("RecordCountdown", () => {
       renderForState(state, state === "countdown" ? 3 : null);
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
-      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledTimes(1);
-      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenNthCalledWith(1, "user");
+      expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledTimes(1);
+      expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenNthCalledWith(1, "user");
 
       fireEvent.keyDown(window, { key: "Escape" });
-      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenCalledTimes(2);
-      expect(recordingFlowMocks.cancelCurrentRecording).toHaveBeenNthCalledWith(2, "user");
+      expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledTimes(2);
+      expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenNthCalledWith(2, "user");
     },
   );
 
@@ -99,5 +99,13 @@ describe("RecordCountdown", () => {
 
     expect(screen.getByText("Recording")).toBeInTheDocument();
     expect(screen.getByText("Press Esc to cancel")).toBeInTheDocument();
+  });
+
+  it("lets Esc abort the recording phase through the shared dispatcher", () => {
+    renderForState("recording");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(recordingInterruptMocks.interruptActiveRecording).toHaveBeenCalledWith("user");
   });
 });

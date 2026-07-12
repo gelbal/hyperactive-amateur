@@ -1,10 +1,14 @@
 // ABOUTME: MicStrip — compact Mood mic chips under the stage.
 // ABOUTME: Shows live/armed/off/hot state and opens each mic's take stack sheet.
-import { useState } from "react";
-import { Mic2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Mic2, Square } from "lucide-react";
+import { getAudioContext } from "../../lib/audio";
+import { countInBeatSeconds, stopMoodTakeEarly } from "../../lib/moodRecordingFlow";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPiece, MoodSelectionEntry, MoodTake } from "../../types";
 import { StackSheet } from "./StackSheet";
+
+const COUNTDOWN_TICK_MS = 100;
 
 interface MicStripProps {
   piece: MoodPiece;
@@ -25,6 +29,12 @@ function stateLabel(state: MicChipState): string {
 function visualLabel(state: MicChipState): string {
   if (state === "hot") return "REC";
   return state.toUpperCase();
+}
+
+function hotCountdownDigit(countdownEndsAt: number | null, beatSeconds: number): number {
+  if (countdownEndsAt === null) return 3;
+  const beatsRemaining = Math.ceil((countdownEndsAt - getAudioContext().currentTime) / beatSeconds);
+  return Math.max(1, Math.min(3, beatsRemaining));
 }
 
 function ringClass(state: MicChipState): string {
@@ -78,7 +88,22 @@ function MicThumb({
 
 export function MicStrip({ piece }: MicStripProps) {
   const performance = useAppStore((s) => s.mood.performance);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const countdownEndsAt = useAppStore((s) => s.recording.countdownEndsAt);
   const [openMicId, setOpenMicId] = useState<string | null>(null);
+  const beatSeconds = countInBeatSeconds(piece);
+  const [hotCount, setHotCount] = useState(() => hotCountdownDigit(countdownEndsAt, beatSeconds));
+
+  useEffect(() => {
+    if (recordingState !== "countdown") {
+      setHotCount(3);
+      return;
+    }
+    const update = () => setHotCount(hotCountdownDigit(countdownEndsAt, beatSeconds));
+    update();
+    const id = window.setInterval(update, COUNTDOWN_TICK_MS);
+    return () => window.clearInterval(id);
+  }, [beatSeconds, countdownEndsAt, recordingState]);
 
   return (
     <div
@@ -101,6 +126,14 @@ export function MicStrip({ piece }: MicStripProps) {
               : "off";
         const open = openMicId === mic.id;
 
+        const onChipClick = () => {
+          if (isHot) {
+            stopMoodTakeEarly();
+            return;
+          }
+          setOpenMicId((current) => (current === mic.id ? null : mic.id));
+        };
+
         return (
           <div key={mic.id} className="relative shrink-0">
             <button
@@ -108,8 +141,12 @@ export function MicStrip({ piece }: MicStripProps) {
               aria-haspopup="dialog"
               aria-expanded={open}
               aria-pressed={open}
-              aria-label={`Mic ${micNumber}, ${stateLabel(state)}. Open stack`}
-              onClick={() => setOpenMicId((current) => (current === mic.id ? null : mic.id))}
+              aria-label={
+                isHot
+                  ? `Mic ${micNumber}, ${stateLabel(state)}. Stop take`
+                  : `Mic ${micNumber}, ${stateLabel(state)}. Open stack`
+              }
+              onClick={onChipClick}
               className={chipClass(state, open)}
             >
               <span
@@ -122,9 +159,23 @@ export function MicStrip({ piece }: MicStripProps) {
                 <span className="font-mono text-xs tabular-nums text-zinc-300">
                   M{micNumber}
                 </span>
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">
-                  {visualLabel(state)}
-                </span>
+                {isHot ? (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold uppercase text-red-300">
+                    <span
+                      data-testid={`mic-${mic.id}-rec-dot`}
+                      className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse"
+                      aria-hidden="true"
+                    />
+                    <span data-testid={`mic-${mic.id}-countdown`} className="tabular-nums">
+                      {recordingState === "countdown" ? hotCount : "REC"}
+                    </span>
+                    <Square size={9} fill="currentColor" aria-hidden="true" />
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-semibold uppercase text-zinc-500">
+                    {visualLabel(state)}
+                  </span>
+                )}
               </span>
             </button>
             <StackSheet

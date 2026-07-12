@@ -14,6 +14,7 @@ import {
 } from "../lib/media";
 import { isManualInstallHintContext, triggerInstall, useCanInstall } from "../lib/install";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { RecordingErrorNotice } from "./RecordingErrorNotice";
 
 const TRACK_COUNT = 8;
 const EMPTY_DEVICES: InputDeviceList = { videoInputs: [], audioInputs: [] };
@@ -258,11 +259,7 @@ export function RecordingStation() {
         )}
       </div>
       <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-3 px-4">
-        {visibleError && (
-          <span role="alert" className="text-xs text-red-400 max-w-[80%] text-center">
-            {visibleError}
-          </span>
-        )}
+        <RecordingErrorNotice message={visibleError} />
         <div className="flex items-center gap-2">
           <button
             type="button"

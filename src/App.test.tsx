@@ -157,7 +157,33 @@ describe("App autosave gating", () => {
     await renderApp();
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
+    fireEvent.click(screen.getByLabelText("Dismiss chop recovery notice"));
+
+    expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume Chop autosave when only the Mood recovery notice is dismissed", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
+      useAppStore.getState().actions.setRecoveryWarnings([REPAIR_WARNING]);
+      useAppStore
+        .getState()
+        .actions.setRecoveryWarningsForScope(
+          "mood",
+          ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+          true,
+        );
+      return { ok: true, degraded: true, warnings: [REPAIR_WARNING] };
+    });
+    await renderApp();
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText("Dismiss mood recovery notice"));
+
+    expect(useAppStore.getState().ui.recoveryWarningScopes).toEqual(["chop"]);
+    expect(useAppStore.getState().ui.degradedRecoveryScopes).toEqual(["chop"]);
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText("Dismiss chop recovery notice"));
 
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });
@@ -205,7 +231,7 @@ describe("App autosave gating", () => {
     });
     await renderApp();
 
-    fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
+    fireEvent.click(screen.getByLabelText("Dismiss chop recovery notice"));
 
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
   });

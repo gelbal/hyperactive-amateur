@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Tone from "tone";
 import { sizeDisplayCanvas } from "../../lib/canvasDraw";
-import { countInBeatSeconds } from "../../lib/moodRecordingFlow";
+import { countInBeatSeconds, recordMoodTake } from "../../lib/moodRecordingFlow";
 import { drawMoodFrame, initMoodRenderer } from "../../lib/moodRenderer";
 import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
 import { layoutFor, type TileRect } from "../../lib/moodTilers";
@@ -42,6 +42,52 @@ function hotTileRect(piece: MoodPiece, hotMicId: string | null): TileRect | null
     piece.mics.map((mic) => ({ micId: mic.id, live: true })),
   );
   return rects.find((rect) => rect.micId === hotMicId) ?? null;
+}
+
+function pieceHasNoTakes(piece: MoodPiece): boolean {
+  return piece.mics.every((mic) => mic.takes.length === 0);
+}
+
+function MoodOneInvitation({ piece }: MoodStageProps) {
+  const monitorWithHeadphones = useAppStore((s) => s.mood.monitorWithHeadphones);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const setMonitorWithHeadphones = useAppStore((s) => s.actions.setMonitorWithHeadphones);
+  const showInvitation = pieceHasNoTakes(piece) && recordingState === "idle";
+  if (!showInvitation) return null;
+
+  const startTheOne = () => {
+    if (isExporting) return;
+    void recordMoodTake("mic-0");
+  };
+
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-950/65 px-4">
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <button
+          type="button"
+          aria-label="record the One"
+          disabled={isExporting}
+          onClick={startTheOne}
+          className="flex min-h-12 flex-col items-center justify-center rounded border border-orange-500/70 bg-orange-500 px-4 py-2 text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="text-sm font-semibold">record the One</span>
+          <span className="text-xs">your first loop sets the length</span>
+        </button>
+        <label className="flex min-h-12 items-center gap-2 rounded border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-left text-xs text-zinc-300">
+          <input
+            type="checkbox"
+            aria-label="I've got headphones on"
+            checked={monitorWithHeadphones}
+            disabled={isExporting}
+            onChange={(event) => setMonitorWithHeadphones(event.currentTarget.checked)}
+            className="h-4 w-4 shrink-0 accent-orange-500 disabled:cursor-not-allowed"
+          />
+          <span>I've got headphones on</span>
+        </label>
+      </div>
+    </div>
+  );
 }
 
 function MoodCaptureOverlay({ piece }: MoodStageProps) {
@@ -211,6 +257,7 @@ export function MoodStage({ piece }: MoodStageProps) {
         aria-label="Mood stage display"
         className="ha-mood-display-canvas block h-full w-full bg-zinc-950"
       />
+      <MoodOneInvitation piece={piece} />
       <MoodCaptureOverlay piece={piece} />
       <span className="sr-only">{stageLabel} stage</span>
       <span className="sr-only">{piece.mics.length} mics</span>
