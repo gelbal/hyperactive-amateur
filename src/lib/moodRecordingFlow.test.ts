@@ -10,6 +10,7 @@ const audioMocks = vi.hoisted(() => ({
     removeEventListener: vi.fn(),
   },
   getAudioContext: vi.fn(() => audioMocks.context),
+  triggerCountInClick: vi.fn(),
 }));
 
 const toneMocks = vi.hoisted(() => ({
@@ -69,6 +70,7 @@ const installMocks = vi.hoisted(() => ({
 
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
+  triggerCountInClick: audioMocks.triggerCountInClick,
 }));
 
 vi.mock("tone", () => ({
@@ -79,6 +81,7 @@ vi.mock("tone", () => ({
 }));
 
 vi.mock("./moodPlayers", () => ({
+  setCaptureGain: vi.fn(),
   stopAllMoodPlayers: vi.fn(),
   syncMoodPlayers: vi.fn(),
 }));
@@ -135,8 +138,11 @@ import {
   recordMoodTake,
   stopMoodTakeEarly,
 } from "./moodRecordingFlow";
+import { setCaptureGain } from "./moodPlayers";
 import { useAppStore } from "../store/useAppStore";
+import { MOOD_HEADPHONES_STORAGE_KEY } from "../store/initialState";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import {
   __resetMoodTransportForTesting,
   startMoodPerformance,
@@ -146,6 +152,7 @@ import {
   interruptActiveRecording,
   registerRecordingInterruptHandler,
 } from "./recordingInterrupt";
+import { registerStreamLifecycle, releaseMediaStream } from "./streamLifecycle";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
@@ -184,11 +191,12 @@ async function observeResolution(
 }
 
 function makeTrack(kind: "audio" | "video"): MediaStreamTrack {
-  return {
+  return Object.assign(new EventTarget(), {
     kind,
     muted: false,
     readyState: "live",
-  } as MediaStreamTrack;
+    stop: vi.fn(),
+  }) as unknown as MediaStreamTrack;
 }
 
 function makeStream(
@@ -271,6 +279,7 @@ describe("moodRecordingFlow", () => {
     __resetMoodRecordingFlowForTesting();
     __resetMoodTransportForTesting();
     __resetPersistenceRequestForTesting();
+    window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setAppMode("mood");
@@ -288,10 +297,12 @@ describe("moodRecordingFlow", () => {
     toneMocks.transport.scheduleRepeat.mockClear();
     toneMocks.transport.start.mockClear();
     toneMocks.transport.stop.mockClear();
+    audioMocks.triggerCountInClick.mockClear();
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
     mediaMocks.requestMedia.mockReset();
+    vi.mocked(setCaptureGain).mockClear();
     recorderMocks.recordClip.mockReset();
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     recorderMocks.createRecordClipStopController.mockReset();
@@ -474,6 +485,115 @@ describe("moodRecordingFlow", () => {
       cycleSeconds: 4,
       oneMicId: "mic-0",
     });
+  });
+
+  it("schedules count-in synth clicks on the audio clock and stops before punch-in", async () => {
+    vi.useFakeTimers();
+    useAppStore.getState().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(6.5);
+    expect(audioMocks.triggerCountInClick.mock.calls).toEqual([[5], [5.5], [6]]);
+
+    await advanceCountdownToDeadline();
+    await expect(promise).resolves.toBe(true);
+
+    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalledWith(6.5);
+    expect(audioMocks.triggerCountInClick).toHaveBeenCalledTimes(3);
+  });
+
+  it("mutes the capture gain only for the capture window when headphone monitoring is off", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(setCaptureGain).not.toHaveBeenCalled();
+
+    await advanceCountdownToDeadline();
+
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    expect(setCaptureGain).toHaveBeenCalledTimes(1);
+    expect(setCaptureGain).toHaveBeenLastCalledWith(true);
+
+    capture.resolve(makeRecordResult());
+    await expect(promise).resolves.toBe(true);
+
+    expect(vi.mocked(setCaptureGain).mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("keeps capture gain open during capture when headphone monitoring is on", async () => {
+    vi.useFakeTimers();
+    useAppStore.getState().actions.setMonitorWithHeadphones(true);
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    expect(setCaptureGain).not.toHaveBeenCalled();
+
+    await advanceCountdownToDeadline();
+
+    expect(setCaptureGain).toHaveBeenCalledTimes(1);
+    expect(setCaptureGain).toHaveBeenLastCalledWith(false);
+
+    capture.resolve(makeRecordResult());
+    await expect(promise).resolves.toBe(true);
+
+    expect(vi.mocked(setCaptureGain).mock.calls).toEqual([[false], [false]]);
+  });
+
+  it("restores capture gain in the recording-state finally after a capture abort", async () => {
+    vi.useFakeTimers();
+    recorderMocks.recordClip.mockImplementation(makeAbortableRecordClip());
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    expect(useAppStore.getState().recording.state).toBe("recording");
+    expect(setCaptureGain).toHaveBeenCalledWith(true);
+
+    cancelCurrentMoodTake();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(vi.mocked(setCaptureGain).mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("moves the audio session into play-and-record while the mood flow holds the mic", async () => {
+    vi.useFakeTimers();
+    const audioSession = installNavigatorAudioSession();
+    const stream = makeStream();
+    mediaMocks.acquireRecordingStream.mockImplementation(async () => {
+      registerStreamLifecycle(stream);
+      useAppStore
+        .getState()
+        .actions.setMedia({ stream, status: "granted", error: null });
+      return stream;
+    });
+    mediaMocks.releaseRecordingStream.mockImplementation((heldStream: MediaStream) => {
+      releaseMediaStream(heldStream);
+    });
+
+    try {
+      const promise = recordMoodTake("mic-0");
+      await flushMicrotasks(10);
+
+      expect(audioSession.types).toEqual(["playback", "play-and-record"]);
+
+      await advanceCountdownToDeadline();
+      await expect(promise).resolves.toBe(true);
+
+      expect(audioSession.types).toEqual(["playback", "play-and-record", "playback"]);
+    } finally {
+      audioSession.uninstall();
+    }
   });
 
   it("counts down to the next cycle boundary when it has at least one beat of lead", async () => {

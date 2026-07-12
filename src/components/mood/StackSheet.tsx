@@ -59,6 +59,9 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
   const activeEntry = useAppStore(
     (s) => s.mood.performance.armed[mic.id] ?? s.mood.performance.selections[mic.id] ?? "off",
   );
+  const monitorWithHeadphones = useAppStore((s) => s.mood.monitorWithHeadphones);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const setMonitorWithHeadphones = useAppStore((s) => s.actions.setMonitorWithHeadphones);
   const canRecordTheOne = useAppStore(
     (s) =>
       Boolean(s.mood.piece) &&
@@ -145,6 +148,23 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
             <span className="ml-auto text-xs text-zinc-500">Mute this mic</span>
           </span>
         </button>
+
+        <label className="flex min-h-11 w-full items-center gap-3 rounded border border-zinc-800 bg-zinc-950 px-3 py-2 text-left text-sm text-zinc-300 pointer-coarse:min-h-12">
+          <input
+            type="checkbox"
+            aria-label="I've got headphones on"
+            checked={monitorWithHeadphones}
+            disabled={isExporting}
+            onChange={(event) => setMonitorWithHeadphones(event.currentTarget.checked)}
+            className="h-4 w-4 shrink-0 accent-orange-500 disabled:cursor-not-allowed"
+          />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="font-medium text-zinc-100">I've got headphones on</span>
+            <span className="text-xs text-zinc-500">
+              no headphones: loops go silent while you record
+            </span>
+          </span>
+        </label>
 
         <button
           type="button"

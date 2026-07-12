@@ -2,7 +2,7 @@
 // ABOUTME: Reuses Chop recording seams for audio-clock countdown, abort safety, durability, and posters.
 import { useAppStore } from "../store/useAppStore";
 import type { MoodTake, MoodTimeFeel } from "../types";
-import { getAudioContext } from "./audio";
+import { getAudioContext, triggerCountInClick } from "./audio";
 import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { isAbortError } from "./aiClient";
 import { saveNow } from "./autoSave";
@@ -24,6 +24,7 @@ import {
   establishCycleFromClick,
   nextCycleBoundary,
 } from "./moodClock";
+import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
 import { snapTake } from "./moodTakeSnap";
 import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
@@ -102,6 +103,14 @@ function cycleCountdownDeadline(
   const beatSeconds = cycleSeconds / DROP_BEATS_PER_CYCLE;
   const boundary = nextCycleBoundary(epoch, cycleSeconds, now);
   return boundary - now >= beatSeconds ? boundary : boundary + cycleSeconds;
+}
+
+function scheduleCountInClicks(startAt: number, countdownEndsAt: number, beatSeconds: number): void {
+  if (!Number.isFinite(beatSeconds) || beatSeconds <= 0) return;
+  const lastTickBeforePunchIn = countdownEndsAt - 0.000_001;
+  for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
+    triggerCountInClick(when);
+  }
 }
 
 async function waitUntilAudioTime(
@@ -337,22 +346,26 @@ async function runFlow(
 
     const audioContext = getAudioContext();
     let countdownEndsAt: number;
+    let beatSeconds: number;
     if (startingPiece.cycleSeconds === null) {
-      const beatSeconds = 60 / countInBpm(startingPiece.timeFeel, startingPiece.bpm);
+      beatSeconds = 60 / countInBpm(startingPiece.timeFeel, startingPiece.bpm);
       countdownEndsAt = audioContext.currentTime + COUNT_IN_BEATS * beatSeconds;
     } else {
       const performance = useAppStore.getState().mood.performance;
       if (!performance.isPerforming || performance.epoch === null) return false;
+      beatSeconds = startingPiece.cycleSeconds / DROP_BEATS_PER_CYCLE;
       countdownEndsAt = cycleCountdownDeadline(
         performance.epoch,
         startingPiece.cycleSeconds,
         audioContext.currentTime,
       );
     }
+    scheduleCountInClicks(audioContext.currentTime, countdownEndsAt, beatSeconds);
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", null);
 
     await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
+    setCaptureGain(!useAppStore.getState().mood.monitorWithHeadphones);
     actions.setRecordingState("recording", null);
     const result = await recordWithEarlyStop(stream, capMs, audioContext, signal);
     throwIfFlowAborted(signal, "Aborted after capture");
@@ -423,6 +436,7 @@ async function runFlow(
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    setCaptureGain(false);
     actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
     actions.setMoodHotMic(null);

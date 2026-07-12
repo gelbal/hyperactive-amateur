@@ -18,6 +18,7 @@ import { logger, LOG_EVENTS } from "../lib/logger";
 import {
   APP_MODE_STORAGE_KEY,
   AUDIO_DEVICE_STORAGE_KEY,
+  MOOD_HEADPHONES_STORAGE_KEY,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
 import { createEmptyMoodPiece, MAX_TAKES_PER_MIC } from "../lib/moodStages";
@@ -101,6 +102,7 @@ describe("useAppStore", () => {
     window.localStorage.removeItem(APP_MODE_STORAGE_KEY);
     window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
     window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
+    window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
     get().actions.reset();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
@@ -653,6 +655,27 @@ describe("useAppStore", () => {
       window.localStorage.setItem(APP_MODE_STORAGE_KEY, "not-a-mode");
       get().actions.reset();
       expect(get().appMode).toBe("chop");
+    });
+
+    it("defaults headphone monitoring off and persists it as a guarded machine pref", () => {
+      expect(get().mood.monitorWithHeadphones).toBe(false);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
+
+      get().actions.setMonitorWithHeadphones(true);
+
+      expect(get().mood.monitorWithHeadphones).toBe(true);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBe("1");
+
+      get().actions.reset();
+      expect(get().mood.monitorWithHeadphones).toBe(true);
+
+      get().actions.setMonitorWithHeadphones(false);
+
+      expect(get().mood.monitorWithHeadphones).toBe(false);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
+
+      get().actions.reset();
+      expect(get().mood.monitorWithHeadphones).toBe(false);
     });
 
     it("creates an empty Mood piece with idle all-Off performance state", () => {

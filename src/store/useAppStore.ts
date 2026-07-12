@@ -39,6 +39,7 @@ import {
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
+  MOOD_HEADPHONES_STORAGE_KEY,
   STEP_COUNT_INCREMENT,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
@@ -57,6 +58,16 @@ function persistAppMode(mode: AppMode): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage may be disabled in private mode; persistence is best-effort.
+  }
+}
+
+function persistMoodHeadphones(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) window.localStorage.setItem(MOOD_HEADPHONES_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
   } catch {
     // localStorage may be disabled in private mode; persistence is best-effort.
   }
@@ -240,6 +251,7 @@ export interface AppActions {
   ) => void;
   scratchMoodPiece: () => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
+  setMonitorWithHeadphones: (enabled: boolean) => void;
   armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
   commitMoodSelections: (dueArms: MoodSelectionCommit[]) => void;
   setMoodDrop: (dropActive: boolean) => void;
@@ -379,6 +391,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const piece = result.piece;
         return {
           mood: {
+            ...state.mood,
             piece,
             hydration: "ready",
             performance: piece
@@ -410,6 +423,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const piece = createEmptyMoodPiece(stage, timeFeel, opts);
         return {
           mood: {
+            ...state.mood,
             piece,
             hydration: "ready",
             performance: createMoodPerformanceForPiece(piece),
@@ -425,6 +439,7 @@ export const useAppStore = create<AppStore>((set) => ({
         revokeMoodPieceObjectUrls(state.mood.piece);
         return {
           mood: {
+            ...state.mood,
             piece: null,
             hydration: "ready",
             performance: createIdleMoodPerformance(),
@@ -449,6 +464,18 @@ export const useAppStore = create<AppStore>((set) => ({
             : stopMoodPerformanceState(state.mood.performance),
         },
       })),
+
+    setMonitorWithHeadphones: (enabled) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        persistMoodHeadphones(enabled);
+        return {
+          mood: {
+            ...state.mood,
+            monitorWithHeadphones: enabled,
+          },
+        };
+      }),
 
     armMoodSelection: (micId, entry) =>
       set((state) => ({

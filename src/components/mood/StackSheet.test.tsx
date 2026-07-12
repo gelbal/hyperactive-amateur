@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StackSheet } from "./StackSheet";
 import { useAppStore } from "../../store/useAppStore";
+import { MOOD_HEADPHONES_STORAGE_KEY } from "../../store/initialState";
 import * as moodPerformance from "../../lib/moodPerformance";
 import { MAX_TAKES_PER_MIC } from "../../lib/moodStages";
 import type { MoodMic, MoodTake } from "../../types";
@@ -73,6 +74,8 @@ function setupMoodBeforeTheOne(): MoodMic {
 
 describe("StackSheet", () => {
   beforeEach(() => {
+    window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
+    useAppStore.getState().actions.reset();
     vi.mocked(moodPerformance.armSelection).mockReset();
     vi.mocked(moodPerformance.armSelection).mockImplementation((micId, entry) => {
       useAppStore.getState().actions.commitMoodSelections([{ micId, entry }]);
@@ -138,6 +141,30 @@ describe("StackSheet", () => {
 
     expect(moodRecordingMocks.recordMoodTake).toHaveBeenCalledWith("mic-0");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a functional headphone monitoring toggle beside the record affordance", () => {
+    const mic = setupMoodBeforeTheOne();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    const toggle = screen.getByLabelText("I've got headphones on");
+
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByText("no headphones: loops go silent while you record"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toBeChecked();
+    expect(useAppStore.getState().mood.monitorWithHeadphones).toBe(true);
+    expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBe("1");
+
+    fireEvent.click(toggle);
+
+    expect(toggle).not.toBeChecked();
+    expect(useAppStore.getState().mood.monitorWithHeadphones).toBe(false);
+    expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
   });
 
   it("dismisses through outside mousedown and Escape using the shared hook", () => {
