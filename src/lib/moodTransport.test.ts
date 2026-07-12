@@ -32,6 +32,7 @@ const audioLifecycleMocks = vi.hoisted(() => ({
 const moodVideoPoolMocks = vi.hoisted(() => ({
   liveTakesFromSelections: vi.fn(() => []),
   prepareUpcoming: vi.fn(),
+  restartVideosAtPeriodBoundary: vi.fn(),
   syncPool: vi.fn(),
 }));
 
@@ -48,6 +49,7 @@ vi.mock("./audioLifecycle", () => ({
 vi.mock("./moodVideoPool", () => ({
   liveTakesFromSelections: moodVideoPoolMocks.liveTakesFromSelections,
   prepareUpcoming: moodVideoPoolMocks.prepareUpcoming,
+  restartVideosAtPeriodBoundary: moodVideoPoolMocks.restartVideosAtPeriodBoundary,
   syncPool: moodVideoPoolMocks.syncPool,
 }));
 
@@ -62,6 +64,8 @@ import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
 } from "./audibleActionGate";
+import { applyDueCommits } from "./moodCommits";
+import { armSelection } from "./moodPerformance";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodTake } from "../types";
 
@@ -129,6 +133,7 @@ describe("moodTransport", () => {
     moodVideoPoolMocks.liveTakesFromSelections.mockReset();
     moodVideoPoolMocks.liveTakesFromSelections.mockReturnValue([]);
     moodVideoPoolMocks.prepareUpcoming.mockReset();
+    moodVideoPoolMocks.restartVideosAtPeriodBoundary.mockReset();
     moodVideoPoolMocks.syncPool.mockReset();
   });
 
@@ -251,11 +256,32 @@ describe("moodTransport", () => {
     expect(moodVideoPoolMocks.prepareUpcoming).not.toHaveBeenCalled();
   });
 
+  it("drains a deleted staged arm to off instead of resurrecting the ghost take", async () => {
+    createMoodWithCycle(2);
+    const actions = useAppStore.getState().actions;
+    actions.setMoodTake("mic-1", makeMoodTake({ id: "ghost-arm" }));
+    toneMocks.now.mockReturnValue(0);
+    await startMoodPerformance();
+
+    armSelection("mic-1", "ghost-arm");
+    expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBe("ghost-arm");
+
+    actions.deleteMoodTake("mic-1", "ghost-arm");
+    expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBe("off");
+
+    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    boundaryCallback?.(2);
+    applyDueCommits(2);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-1"]).toBe("off");
+    expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBeNull();
+  });
+
   it("stop cancels the repeat, resets flags, and preserves the mix", async () => {
     createMoodWithCycle();
     await startMoodPerformance();
     const actions = useAppStore.getState().actions;
-    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "the-one" }]);
     actions.setMoodDrop(true);
     actions.setMoodHotMic("mic-0");
     actions.setMoodCycleCount(7);
@@ -270,7 +296,7 @@ describe("moodTransport", () => {
     expect(useAppStore.getState().mood.performance).toMatchObject({
       isPerforming: false,
       epoch: null,
-      selections: { "mic-0": "take-a", "mic-1": "off" },
+      selections: { "mic-0": "the-one", "mic-1": "off" },
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,

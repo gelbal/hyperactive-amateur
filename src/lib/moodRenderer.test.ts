@@ -245,6 +245,7 @@ describe("moodRenderer", () => {
 
   it("promotes a due Mood selection commit exactly once from the paint loop", async () => {
     createMoodWithCycle(2);
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-b" }));
     const ctx = createRenderer("row");
     const commitSelections = vi.spyOn(
       useAppStore.getState().actions,
@@ -274,6 +275,7 @@ describe("moodRenderer", () => {
 
   it("lets a stalled paint catch up to the latest due boundary", async () => {
     createMoodWithCycle(2);
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-b" }));
     createRenderer("row");
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();

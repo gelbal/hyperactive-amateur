@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Mic2, Square } from "lucide-react";
 import { getAudioContext } from "../../lib/audio";
 import { countInBeatSeconds, stopMoodTakeEarly } from "../../lib/moodRecordingFlow";
+import { cancelActiveRecordingByUser } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPiece, MoodSelectionEntry, MoodTake } from "../../types";
 import { StackSheet } from "./StackSheet";
@@ -125,10 +126,15 @@ export function MicStrip({ piece }: MicStripProps) {
               ? "live"
               : "off";
         const open = openMicId === mic.id;
+        const hotActionLabel = recordingState === "recording" ? "Stop take" : "Cancel take";
 
         const onChipClick = () => {
           if (isHot) {
-            stopMoodTakeEarly();
+            if (recordingState === "recording") {
+              stopMoodTakeEarly();
+            } else {
+              cancelActiveRecordingByUser();
+            }
             return;
           }
           setOpenMicId((current) => (current === mic.id ? null : mic.id));
@@ -143,7 +149,7 @@ export function MicStrip({ piece }: MicStripProps) {
               aria-pressed={open}
               aria-label={
                 isHot
-                  ? `Mic ${micNumber}, ${stateLabel(state)}. Stop take`
+                  ? `Mic ${micNumber}, ${stateLabel(state)}. ${hotActionLabel}`
                   : `Mic ${micNumber}, ${stateLabel(state)}. Open stack`
               }
               onClick={onChipClick}

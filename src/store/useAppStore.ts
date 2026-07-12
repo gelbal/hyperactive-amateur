@@ -235,6 +235,16 @@ function clearMoodTakePerformanceRefs(
     : { ...performance, selections, armed };
 }
 
+function commitEntryForExistingMoodTake(
+  piece: MoodPiece | null,
+  micId: string,
+  entry: MoodSelectionEntry,
+): MoodSelectionEntry {
+  if (entry === "off") return entry;
+  const mic = piece?.mics.find((candidate) => candidate.id === micId);
+  return mic?.takes.some((take) => take.id === entry) ? entry : "off";
+}
+
 export interface AppActions {
   setAppMode: (mode: AppMode) => void;
   setMoodHydration: (hydration: AppState["mood"]["hydration"]) => void;
@@ -494,7 +504,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const selections = { ...state.mood.performance.selections };
         const armed = { ...state.mood.performance.armed };
         for (const { micId, entry } of dueArms) {
-          selections[micId] = entry;
+          selections[micId] = commitEntryForExistingMoodTake(state.mood.piece, micId, entry);
           armed[micId] = null;
         }
         return {

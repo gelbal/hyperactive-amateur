@@ -16,6 +16,10 @@ const moodRecordingMocks = vi.hoisted(() => ({
   stopMoodTakeEarly: vi.fn(),
 }));
 
+const recordingCancelMocks = vi.hoisted(() => ({
+  cancelActiveRecordingByUser: vi.fn(),
+}));
+
 vi.mock("../../lib/audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
 }));
@@ -23,6 +27,10 @@ vi.mock("../../lib/audio", () => ({
 vi.mock("../../lib/moodRecordingFlow", () => ({
   countInBeatSeconds: moodRecordingMocks.countInBeatSeconds,
   stopMoodTakeEarly: moodRecordingMocks.stopMoodTakeEarly,
+}));
+
+vi.mock("../../lib/useRecordingEscapeCancel", () => ({
+  cancelActiveRecordingByUser: recordingCancelMocks.cancelActiveRecordingByUser,
 }));
 
 import { MicStrip } from "./MicStrip";
@@ -64,6 +72,7 @@ describe("MicStrip", () => {
     audioMocks.getAudioContext.mockClear();
     moodRecordingMocks.countInBeatSeconds.mockReturnValue(0.5);
     moodRecordingMocks.stopMoodTakeEarly.mockReset();
+    recordingCancelMocks.cancelActiveRecordingByUser.mockReset();
   });
 
   afterEach(() => {
@@ -108,7 +117,7 @@ describe("MicStrip", () => {
     expect(screen.getByTestId("mic-mic-3-empty")).toHaveClass("border-dashed");
   });
 
-  it("shows countdown beats and stops from the hot mic chip", async () => {
+  it("shows countdown beats and cancels from the hot mic chip before capture", async () => {
     vi.useFakeTimers();
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     useAppStore.getState().actions.setMoodTake("mic-0", makeTake("take-live"));
@@ -118,7 +127,7 @@ describe("MicStrip", () => {
 
     render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
 
-    const hotChip = screen.getByRole("button", { name: /Mic 1, recording.*Stop take/i });
+    const hotChip = screen.getByRole("button", { name: /Mic 1, recording.*Cancel take/i });
     expect(screen.getByTestId("mic-mic-0-ring")).toHaveClass("border-red-500");
     expect(screen.getByTestId("mic-mic-0-rec-dot")).toBeInTheDocument();
     expect(screen.getByTestId("mic-mic-0-countdown")).toHaveTextContent("3");
@@ -132,8 +141,23 @@ describe("MicStrip", () => {
 
     fireEvent.click(hotChip);
 
-    expect(moodRecordingMocks.stopMoodTakeEarly).toHaveBeenCalledTimes(1);
+    expect(recordingCancelMocks.cancelActiveRecordingByUser).toHaveBeenCalledTimes(1);
+    expect(moodRecordingMocks.stopMoodTakeEarly).not.toHaveBeenCalled();
 
+  });
+
+  it("stops the take from the hot mic chip during capture", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake("mic-0", makeTake("take-live"));
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    useAppStore.getState().actions.setRecordingState("recording", null);
+
+    render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Mic 1, recording.*Stop take/i }));
+
+    expect(moodRecordingMocks.stopMoodTakeEarly).toHaveBeenCalledTimes(1);
+    expect(recordingCancelMocks.cancelActiveRecordingByUser).not.toHaveBeenCalled();
   });
 
   it("opens a stack sheet from a 44px coarse-pointer mic chip", () => {

@@ -131,11 +131,14 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
           const selected = activeEntry === take.id;
           const liveDeleteDisabled =
             performance.isPerforming && (performance.selections[mic.id] ?? "off") === take.id;
-          const deleteDisabledReason = liveDeleteDisabled
-            ? "live take"
-            : isExporting
-              ? "exporting"
-              : null;
+          const deleteDisabledReason =
+            recordingState !== "idle"
+              ? "recording"
+              : liveDeleteDisabled
+                ? "live take"
+                : isExporting
+                  ? "exporting"
+                  : null;
           const confirmingDelete = confirmDeleteId === take.id && deleteDisabledReason === null;
           return (
             <div key={take.id} className="flex items-stretch gap-1">

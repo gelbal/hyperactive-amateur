@@ -265,16 +265,20 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
 
 function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSeconds"] }) {
   const isExporting = useAppStore((s) => s.playback.isExporting);
+  const recordingState = useAppStore((s) => s.recording.state);
   const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
   const canStart = useAppStore(canStartAudibleAction);
   const needsCycle = cycleSeconds === null;
-  const disabled = isExporting || (!isPerforming && (needsCycle || !canStart));
+  const recordingActive = recordingState !== "idle";
+  const disabled = isExporting || recordingActive || (!isPerforming && (needsCycle || !canStart));
 
   const handleClick = () => {
+    if (isExporting || recordingActive) return;
     if (isPerforming) {
       stopMoodPerformance();
       return;
     }
+    if (needsCycle || !canStart) return;
     runAudibleAction(startMoodPerformance());
   };
 

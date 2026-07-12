@@ -280,4 +280,28 @@ describe("StackSheet", () => {
     expect(deleteMoodTake).toHaveBeenCalledWith("mic-0", "take-b");
     deleteMoodTake.mockRestore();
   });
+
+  it("disables delete affordances with recording reason while recording is active", () => {
+    const mic = setupMood();
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+    const deleteMoodTake = vi.spyOn(useAppStore.getState().actions, "deleteMoodTake");
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    const removeTakeOne = screen.getByRole("button", {
+      name: "Remove take 1 disabled, recording",
+    });
+    const removeTakeTwo = screen.getByRole("button", {
+      name: "Remove take 2 disabled, recording",
+    });
+
+    expect(removeTakeOne).toBeDisabled();
+    expect(removeTakeTwo).toBeDisabled();
+    expect(screen.getAllByText("recording")).toHaveLength(2);
+
+    fireEvent.click(removeTakeOne);
+
+    expect(screen.queryByRole("button", { name: "Confirm remove take 1" })).not.toBeInTheDocument();
+    expect(deleteMoodTake).not.toHaveBeenCalled();
+    deleteMoodTake.mockRestore();
+  });
 });

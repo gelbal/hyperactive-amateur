@@ -1,5 +1,6 @@
 // ABOUTME: Mood recording flow — captures the first take ("the One") into a mic stack.
 // ABOUTME: Reuses Chop recording seams for audio-clock countdown, abort safety, durability, and posters.
+import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodPiece, MoodTake, MoodTimeFeel } from "../types";
 import { getAudioContext, triggerCountInClick } from "./audio";
@@ -113,12 +114,48 @@ function cycleCountdownDeadline(
   return boundary - now >= beatSeconds ? boundary : boundary + cycleSeconds;
 }
 
-function scheduleCountInClicks(startAt: number, countdownEndsAt: number, beatSeconds: number): void {
-  if (!Number.isFinite(beatSeconds) || beatSeconds <= 0) return;
+function scheduleCountInClicks(
+  startAt: number,
+  countdownEndsAt: number,
+  beatSeconds: number,
+  mode: "first-take" | "overdub",
+): () => void {
+  const noop = () => undefined;
+  if (!Number.isFinite(beatSeconds) || beatSeconds <= 0) return noop;
   const lastTickBeforePunchIn = countdownEndsAt - 0.000_001;
-  for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
-    triggerCountInClick(when);
+  if (mode === "first-take") {
+    // First-take count-ins can run before the Transport starts; pre-scheduling
+    // leaves at most two residual ticks inside the silent pre-capture stage.
+    for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
+      triggerCountInClick(when);
+    }
+    return noop;
   }
+
+  const transport = Tone.getTransport();
+  const scheduledIds = new Set<number>();
+  let cancelled = false;
+  // scheduleOnce takes TRANSPORT time (seconds since position 0), not the
+  // audio clock — convert each absolute tick time to a transport offset or
+  // every tick fires late by the transport's start-time offset.
+  const transportNow = transport.seconds;
+  for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
+    let scheduledId: number | null = null;
+    scheduledId = transport.scheduleOnce((time) => {
+      if (cancelled) return;
+      if (scheduledId !== null) scheduledIds.delete(scheduledId);
+      triggerCountInClick(time);
+    }, transportNow + (when - startAt));
+    scheduledIds.add(scheduledId);
+  }
+  return () => {
+    if (cancelled) return;
+    cancelled = true;
+    for (const scheduledId of scheduledIds) {
+      transport.clear(scheduledId);
+    }
+    scheduledIds.clear();
+  };
 }
 
 async function waitUntilAudioTime(
@@ -307,6 +344,7 @@ async function runFlow(
   const startingPiece = useAppStore.getState().mood.piece;
   const externalStream = options.stream ?? null;
   let stream: MediaStream | null = null;
+  let cancelCountInClicks: () => void = () => undefined;
 
   if (!startingPiece) return false;
   const descriptor = STAGE_DESCRIPTORS[startingPiece.stage];
@@ -386,7 +424,12 @@ async function runFlow(
         audioContext.currentTime,
       );
     }
-    scheduleCountInClicks(audioContext.currentTime, countdownEndsAt, beatSeconds);
+    cancelCountInClicks = scheduleCountInClicks(
+      audioContext.currentTime,
+      countdownEndsAt,
+      beatSeconds,
+      startingPiece.cycleSeconds === null ? "first-take" : "overdub",
+    );
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", null);
 
@@ -451,6 +494,7 @@ async function runFlow(
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {
+      cancelCountInClicks();
       if (getAbortReason(signal) === "interrupted") {
         actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
       }
@@ -459,6 +503,7 @@ async function runFlow(
     options.onError?.(errorMessage(e));
     return false;
   } finally {
+    cancelCountInClicks();
     if (getMoodRecordingPreviewStream() === stream) {
       setMoodRecordingPreviewStream(null);
     }

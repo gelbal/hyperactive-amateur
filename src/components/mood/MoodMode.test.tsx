@@ -353,7 +353,7 @@ describe("MoodMode", () => {
     expect(moodTransportMocks.startMoodPerformance).not.toHaveBeenCalled();
   });
 
-  it("gate-blocks Mood start while keeping stop available", () => {
+  it("gate-blocks Mood start and stop while recording is active (FG-1)", () => {
     act(() => {
       useAppStore.getState().actions.setAppMode("mood");
       useAppStore.getState().actions.createMoodPiece("row", "pocket");
@@ -377,11 +377,11 @@ describe("MoodMode", () => {
     });
 
     const stopButton = screen.getByRole("button", { name: "Stop mood performance" });
-    expect(stopButton).not.toBeDisabled();
+    expect(stopButton).toBeDisabled();
 
     fireEvent.click(stopButton);
 
-    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+    expect(moodTransportMocks.stopMoodPerformance).not.toHaveBeenCalled();
   });
 
   it("shows the Mood performance controls with a ticking cycle count", () => {

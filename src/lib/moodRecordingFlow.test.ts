@@ -14,23 +14,63 @@ const audioMocks = vi.hoisted(() => ({
 }));
 
 const toneMocks = vi.hoisted(() => ({
-  draw: {
-    schedule: vi.fn((callback: () => void) => {
-      callback();
-      return 301;
-    }),
+  make() {
+    let nextScheduleOnceId = 501;
+    const scheduleOnceTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    const transportState = { seconds: 0 };
+    const tone = {
+      draw: {
+        schedule: vi.fn((callback: () => void) => {
+          callback();
+          return 301;
+        }),
+      },
+      now: vi.fn(() => audioMocks.context.currentTime),
+      start: vi.fn(),
+      transport: {
+        cancel: vi.fn(),
+        clear: vi.fn((eventId: number) => {
+          const timer = scheduleOnceTimers.get(eventId);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            scheduleOnceTimers.delete(eventId);
+          }
+        }),
+        position: 0 as number | string,
+        // Real Tone semantics: scheduleOnce's time argument is TRANSPORT time
+        // (seconds since position 0), not absolute audio-clock time.
+        get seconds() {
+          return transportState.seconds;
+        },
+        set seconds(value: number) {
+          transportState.seconds = value;
+        },
+        scheduleOnce: vi.fn((callback: (time: number) => void, time: number) => {
+          const eventId = nextScheduleOnceId;
+          nextScheduleOnceId += 1;
+          const delayMs = Math.max(0, Math.round((time - transportState.seconds) * 1000));
+          const timer = setTimeout(() => {
+            scheduleOnceTimers.delete(eventId);
+            callback(time);
+          }, delayMs);
+          scheduleOnceTimers.set(eventId, timer);
+          return eventId;
+        }),
+        scheduleRepeat: vi.fn(() => 401),
+        start: vi.fn(),
+        stop: vi.fn(),
+      },
+      resetScheduleOnceTimers() {
+        for (const timer of scheduleOnceTimers.values()) {
+          clearTimeout(timer);
+        }
+        scheduleOnceTimers.clear();
+        nextScheduleOnceId = 501;
+      },
+    };
+    return tone;
   },
-  now: vi.fn(() => audioMocks.context.currentTime),
-  start: vi.fn(),
-  transport: {
-    cancel: vi.fn(),
-    clear: vi.fn(),
-    position: 0 as number | string,
-    scheduleRepeat: vi.fn(() => 401),
-    start: vi.fn(),
-    stop: vi.fn(),
-  },
-}));
+}).make());
 
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
@@ -303,6 +343,9 @@ describe("moodRecordingFlow", () => {
     toneMocks.transport.cancel.mockClear();
     toneMocks.transport.clear.mockClear();
     toneMocks.transport.position = 0;
+    toneMocks.transport.seconds = 0;
+    toneMocks.resetScheduleOnceTimers();
+    toneMocks.transport.scheduleOnce.mockClear();
     toneMocks.transport.scheduleRepeat.mockClear();
     toneMocks.transport.start.mockClear();
     toneMocks.transport.stop.mockClear();
@@ -771,6 +814,43 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().mood.piece?.mics[1].takes).toHaveLength(0);
     expect(toneMocks.transport.stop).not.toHaveBeenCalled();
     expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
+  });
+
+  it("cancels overdub count-in ticks when an abort lands mid-count-in", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    audioMocks.context.currentTime = 16.6;
+    // Transport time and audio-clock time have different origins: the
+    // transport was re-positioned to 0 at performance start. Ticks must be
+    // scheduled TRANSPORT-relative or they fire late by the epoch offset.
+    toneMocks.transport.seconds = 100;
+    toneMocks.transport.scheduleOnce
+      .mockReturnValueOnce(601)
+      .mockReturnValueOnce(602)
+      .mockReturnValueOnce(603);
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(toneMocks.transport.scheduleOnce).toHaveBeenCalledTimes(3);
+    // Ticks intended for audio times 16.6/17.1/17.6 land at transport
+    // positions 100/100.5/101.
+    expect(toneMocks.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
+      100, 100.5, 101,
+    ]);
+    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalled();
+
+    cancelCurrentMoodTake();
+
+    await expect(promise).resolves.toBe(false);
+    expect(toneMocks.transport.clear.mock.calls).toEqual([[601], [602], [603]]);
+
+    const scheduledCallbacks = toneMocks.transport.scheduleOnce.mock.calls.map(([callback]) => callback);
+    scheduledCallbacks.forEach((callback, index) => callback(16.6 + index * 0.5));
+
+    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalled();
   });
 
   it("exposes tap-to-stop through the active recordClip stop controller", async () => {
