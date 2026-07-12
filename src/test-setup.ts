@@ -126,58 +126,63 @@ if (typeof HTMLCanvasElement !== "undefined") {
       const existing = contexts.get(this);
       if (existing) return existing;
 
-      const stateStack: Array<{ fillStyle: string; globalAlpha: number }> = [];
+      const stateStack: Array<{
+        fillStyle: string;
+        globalAlpha: number;
+        globalCompositeOperation: string;
+      }> = [];
       const calls: Array<{
         method: string;
         args: unknown[];
         fillStyle: string;
         globalAlpha: number;
+        globalCompositeOperation: string;
       }> = [];
+      const recordCall = (method: string, args: unknown[]) => {
+        calls.push({
+          method,
+          args,
+          fillStyle: context.fillStyle as string,
+          globalAlpha: context.globalAlpha as number,
+          globalCompositeOperation: context.globalCompositeOperation as string,
+        });
+      };
       const context: Record<string, unknown> = {
         canvas: this,
         fillStyle: "",
         globalAlpha: 1,
+        globalCompositeOperation: "source-over",
         imageSmoothingEnabled: true,
         font: "",
         textAlign: "",
         textBaseline: "",
         __haCanvasCalls: calls,
         fillRect: vi.fn((...args: unknown[]) => {
-          calls.push({
-            method: "fillRect",
-            args,
-            fillStyle: context.fillStyle as string,
-            globalAlpha: context.globalAlpha as number,
-          });
+          recordCall("fillRect", args);
         }),
         clearRect: vi.fn((...args: unknown[]) => {
-          calls.push({
-            method: "clearRect",
-            args,
-            fillStyle: context.fillStyle as string,
-            globalAlpha: context.globalAlpha as number,
-          });
+          recordCall("clearRect", args);
         }),
         fillText: vi.fn((...args: unknown[]) => {
-          calls.push({
-            method: "fillText",
-            args,
-            fillStyle: context.fillStyle as string,
-            globalAlpha: context.globalAlpha as number,
-          });
+          recordCall("fillText", args);
         }),
         drawImage: vi.fn((...args: unknown[]) => {
-          calls.push({
-            method: "drawImage",
-            args,
-            fillStyle: context.fillStyle as string,
-            globalAlpha: context.globalAlpha as number,
-          });
+          recordCall("drawImage", args);
+        }),
+        beginPath: vi.fn((...args: unknown[]) => {
+          recordCall("beginPath", args);
+        }),
+        rect: vi.fn((...args: unknown[]) => {
+          recordCall("rect", args);
+        }),
+        clip: vi.fn((...args: unknown[]) => {
+          recordCall("clip", args);
         }),
         save: vi.fn(() => {
           stateStack.push({
             fillStyle: context.fillStyle as string,
             globalAlpha: context.globalAlpha as number,
+            globalCompositeOperation: context.globalCompositeOperation as string,
           });
         }),
         restore: vi.fn(() => {
@@ -185,6 +190,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
           if (!state) return;
           context.fillStyle = state.fillStyle;
           context.globalAlpha = state.globalAlpha;
+          context.globalCompositeOperation = state.globalCompositeOperation;
         }),
         scale: vi.fn(),
         translate: vi.fn(),

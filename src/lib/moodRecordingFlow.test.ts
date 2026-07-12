@@ -68,6 +68,13 @@ const installMocks = vi.hoisted(() => ({
   requestPersistence: vi.fn(),
 }));
 
+const moodVideoPoolMocks = vi.hoisted(() => ({
+  liveTakesFromSelections: vi.fn(() => []),
+  prepareUpcoming: vi.fn(),
+  setCaptureVideoPolicy: vi.fn(),
+  syncPool: vi.fn(),
+}));
+
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
   triggerCountInClick: audioMocks.triggerCountInClick,
@@ -87,9 +94,10 @@ vi.mock("./moodPlayers", () => ({
 }));
 
 vi.mock("./moodVideoPool", () => ({
-  liveTakesFromSelections: vi.fn(() => []),
-  prepareUpcoming: vi.fn(),
-  syncPool: vi.fn(),
+  liveTakesFromSelections: moodVideoPoolMocks.liveTakesFromSelections,
+  prepareUpcoming: moodVideoPoolMocks.prepareUpcoming,
+  setCaptureVideoPolicy: moodVideoPoolMocks.setCaptureVideoPolicy,
+  syncPool: moodVideoPoolMocks.syncPool,
 }));
 
 vi.mock("./media", () => ({
@@ -138,7 +146,8 @@ import {
   recordMoodTake,
   stopMoodTakeEarly,
 } from "./moodRecordingFlow";
-import { setCaptureGain } from "./moodPlayers";
+import { setCaptureGain, stopAllMoodPlayers, syncMoodPlayers } from "./moodPlayers";
+import { setCaptureVideoPolicy } from "./moodVideoPool";
 import { useAppStore } from "../store/useAppStore";
 import { MOOD_HEADPHONES_STORAGE_KEY } from "../store/initialState";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
@@ -303,6 +312,9 @@ describe("moodRecordingFlow", () => {
     mediaMocks.releaseRecordingStream.mockReset();
     mediaMocks.requestMedia.mockReset();
     vi.mocked(setCaptureGain).mockClear();
+    vi.mocked(stopAllMoodPlayers).mockClear();
+    vi.mocked(syncMoodPlayers).mockClear();
+    vi.mocked(setCaptureVideoPolicy).mockClear();
     recorderMocks.recordClip.mockReset();
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     recorderMocks.createRecordClipStopController.mockReset();
@@ -525,6 +537,31 @@ describe("moodRecordingFlow", () => {
     await expect(promise).resolves.toBe(true);
 
     expect(vi.mocked(setCaptureGain).mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("opens and closes the capture video pause policy without touching audio players", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+
+    expect(setCaptureVideoPolicy).toHaveBeenCalledTimes(1);
+    expect(setCaptureVideoPolicy).toHaveBeenLastCalledWith(true, null);
+    expect(stopAllMoodPlayers).not.toHaveBeenCalled();
+    expect(syncMoodPlayers).not.toHaveBeenCalled();
+
+    await advanceCountdownToDeadline();
+    capture.resolve(makeRecordResult());
+    await expect(promise).resolves.toBe(true);
+
+    expect(vi.mocked(setCaptureVideoPolicy).mock.calls).toEqual([
+      [true, null],
+      [false],
+    ]);
+    expect(stopAllMoodPlayers).not.toHaveBeenCalled();
+    expect(syncMoodPlayers).not.toHaveBeenCalled();
   });
 
   it("keeps capture gain open during capture when headphone monitoring is on", async () => {
@@ -809,6 +846,7 @@ describe("moodRecordingFlow", () => {
     await expect(promise).resolves.toBe(false);
     expect(useAppStore.getState().recording.state).toBe("idle");
     expect(useAppStore.getState().mood.performance.hotMicId).toBeNull();
+    expect(vi.mocked(setCaptureVideoPolicy).mock.calls.at(-1)).toEqual([false]);
     expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.piece?.mics[0].takes).toHaveLength(0);
   });

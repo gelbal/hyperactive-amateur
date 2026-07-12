@@ -1,7 +1,7 @@
 // ABOUTME: Mood recording flow — captures the first take ("the One") into a mic stack.
 // ABOUTME: Reuses Chop recording seams for audio-clock countdown, abort safety, durability, and posters.
 import { useAppStore } from "../store/useAppStore";
-import type { MoodTake, MoodTimeFeel } from "../types";
+import type { MoodPiece, MoodTake, MoodTimeFeel } from "../types";
 import { getAudioContext, triggerCountInClick } from "./audio";
 import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { isAbortError } from "./aiClient";
@@ -24,10 +24,16 @@ import {
   establishCycleFromClick,
   nextCycleBoundary,
 } from "./moodClock";
+import {
+  deriveMoodMetronomeTakeId,
+  getMoodRecordingPreviewStream,
+  setMoodRecordingPreviewStream,
+} from "./moodCapture";
 import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
 import { snapTake } from "./moodTakeSnap";
 import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
+import { setCaptureVideoPolicy } from "./moodVideoPool";
 import { captureFirstFrame } from "./posterFrame";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import { audioBufferToWav } from "./wavEncoder";
@@ -39,6 +45,8 @@ const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
 
 type MoodRecordingCancelReason = "user" | "interrupted";
+
+export { getMoodRecordingPreviewStream } from "./moodCapture";
 
 export interface RecordMoodTakeOptions {
   onError?: (message: string) => void;
@@ -152,6 +160,18 @@ function countInBpm(timeFeel: MoodTimeFeel, bpm: number | null): number {
     return bpm;
   }
   return POCKET_FIRST_TAKE_COUNT_IN_BPM;
+}
+
+// One count-in beat: the cycle's beat grid once a cycle exists, else the
+// first-take count-in tempo. The countdown overlay derives its digits from
+// this same value so the digits match the ticks you hear.
+export function countInBeatSeconds(
+  piece: Pick<MoodPiece, "timeFeel" | "bpm" | "cycleSeconds">,
+): number {
+  if (piece.cycleSeconds !== null) {
+    return piece.cycleSeconds / DROP_BEATS_PER_CYCLE;
+  }
+  return 60 / countInBpm(piece.timeFeel, piece.bpm);
 }
 
 function firstTakeCaptureCapSeconds(
@@ -336,6 +356,14 @@ async function runFlow(
       }
     }
     if (!stream) return false;
+    setMoodRecordingPreviewStream(stream);
+    const captureState = useAppStore.getState().mood;
+    setCaptureVideoPolicy(
+      true,
+      captureState.monitorWithHeadphones || !captureState.piece
+        ? null
+        : deriveMoodMetronomeTakeId(captureState.piece, captureState.performance),
+    );
     throwIfFlowAborted(signal, "Aborted before countdown");
 
     if (!allTracksUsable(stream)) {
@@ -345,15 +373,13 @@ async function runFlow(
     }
 
     const audioContext = getAudioContext();
+    const beatSeconds = countInBeatSeconds(startingPiece);
     let countdownEndsAt: number;
-    let beatSeconds: number;
     if (startingPiece.cycleSeconds === null) {
-      beatSeconds = 60 / countInBpm(startingPiece.timeFeel, startingPiece.bpm);
       countdownEndsAt = audioContext.currentTime + COUNT_IN_BEATS * beatSeconds;
     } else {
       const performance = useAppStore.getState().mood.performance;
       if (!performance.isPerforming || performance.epoch === null) return false;
-      beatSeconds = startingPiece.cycleSeconds / DROP_BEATS_PER_CYCLE;
       countdownEndsAt = cycleCountdownDeadline(
         performance.epoch,
         startingPiece.cycleSeconds,
@@ -435,6 +461,10 @@ async function runFlow(
     options.onError?.(errorMessage(e));
     return false;
   } finally {
+    if (getMoodRecordingPreviewStream() === stream) {
+      setMoodRecordingPreviewStream(null);
+    }
+    setCaptureVideoPolicy(false);
     if (!externalStream && stream) releaseRecordingStream(stream);
     setCaptureGain(false);
     actions.setCountdownEndsAt(null);
@@ -447,4 +477,5 @@ export function __resetMoodRecordingFlowForTesting(): void {
   currentController = null;
   currentFlow = null;
   currentStopController = null;
+  setMoodRecordingPreviewStream(null);
 }

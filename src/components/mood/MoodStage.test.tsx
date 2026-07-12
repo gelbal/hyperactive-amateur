@@ -1,6 +1,6 @@
 // ABOUTME: MoodStage tests — pins Mood render/display canvas contracts.
 // ABOUTME: Verifies active export-canvas registration and audio-clock paint loop wiring.
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toneMocks = vi.hoisted(() => ({
@@ -198,5 +198,37 @@ describe("MoodStage", () => {
       displayCanvas.width,
       displayCanvas.height,
     );
+  });
+
+  it("positions the count-in overlay over the hot mic tile", () => {
+    const piece = makePiece("corners");
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodHotMic("mic-2");
+
+    render(<MoodStage piece={piece} />);
+
+    // 1.75s remaining at a 90bpm count-in (0.667s beats) = 3 beats left.
+    const overlay = screen.getByLabelText("Mood count-in for hot mic");
+    expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("3");
+    expect(overlay).toHaveStyle({
+      left: "0%",
+      top: "50%",
+      width: "50%",
+      height: "50%",
+    });
+  });
+
+  it("counts down in beats, not seconds, so digits match the audible ticks", () => {
+    // Overdub branch: cycle 16 → beat = 2s. 1.75s remaining = the LAST beat,
+    // so the digit must read 1 even though nearly 2 wall seconds remain.
+    const piece = { ...makePiece("corners"), cycleSeconds: 16 };
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodHotMic("mic-1");
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("1");
   });
 });
