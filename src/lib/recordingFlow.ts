@@ -7,7 +7,7 @@ import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
-import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
+import { releaseRecordingStream, requestMedia } from "./media";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
@@ -16,8 +16,10 @@ import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
 import { saveNow } from "./autoSave";
-import { requestPersistence } from "./install";
+import { acquireRecordingStreamUntilAbort } from "./recordingAcquire";
+import { requestPersistenceAfterClipSave } from "./recordingPersistence";
 import type { Clip, Tag } from "../types";
+export { __resetPersistenceRequestForTesting } from "./recordingPersistence";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
@@ -50,34 +52,6 @@ export interface RecordIntoTrackOptions {
 // cancelCurrentRecording() to abort the active flow.
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
-
-// Durable-storage request state. The request anchors to the first SUCCESSFUL
-// clip save and retries on later successful saves until the browser answers
-// (granted or definitively denied); an "unknown" outcome stays retryable.
-// Requests are single-flight: saves that land while one is still pending
-// coalesce into it instead of issuing overlapping persist() calls.
-let persistenceRequestSettled = false;
-let persistenceRequestPending = false;
-
-function requestPersistenceAfterClipSave(): void {
-  if (persistenceRequestSettled || persistenceRequestPending) return;
-  if (useAppStore.getState().session.storageDurability === "persistent") {
-    persistenceRequestSettled = true;
-    return;
-  }
-  persistenceRequestPending = true;
-  void requestPersistence().then((storageDurability) => {
-    persistenceRequestPending = false;
-    if (storageDurability !== "unknown") persistenceRequestSettled = true;
-    useAppStore.getState().actions.setStorageDurability(storageDurability);
-  });
-}
-
-// Test-only — clears the settled persistence-request state between cases.
-export function __resetPersistenceRequestForTesting(): void {
-  persistenceRequestSettled = false;
-  persistenceRequestPending = false;
-}
 
 export function cancelCurrentRecording(reason: RecordingCancelReason = "user"): void {
   currentController?.abort(reason);
@@ -168,48 +142,6 @@ function throwIfFlowAborted(signal: AbortSignal, message: string): void {
   if (signal.aborted) {
     throw makeAbortError(message);
   }
-}
-
-function acquireRecordingStreamUntilAbort(signal: AbortSignal): Promise<MediaStream> {
-  const acquisition = acquireRecordingStream();
-  return new Promise<MediaStream>((resolve, reject) => {
-    let settled = false;
-    const stopWatchingAbort = () => signal.removeEventListener("abort", onAbort);
-    const releaseLateStream = (stream: MediaStream) => {
-      releaseRecordingStream(stream);
-    };
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      stopWatchingAbort();
-      acquisition.then(releaseLateStream, () => undefined);
-      reject(makeAbortError("Aborted during media acquisition"));
-    };
-
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-
-    signal.addEventListener("abort", onAbort, { once: true });
-    acquisition.then(
-      (stream) => {
-        if (settled) {
-          releaseLateStream(stream);
-          return;
-        }
-        settled = true;
-        stopWatchingAbort();
-        resolve(stream);
-      },
-      (err) => {
-        if (settled) return;
-        settled = true;
-        stopWatchingAbort();
-        reject(err);
-      },
-    );
-  });
 }
 
 function getAbortReason(signal: AbortSignal): RecordingCancelReason {

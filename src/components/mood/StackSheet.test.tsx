@@ -7,8 +7,16 @@ import { useAppStore } from "../../store/useAppStore";
 import * as moodPerformance from "../../lib/moodPerformance";
 import type { MoodMic, MoodTake } from "../../types";
 
+const moodRecordingMocks = vi.hoisted(() => ({
+  recordMoodTake: vi.fn(),
+}));
+
 vi.mock("../../lib/moodPerformance", () => ({
   armSelection: vi.fn(),
+}));
+
+vi.mock("../../lib/moodRecordingFlow", () => ({
+  recordMoodTake: moodRecordingMocks.recordMoodTake,
 }));
 
 function makeBlob(bytes: number[], type: string): Blob {
@@ -55,12 +63,21 @@ function setupMood(): MoodMic {
   return useAppStore.getState().mood.piece!.mics[0];
 }
 
+function setupMoodBeforeTheOne(): MoodMic {
+  useAppStore.getState().actions.reset();
+  useAppStore.getState().actions.setAppMode("mood");
+  useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+  return useAppStore.getState().mood.piece!.mics[0];
+}
+
 describe("StackSheet", () => {
   beforeEach(() => {
     vi.mocked(moodPerformance.armSelection).mockReset();
     vi.mocked(moodPerformance.armSelection).mockImplementation((micId, entry) => {
       useAppStore.getState().actions.commitMoodSelections([{ micId, entry }]);
     });
+    moodRecordingMocks.recordMoodTake.mockReset();
+    moodRecordingMocks.recordMoodTake.mockResolvedValue(true);
   });
 
   it("renders take rows, Off, and a disabled new-take row in the clamped sheet", () => {
@@ -86,10 +103,24 @@ describe("StackSheet", () => {
       "pointer-coarse:min-h-12",
     );
 
-    const newTake = screen.getByRole("button", { name: /⊕ new take/i });
+    const newTake = screen.getByRole("button", { name: /new take Cycle set/i });
     expect(newTake).toBeDisabled();
     expect(newTake).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
-    expect(screen.getByText("Recording is wired in G-phase.")).toBeInTheDocument();
+    expect(screen.getByText("Cycle set")).toBeInTheDocument();
+  });
+
+  it("enables the add row to record the One before the piece has a cycle", () => {
+    const mic = setupMoodBeforeTheOne();
+    const onClose = vi.fn();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={onClose} />);
+
+    const recordOne = screen.getByRole("button", { name: /record the One First take/i });
+    expect(recordOne).not.toBeDisabled();
+
+    fireEvent.click(recordOne);
+
+    expect(moodRecordingMocks.recordMoodTake).toHaveBeenCalledWith("mic-0");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("dismisses through outside mousedown and Escape using the shared hook", () => {

@@ -1,9 +1,10 @@
 // ABOUTME: StackSheet — Mood mic take chooser as anchored popover or coarse bottom sheet.
 // ABOUTME: Routes take/off selection through moodPerformance so touch and keys share arming.
 import { useCallback, useRef } from "react";
-import { Mic2, Power } from "lucide-react";
+import { Mic2, Plus, Power } from "lucide-react";
 import { usePopoverDismiss } from "../../lib/usePopoverDismiss";
 import * as moodPerformance from "../../lib/moodPerformance";
+import { recordMoodTake } from "../../lib/moodRecordingFlow";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPart, MoodSelectionEntry, MoodTake } from "../../types";
 
@@ -57,6 +58,13 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
   const activeEntry = useAppStore(
     (s) => s.mood.performance.armed[mic.id] ?? s.mood.performance.selections[mic.id] ?? "off",
   );
+  const canRecordTheOne = useAppStore(
+    (s) =>
+      Boolean(s.mood.piece) &&
+      s.mood.piece?.cycleSeconds === null &&
+      s.recording.state === "idle" &&
+      !s.playback.isExporting,
+  );
   const close = useCallback(() => onClose(), [onClose]);
   usePopoverDismiss(rootRef, open, close);
 
@@ -64,6 +72,11 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
 
   const choose = (entry: MoodSelectionEntry) => {
     moodPerformance.armSelection(mic.id, entry);
+    onClose();
+  };
+  const recordTheOne = () => {
+    if (!canRecordTheOne) return;
+    void recordMoodTake(mic.id);
     onClose();
   };
 
@@ -124,15 +137,20 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
 
         <button
           type="button"
-          disabled
-          className="flex min-h-11 w-full cursor-not-allowed items-center gap-3 rounded border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-left text-sm text-zinc-600 opacity-70 pointer-coarse:min-h-12"
+          disabled={!canRecordTheOne}
+          onClick={recordTheOne}
+          className={`flex min-h-11 w-full items-center gap-3 rounded border px-3 py-2 text-left text-sm transition-colors pointer-coarse:min-h-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 ${
+            canRecordTheOne
+              ? idleRow
+              : "cursor-not-allowed border-zinc-800 bg-zinc-950/70 text-zinc-600 opacity-70"
+          }`}
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-dashed border-zinc-800 text-base">
-            ⊕
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-dashed border-zinc-800">
+            <Plus size={16} aria-hidden="true" />
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="font-medium">new take</span>
-            <span className="text-xs">Recording is wired in G-phase.</span>
+            <span className="font-medium">{canRecordTheOne ? "record the One" : "new take"}</span>
+            <span className="text-xs">{canRecordTheOne ? "First take" : "Cycle set"}</span>
           </span>
         </button>
       </div>
