@@ -58,7 +58,7 @@ export function RecoveryBanner() {
               type="button"
               aria-label={`Dismiss ${notice.scope} recovery notice`}
               onClick={() => useAppStore.getState().actions.clearRecoveryWarnings(notice.scope)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-amber-400/30 text-amber-100 hover:bg-amber-900/50"
+              className="flex h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11 shrink-0 items-center justify-center rounded border border-amber-400/30 text-amber-100 hover:bg-amber-900/50"
             >
               <X size={16} />
             </button>

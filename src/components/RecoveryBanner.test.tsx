@@ -20,6 +20,10 @@ describe("RecoveryBanner", () => {
     expect(screen.getByLabelText("Project recovery notice")).toBeInTheDocument();
     expect(screen.getByText("bpm was clamped")).toBeInTheDocument();
 
+    expect(screen.getByLabelText("Dismiss chop recovery notice")).toHaveClass(
+      "pointer-coarse:h-11",
+      "pointer-coarse:w-11",
+    );
     fireEvent.click(screen.getByLabelText("Dismiss chop recovery notice"));
 
     expect(useAppStore.getState().ui.recoveryWarnings).toEqual([]);

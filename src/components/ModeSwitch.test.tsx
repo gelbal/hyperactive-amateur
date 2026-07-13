@@ -35,6 +35,17 @@ describe("ModeSwitch", () => {
     );
   });
 
+  it("sizes both segments to 44px on coarse pointers", () => {
+    render(<ModeSwitch />);
+
+    expect(screen.getByRole("button", { name: "Chop" })).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+    expect(screen.getByRole("button", { name: "Mood" })).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+  });
+
   it("switches modes through the store", () => {
     render(<ModeSwitch />);
 

@@ -125,6 +125,21 @@ describe("ExportButton format picker", () => {
     );
   });
 
+  it("sizes the render and review actions to 44px on coarse pointers", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    stubNavigatorShare({ canShare: true });
+    await renderCompletedExport();
+
+    expect(screen.getByRole("button", { name: /^render again$/i })).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+    for (const name of [/^share$/i, /^save$/i, /^discard$/i]) {
+      expect(screen.getByRole("button", { name })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+  });
+
   it("clamps the popover to the mobile viewport and restores right anchoring at sm", () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     render(<ExportButton />);
