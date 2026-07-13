@@ -158,7 +158,16 @@ export function createBoundaryQueue(): BoundaryQueue {
     dueAt(now) {
       assertFiniteSeconds("now", now);
 
-      const due: BoundaryQueueEvent[] = ripe.splice(0);
+      // Ripe events stay drain-time gated: arm-time classification may run
+      // on the lookahead clock (Tone.now()) while drains run on audible
+      // time (Tone.immediate()) — nothing applies before its boundary.
+      const due: BoundaryQueueEvent[] = [];
+      const held: BoundaryQueueEvent[] = [];
+      for (const event of ripe) {
+        (event.boundaryTime <= now ? due : held).push(event);
+      }
+      ripe.length = 0;
+      ripe.push(...held);
 
       for (const [micId, event] of selections) {
         if (event.boundaryTime <= now) {

@@ -106,6 +106,21 @@ describe("BoundaryQueue", () => {
     expect(queue.dueAt(999)).toEqual([]);
   });
 
+  it("never drains a ripe event before its boundary on the drain clock", () => {
+    const queue = createBoundaryQueue();
+
+    // Arm-time classification may run on the lookahead clock (Tone.now()
+    // runs ~0.1s ahead of Tone.immediate()): a re-arm inside that sliver
+    // marks the old event ripe while the audible clock is still short of
+    // its boundary. The drain must hold it until audible time reaches it.
+    queue.armDrop(false, 4, 3.5);
+    queue.armDrop(true, 8, 4.02);
+
+    expect(queue.dueAt(3.98)).toEqual([]);
+    expect(queue.dueAt(4)).toEqual([{ type: "drop", active: false, boundaryTime: 4 }]);
+    expect(queue.dueAt(8)).toEqual([{ type: "drop", active: true, boundaryTime: 8 }]);
+  });
+
   it("preserves due-but-undrained events when the same slot re-arms", () => {
     const queue = createBoundaryQueue();
 
