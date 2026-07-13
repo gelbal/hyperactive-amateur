@@ -230,6 +230,9 @@ describe("MoodStage", () => {
       displayCanvas.width,
       displayCanvas.height,
     );
+    expect(
+      moodRendererMocks.drawMoodFrame.mock.invocationCallOrder[0],
+    ).toBeLessThan(displayCtx.drawImage.mock.invocationCallOrder[0]);
   });
 
   it("positions the count-in overlay over the hot mic tile", () => {

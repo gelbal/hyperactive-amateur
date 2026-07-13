@@ -19,6 +19,7 @@ import {
 import { applyDueCommits } from "./moodCommits";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import { layoutFor, type TileRect } from "./moodTilers";
+import { applyVibe, initVibeResources, type VibeResources } from "./moodVibes";
 import {
   isVideoReadyForDraw,
   setCaptureVideoPolicy,
@@ -35,6 +36,7 @@ interface MoodRenderer {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   stage: MoodStageId;
+  vibeResources: VibeResources;
 }
 
 export interface MoodRenderState {
@@ -62,7 +64,7 @@ export function initMoodRenderer(canvas: HTMLCanvasElement, stage: MoodStageId):
     renderer = null;
     return;
   }
-  renderer = { canvas, ctx, stage };
+  renderer = { canvas, ctx, stage, vibeResources: initVibeResources(stage) };
 }
 
 function commitDueBoundary(audioTime: number): void {
@@ -335,6 +337,10 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
     const mic = micById.get(rect.micId);
     if (!mic) continue;
     drawWallTile(ctx, mic, performance.selections[mic.id], rect, capture);
+  }
+
+  if (piece.vibe !== "clean") {
+    applyVibe(ctx, active.canvas, piece.vibe, active.vibeResources);
   }
 }
 

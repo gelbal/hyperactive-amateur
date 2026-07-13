@@ -345,6 +345,49 @@ describe("moodRenderer", () => {
     expect(imageCalls[1].globalAlpha).toBeCloseTo(0.28);
   });
 
+  it("applies the wardrobe vibe on the render canvas after tile draws", () => {
+    const piece = createEmptyMoodPiece("corners", "pocket");
+    const liveTake = makeMoodTake({ id: "live", posterUrl: "blob:test/live-poster" });
+    const renderPiece: MoodPiece = {
+      ...piece,
+      vibe: "blocks",
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [liveTake] } : mic,
+      ),
+    };
+    const performance: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "live",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    const ctx = createRenderer("corners");
+
+    drawMoodFrame(0, { piece: renderPiece, performance });
+
+    const drawCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+    const tileDrawIndex = drawCalls.findIndex((call) => call.args[0] instanceof Image);
+    const vibeDrawIndex = drawCalls.findIndex(
+      (call) => call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(tileDrawIndex).toBeGreaterThanOrEqual(0);
+    expect(vibeDrawIndex).toBeGreaterThan(tileDrawIndex);
+  });
+
   it("falls back to the live poster until the pooled take video is drawable", () => {
     const piece = createEmptyMoodPiece("corners", "pocket");
     const liveTake = makeMoodTake({

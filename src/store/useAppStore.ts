@@ -15,6 +15,7 @@ import type {
   MoodStageId,
   MoodTake,
   MoodTimeFeel,
+  MoodVibeId,
   RecordingState,
   RecoveryWarningScope,
   StorageDurability,
@@ -263,6 +264,7 @@ export interface AppActions {
   ) => void;
   scratchMoodPiece: () => void;
   setMoodLens: (lens: MoodLens) => void;
+  setMoodVibe: (vibe: MoodVibeId) => void;
   setMoodArmedLens: (lens: MoodLens | null) => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
   setMonitorWithHeadphones: (enabled: boolean) => void;
@@ -473,6 +475,29 @@ export const useAppStore = create<AppStore>((set) => ({
             piece: {
               ...piece,
               lens,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      }),
+
+    setMoodVibe: (vibe) =>
+      set((state) => {
+        if (
+          state.playback.isExporting ||
+          state.mood.performance.isPerforming ||
+          state.recording.state !== "idle"
+        ) {
+          return state;
+        }
+        const piece = state.mood.piece;
+        if (!piece || piece.vibe === vibe) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: {
+              ...piece,
+              vibe,
               updatedAt: Date.now(),
             },
           },

@@ -12,7 +12,13 @@ import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useMoodKeys } from "../../lib/useMoodKeys";
 import { useRecordingEscapeCancel } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodLens, MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
+import type {
+  MoodLens,
+  MoodPiece,
+  MoodStageId,
+  MoodTimeFeel,
+  MoodVibeId,
+} from "../../types";
 import { RecordingErrorNotice } from "../RecordingErrorNotice";
 import { MicStrip } from "./MicStrip";
 import { MoodStage } from "./MoodStage";
@@ -57,6 +63,14 @@ const CYCLE_BAR_OPTIONS: MoodCycleBars[] = [1, 2, 4];
 const LENS_OPTIONS: { id: MoodLens; label: string; icon: typeof LayoutGrid }[] = [
   { id: "wall", label: "Wall", icon: LayoutGrid },
   { id: "splits", label: "Splits", icon: SquareSplitHorizontal },
+];
+
+const VIBE_OPTIONS: { id: MoodVibeId; label: string; swatchClass: string }[] = [
+  { id: "clean", label: "Clean", swatchClass: "bg-zinc-500" },
+  { id: "blocks", label: "Blocks", swatchClass: "bg-orange-500" },
+  { id: "mixtape", label: "Mixtape", swatchClass: "bg-orange-800" },
+  { id: "camcorder", label: "Camcorder", swatchClass: "bg-cyan-500" },
+  { id: "print", label: "Print", swatchClass: "bg-stone-300" },
 ];
 
 function StageGlyph({ stage }: { stage: MoodStageId }) {
@@ -374,6 +388,57 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
   );
 }
 
+function MoodVibeControl({ vibe }: { vibe: MoodVibeId }) {
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const setMoodVibe = useAppStore((s) => s.actions.setMoodVibe);
+  const disabled = isExporting || isPerforming || recordingState !== "idle";
+
+  return (
+    <div
+      role="group"
+      aria-label="Mood vibe"
+      className="inline-flex max-w-full flex-wrap gap-1 rounded border border-zinc-800 bg-zinc-950 p-1"
+    >
+      {VIBE_OPTIONS.map((option) => {
+        const selected = vibe === option.id;
+        const title =
+          recordingState !== "idle"
+            ? `${option.label} vibe locked during capture`
+            : isExporting
+              ? `${option.label} vibe frozen during export`
+              : isPerforming
+                ? `${option.label} vibe locked during performance`
+                : `${option.label} vibe`;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-label={`${option.label} vibe`}
+            aria-pressed={selected}
+            disabled={disabled}
+            title={title}
+            onClick={() => setMoodVibe(option.id)}
+            className={
+              "inline-flex h-9 items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              (selected
+                ? "bg-zinc-900 text-zinc-100 ring-2 ring-orange-500"
+                : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
+            }
+          >
+            <span
+              aria-hidden
+              className={`h-3 w-3 rounded-sm border border-zinc-950/40 ${option.swatchClass}`}
+            />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MoodPieceControls({ piece }: { piece: MoodPiece }) {
   const cycleCount = useAppStore((s) => s.mood.performance.cycleCount);
   const isExporting = useAppStore((s) => s.playback.isExporting);
@@ -385,6 +450,7 @@ function MoodPieceControls({ piece }: { piece: MoodPiece }) {
       <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
         <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
           <MoodLensControl lens={piece.lens} />
+          <MoodVibeControl vibe={piece.vibe} />
           <span
             aria-label="Time feel"
             className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
