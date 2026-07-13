@@ -49,9 +49,13 @@ const toneMocks = vi.hoisted(() => ({
           const eventId = nextScheduleOnceId;
           nextScheduleOnceId += 1;
           const delayMs = Math.max(0, Math.round((time - transportState.seconds) * 1000));
+          // Real Tone passes the callback ABSOLUTE AudioContext time, not the
+          // transport position it was scheduled at.
+          const absoluteTime =
+            audioMocks.context.currentTime + (time - transportState.seconds);
           const timer = setTimeout(() => {
             scheduleOnceTimers.delete(eventId);
-            callback(time);
+            callback(absoluteTime);
           }, delayMs);
           scheduleOnceTimers.set(eventId, timer);
           return eventId;
