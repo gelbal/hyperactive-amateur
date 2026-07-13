@@ -8,6 +8,7 @@ import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { isAbortError } from "./aiClient";
 import { saveNow } from "./autoSave";
 import { autoTrim } from "./autoTrim";
+import { sliceAudioBuffer } from "./audioBufferSlice";
 import { canStartMoodTake } from "./audibleActionGate";
 import { armSelection } from "./moodPerformance";
 import { acquireRecordingStreamUntilAbort } from "./recordingAcquire";
@@ -32,6 +33,7 @@ import {
 } from "./moodCapture";
 import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
+import { syncAssist } from "./moodSyncAssist";
 import { snapTake } from "./moodTakeSnap";
 import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
 import { setCaptureVideoPolicy } from "./moodVideoPool";
@@ -293,6 +295,63 @@ function attachPosterWhenReady(
   })();
 }
 
+function findMoodTake(piece: MoodPiece, micId: string | null, takeId: string | null): MoodTake | null {
+  if (!micId || !takeId) return null;
+  return piece.mics.find((mic) => mic.id === micId)?.takes.find((take) => take.id === takeId) ?? null;
+}
+
+function fireSyncAssistWhenReady(
+  micId: string,
+  take: MoodTake,
+  signal: AbortSignal,
+): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const cycleSeconds = piece?.cycleSeconds ?? null;
+  if (!piece || cycleSeconds === null || piece.oneTakeId === take.id) return;
+
+  const oneTake = findMoodTake(piece, piece.oneMicId, piece.oneTakeId);
+  if (!oneTake || oneTake.audioStatus !== "ok" || !oneTake.audioBuffer) return;
+
+  let oneSlice: AudioBuffer;
+  try {
+    const cycleMs = cycleSeconds * 1000;
+    oneSlice = sliceAudioBuffer(
+      oneTake.audioBuffer,
+      oneTake.trimStartMs,
+      Math.min(oneTake.trimEndMs, oneTake.trimStartMs + cycleMs),
+    );
+  } catch (err) {
+    logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+      reason: "slice",
+      takeId: take.id,
+      message: errorMessage(err),
+    });
+    return;
+  }
+
+  const expectedRevision = state.session.moodRevision;
+  void syncAssist(take, oneSlice, cycleSeconds, undefined, signal)
+    .then((result) => {
+      if (!result) return;
+      useAppStore
+        .getState()
+        .actions.applyMoodSyncOffsetIfCurrent(
+          micId,
+          take.id,
+          result.offsetMs,
+          expectedRevision,
+        );
+    })
+    .catch((err) => {
+      logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+        reason: "flow-error",
+        takeId: take.id,
+        message: errorMessage(err),
+      });
+    });
+}
+
 async function recordWithEarlyStop(
   stream: MediaStream,
   capMs: number,
@@ -491,6 +550,7 @@ async function runFlow(
     actions.setRecordingState("idle", null);
     armSelection(micId, take.id);
     attachPosterWhenReady(micId, take.id, result.blob, signal);
+    fireSyncAssistWhenReady(micId, take, signal);
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {

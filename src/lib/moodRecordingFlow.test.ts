@@ -8,6 +8,16 @@ const audioMocks = vi.hoisted(() => ({
     currentTime: 5,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
+    createBuffer: vi.fn((channels: number, length: number, sampleRate: number) => {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return {
+        duration: length / sampleRate,
+        length,
+        numberOfChannels: channels,
+        sampleRate,
+        getChannelData: (channel: number) => data[channel],
+      } as unknown as AudioBuffer;
+    }),
   },
   getAudioContext: vi.fn(() => audioMocks.context),
   triggerCountInClick: vi.fn(),
@@ -112,6 +122,10 @@ const installMocks = vi.hoisted(() => ({
   requestPersistence: vi.fn(),
 }));
 
+const moodSyncMocks = vi.hoisted(() => ({
+  syncAssist: vi.fn(),
+}));
+
 const moodVideoPoolMocks = vi.hoisted(() => ({
   liveTakesFromSelections: vi.fn(() => []),
   prepareUpcoming: vi.fn(),
@@ -178,6 +192,10 @@ vi.mock("./autoSave", () => ({
 
 vi.mock("./install", () => ({
   requestPersistence: installMocks.requestPersistence,
+}));
+
+vi.mock("./moodSyncAssist", () => ({
+  syncAssist: moodSyncMocks.syncAssist,
 }));
 
 vi.mock("./aiClient", () => ({
@@ -284,6 +302,7 @@ async function advanceCountdownToDeadline(): Promise<void> {
 }
 
 function seedMoodCycle(cycleSeconds = 2): void {
+  const samples = new Float32Array(Math.max(1, Math.round(cycleSeconds * 1000)));
   useAppStore.getState().actions.setMoodTake(
     "mic-0",
     {
@@ -292,7 +311,13 @@ function seedMoodCycle(cycleSeconds = 2): void {
       audioBlob: new Blob([new Uint8Array([2])], { type: "audio/wav" }),
       posterBlob: null,
       url: "blob:test/the-one",
-      audioBuffer: { duration: cycleSeconds, sampleRate: 48000 } as AudioBuffer,
+      audioBuffer: {
+        duration: cycleSeconds,
+        length: samples.length,
+        numberOfChannels: 1,
+        sampleRate: 1000,
+        getChannelData: () => samples,
+      } as unknown as AudioBuffer,
       audioStatus: "ok",
       posterUrl: null,
       trimStartMs: 0,
@@ -339,6 +364,7 @@ describe("moodRecordingFlow", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     audioMocks.context.state = "running";
     audioMocks.context.currentTime = 5;
+    audioMocks.context.createBuffer.mockClear();
     toneMocks.start.mockReset();
     toneMocks.start.mockResolvedValue(undefined);
     toneMocks.now.mockReset();
@@ -378,6 +404,8 @@ describe("moodRecordingFlow", () => {
     autoSaveMocks.saveNow.mockResolvedValue(true);
     installMocks.requestPersistence.mockReset();
     installMocks.requestPersistence.mockResolvedValue("best-effort");
+    moodSyncMocks.syncAssist.mockReset();
+    moodSyncMocks.syncAssist.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -793,6 +821,87 @@ describe("moodRecordingFlow", () => {
     expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
     expect(toneMocks.transport.clear).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+  });
+
+  it("fires sync assist after save and poster kickoff without awaiting it, then applies current results", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 5);
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 2100 });
+    snapMocks.snapTake.mockReturnValue({
+      ok: true,
+      isOne: false,
+      durationSeconds: 2,
+      cycleMultiple: 1,
+    });
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 2200 }));
+    const poster = makeDeferred<Blob | null>();
+    const sync = makeDeferred<{ offsetMs: number; confidence: number } | null>();
+    const order: string[] = [];
+    autoSaveMocks.saveNow.mockImplementation(async () => {
+      order.push("save");
+      return true;
+    });
+    posterMocks.captureFirstFrame.mockImplementation(() => {
+      order.push("poster");
+      return poster.promise;
+    });
+    moodSyncMocks.syncAssist.mockImplementation(() => {
+      order.push("sync");
+      return sync.promise;
+    });
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(order).toEqual(["save", "poster", "sync"]);
+    const savedTake = useAppStore.getState().mood.piece?.mics[1].takes[0];
+    expect(savedTake?.syncOffsetMs).toBe(0);
+    expect(moodSyncMocks.syncAssist).toHaveBeenCalledWith(
+      expect.objectContaining({ id: savedTake?.id }),
+      expect.anything(),
+      2,
+      undefined,
+      expect.any(AbortSignal),
+    );
+
+    sync.resolve({ offsetMs: 96, confidence: 0.93 });
+    await flushMicrotasks(5);
+
+    expect(useAppStore.getState().mood.piece?.mics[1].takes[0].syncOffsetMs).toBe(96);
+    poster.resolve(null);
+  });
+
+  it("drops stale sync assist results through the real moodRevision guard", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 5);
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 2100 });
+    snapMocks.snapTake.mockReturnValue({
+      ok: true,
+      isOne: false,
+      durationSeconds: 2,
+      cycleMultiple: 1,
+    });
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 2200 }));
+    const sync = makeDeferred<{ offsetMs: number; confidence: number } | null>();
+    moodSyncMocks.syncAssist.mockReturnValue(sync.promise);
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(promise).resolves.toBe(true);
+
+    const capturedRevision = useAppStore.getState().session.moodRevision;
+    useAppStore.getState().actions.deleteMoodTake("mic-0", "the-one");
+    expect(useAppStore.getState().session.moodRevision).toBeGreaterThan(capturedRevision);
+
+    sync.resolve({ offsetMs: 123, confidence: 0.95 });
+    await flushMicrotasks(5);
+
+    expect(useAppStore.getState().mood.piece?.mics[1].takes[0].syncOffsetMs).toBe(0);
   });
 
   it("aborts an overdub mid-wait without stopping performance or saving", async () => {
