@@ -31,9 +31,9 @@ const STAGE_LABELS: Record<MoodStageId, string> = {
 };
 
 const STAGE_SUBTITLES: Record<MoodStageId, string> = {
-  corners: "Four square mics for tight framing.",
-  row: "Two to five portrait mics in a wide row.",
-  stack: "Two to five landscape mics in a vertical stack.",
+  corners: "2×2 · square video",
+  row: "side by side · widescreen video",
+  stack: "stacked · vertical video",
 };
 
 const STAGE_ORDER: MoodStageId[] = ["corners", "row", "stack"];
@@ -152,6 +152,7 @@ function StagePicker({ disabled }: { disabled: boolean }) {
 
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
+      <p className="text-sm font-semibold text-zinc-500">pick your stage</p>
       <div className="grid w-full gap-3 sm:grid-cols-3">
         {STAGE_ORDER.map((stage) => (
           <button
@@ -259,7 +260,7 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="text-center text-xs text-zinc-400">This forgets this mood shell. Sure?</p>
+      <p className="text-center text-xs text-zinc-400">Start over and clear this mood?</p>
       <div className="flex gap-2">
         <button
           type="button"
@@ -341,7 +342,7 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
   return (
     <div
       role="group"
-      aria-label="Mood lens"
+      aria-label="Lens"
       className="inline-flex rounded border border-zinc-800 bg-zinc-950 p-1"
     >
       {LENS_OPTIONS.map((option) => {
@@ -399,7 +400,7 @@ function MoodVibeControl({ vibe }: { vibe: MoodVibeId }) {
   return (
     <div
       role="group"
-      aria-label="Mood vibe"
+      aria-label="Vibe"
       className="inline-flex max-w-full flex-wrap gap-1 rounded border border-zinc-800 bg-zinc-950 p-1"
     >
       {VIBE_OPTIONS.map((option) => {

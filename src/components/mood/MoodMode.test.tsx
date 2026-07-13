@@ -193,15 +193,15 @@ describe("MoodMode", () => {
   it("shows the stage and feel options while no mood exists", () => {
     render(<MoodMode />);
 
-    expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Row/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Stack/i })).toBeInTheDocument();
-    expect(screen.getByText("Four square mics for tight framing.")).toBeInTheDocument();
+    expect(screen.getByText("pick your stage")).toBeInTheDocument();
     expect(
-      screen.getByText("Two to five portrait mics in a wide row."),
+      screen.getByRole("button", { name: "Corners 2×2 · square video" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Two to five landscape mics in a vertical stack."),
+      screen.getByRole("button", { name: "Row side by side · widescreen video" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stack stacked · vertical video" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Pocket/i })).toHaveAttribute(
       "aria-pressed",
@@ -425,7 +425,7 @@ describe("MoodMode", () => {
     });
     render(<MoodMode />);
 
-    expect(screen.getByRole("group", { name: "Mood lens" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Lens" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Wall lens" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -500,7 +500,7 @@ describe("MoodMode", () => {
     render(<MoodMode />);
 
     const blocks = screen.getByRole("button", { name: "Blocks vibe" });
-    expect(screen.getByRole("group", { name: "Mood vibe" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Vibe" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clean vibe" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -612,6 +612,7 @@ describe("MoodMode", () => {
 
     fireEvent.click(scratchButton);
 
+    expect(screen.getByText("Start over and clear this mood?")).toBeInTheDocument();
     const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     expect(confirmButton).toHaveClass("pointer-coarse:min-h-11");

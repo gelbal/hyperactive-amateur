@@ -196,13 +196,13 @@ describe("ExportButton format picker", () => {
     fireEvent.click(screen.getByRole("button", { name: /export/i }));
 
     expect(
-      screen.getByText("Keep this screen open — rendering takes about 8 s."),
+      screen.getByText("Keep this screen open. Rendering takes about 8 s."),
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("bars"), { target: { value: "8" } });
 
     expect(
-      screen.getByText("Keep this screen open — rendering takes about 16 s."),
+      screen.getByText("Keep this screen open. Rendering takes about 16 s."),
     ).toBeInTheDocument();
   });
 
@@ -337,7 +337,7 @@ describe("ExportButton format picker", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Sharing failed — saved as a download instead."),
+        screen.getByText("Sharing failed. Saved as a download instead."),
       ).toBeInTheDocument(),
     );
     expect(click).toHaveBeenCalledTimes(1);
@@ -359,7 +359,7 @@ describe("ExportButton format picker", () => {
     await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
     expect(screen.getByText(filename)).toBeInTheDocument();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed. Saved as a download instead."),
     ).not.toBeInTheDocument();
     expect(createObjectURL).not.toHaveBeenCalled();
   });
@@ -380,7 +380,7 @@ describe("ExportButton format picker", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Sharing failed — saved as a download instead."),
+        screen.getByText("Sharing failed. Saved as a download instead."),
       ).toBeInTheDocument(),
     );
     expect(createObjectURL).toHaveBeenCalledWith(blob);
@@ -418,7 +418,7 @@ describe("ExportButton format picker", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed. Saved as a download instead."),
     ).not.toBeInTheDocument();
   });
 
@@ -484,7 +484,7 @@ describe("ExportButton format picker", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed. Saved as a download instead."),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^share$/i })).toBeInTheDocument();
   });
@@ -577,8 +577,16 @@ describe("ExportButton in Mood", () => {
     render(<ExportButton />);
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
 
-    expect(screen.getByText(/live performance/i)).toBeInTheDocument();
-    expect(screen.getByText(/up to 3:00/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One-take render from the One. Every arm, swap, and Drop is part of the take.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Up to 3:00. Hit finish to end the take. Keep this screen open while rendering.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "bars" })).not.toBeInTheDocument();
   });
 
@@ -609,14 +617,18 @@ describe("ExportButton in Mood", () => {
 
     // The boundary count-in: no finish control until the recorder rolls —
     // an early finish would stop a recorder that captured nothing.
-    expect(await screen.findByText(/counting in/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText("Counting in: the render starts on the One..."),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^finish$/i })).not.toBeInTheDocument();
 
     await act(async () => {
       startRecording();
     });
     const finishButton = await screen.findByRole("button", { name: /^finish$/i });
-    expect(screen.queryByText(/counting in/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Counting in: the render starts on the One..."),
+    ).not.toBeInTheDocument();
     fireEvent.click(finishButton);
     expect(finish).toHaveBeenCalledTimes(1);
 
@@ -624,7 +636,7 @@ describe("ExportButton in Mood", () => {
       resolveResult(new Blob(["movie"], { type: "video/webm" }));
     });
     await screen.findByText(/^mood-hyperactive-amateur-\d{8}-\d{4}\.webm$/);
-    expect(screen.queryByText(/capped at 3:00/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Capped at 3:00.")).not.toBeInTheDocument();
   });
 
   it("shows the capped notice when the render hits the ceiling", async () => {
@@ -642,7 +654,7 @@ describe("ExportButton in Mood", () => {
     fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
 
     await screen.findByText(/^mood-hyperactive-amateur-\d{8}-\d{4}\.webm$/);
-    expect(screen.getByText(/capped at 3:00/i)).toBeInTheDocument();
+    expect(screen.getByText("Capped at 3:00.")).toBeInTheDocument();
   });
 
   it("ignores a stale count-in signal from a previous aborted render", async () => {

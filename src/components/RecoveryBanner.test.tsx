@@ -61,6 +61,7 @@ describe("RecoveryBanner", () => {
 
     render(<RecoveryBanner />);
 
+    expect(screen.getByText("Recovered saved mood")).toBeInTheDocument();
     expect(
       screen.getByText("Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."),
     ).toBeInTheDocument();

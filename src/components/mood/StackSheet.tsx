@@ -150,7 +150,8 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
   });
   const canRecordTake = Boolean(piece) && disabledReason === null;
   const recordLabel = beforeTheOne ? "record the One" : "new take";
-  const recordSubtitle = disabledReason ?? (beforeTheOne ? "First take" : "punches in on the One");
+  const recordSubtitle =
+    disabledReason ?? (beforeTheOne ? "your first loop sets the length" : "records on the One");
   const close = useCallback(() => onClose(), [onClose]);
   usePopoverDismiss(rootRef, open, close);
 
