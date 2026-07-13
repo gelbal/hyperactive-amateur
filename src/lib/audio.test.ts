@@ -313,6 +313,17 @@ describe("audio: per-step trigger logic", () => {
     expect(synthInstances[2].triggerAttackRelease).not.toHaveBeenCalled();
   });
 
+  it("does not start Chop playback while Mood performance owns sound", async () => {
+    initTransport();
+    useAppStore.getState().actions.setMoodPerforming(true, 1);
+
+    await togglePlayback();
+
+    expect(Tone.start).not.toHaveBeenCalled();
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+  });
+
   it("ignores manual playback and pad triggers while recording is active", async () => {
     initTransport();
     useAppStore.getState().actions.setRecordingState("recording", 0);

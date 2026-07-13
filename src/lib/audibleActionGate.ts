@@ -5,12 +5,17 @@ import { useAppStore } from "../store/useAppStore";
 
 let pendingAudibleClaim = false;
 
-export function canStartAudibleAction(state: Pick<AppState, "playback" | "recording">): boolean {
+type AudibleActionGateState = Pick<AppState, "playback" | "recording"> &
+  Partial<Pick<AppState, "mood">>;
+
+export function canStartAudibleAction(state: AudibleActionGateState): boolean {
+  const moodIsPerforming = state.mood?.performance.isPerforming ?? false;
   return (
     !pendingAudibleClaim &&
     !state.playback.isPlaying &&
     !state.playback.isExporting &&
-    state.recording.state === "idle"
+    state.recording.state === "idle" &&
+    !moodIsPerforming
   );
 }
 

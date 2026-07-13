@@ -1,9 +1,13 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
-// ABOUTME: Starts with a stage picker and shows the placeholder stage until real performance UI lands.
+// ABOUTME: Starts with a stage picker, placeholder stage, and Mood practice controls.
 import { useEffect, useRef, useState } from "react";
+import { Play, Square } from "lucide-react";
 import { BpmDialControl } from "../BpmDial";
 import { getAudioContext } from "../../lib/audio";
+import { canStartAudibleAction } from "../../lib/audibleActionGate";
+import { runAudibleAction } from "../../lib/audibleActionRunner";
 import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
+import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
@@ -257,6 +261,50 @@ function moodFeelLabel(piece: MoodPiece): string {
   return `Click · ${piece.bpm} · ${piece.cycleBars} ${piece.cycleBars === 1 ? "bar" : "bars"}`;
 }
 
+function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSeconds"] }) {
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
+  const canStart = useAppStore(canStartAudibleAction);
+  const needsCycle = cycleSeconds === null;
+  const disabled = isExporting || (!isPerforming && (needsCycle || !canStart));
+
+  const handleClick = () => {
+    if (isPerforming) {
+      stopMoodPerformance();
+      return;
+    }
+    runAudibleAction(startMoodPerformance());
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <button
+        type="button"
+        aria-label={isPerforming ? "Stop mood performance" : "Start mood performance"}
+        disabled={disabled}
+        onClick={handleClick}
+        className={
+          "inline-flex h-10 items-center gap-2 rounded border px-3 text-sm font-semibold transition-colors " +
+          "disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600 " +
+          (isPerforming
+            ? "border-orange-500 bg-zinc-900 text-orange-500 hover:bg-zinc-800"
+            : "border-orange-500 bg-orange-500 text-zinc-950 hover:bg-orange-400")
+        }
+      >
+        {isPerforming ? (
+          <Square size={16} fill="currentColor" aria-hidden />
+        ) : (
+          <Play size={16} fill="currentColor" aria-hidden />
+        )}
+        <span>{isPerforming ? "Stop" : "Play"}</span>
+      </button>
+      {needsCycle && !isPerforming && (
+        <span className="text-xs text-zinc-500">record the One first</span>
+      )}
+    </div>
+  );
+}
+
 function MoodPieceControls({
   piece,
   scratchDisabled,
@@ -264,6 +312,8 @@ function MoodPieceControls({
   piece: MoodPiece;
   scratchDisabled: boolean;
 }) {
+  const cycleCount = useAppStore((s) => s.mood.performance.cycleCount);
+
   return (
     <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
       <span
@@ -272,7 +322,16 @@ function MoodPieceControls({
       >
         {moodFeelLabel(piece)}
       </span>
-      <ScratchMoodControl disabled={scratchDisabled} />
+      <div className="flex items-center gap-2">
+        <MoodPlayButton cycleSeconds={piece.cycleSeconds} />
+        <span
+          aria-label="Mood cycle count"
+          className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-orange-500"
+        >
+          Cycle {cycleCount}
+        </span>
+        <ScratchMoodControl disabled={scratchDisabled} />
+      </div>
     </div>
   );
 }

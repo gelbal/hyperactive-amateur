@@ -171,11 +171,12 @@ function syncPlayers(tracks: Track[]): void {
 }
 
 function canStartAfterPendingAudible(): boolean {
-  const { playback, recording } = useAppStore.getState();
+  const { mood, playback, recording } = useAppStore.getState();
   return (
     !playback.isPlaying &&
     !playback.isExporting &&
-    recording.state === "idle"
+    recording.state === "idle" &&
+    !mood.performance.isPerforming
   );
 }
 

@@ -752,13 +752,14 @@ describe("useAppStore", () => {
       get().actions.setIsExporting(false);
     });
 
-    it("resets transient performance state on mode switch", () => {
+    it("stops performance flags on mode switch without forgetting the mix", () => {
       get().actions.createMoodPiece("row", "pocket");
       get().actions.setMoodTake("mic-0", makeMoodTake({ id: "baseline-a" }));
       get().actions.setMoodTake("mic-1", makeMoodTake({ id: "baseline-b" }));
       const micIds = get().mood.piece?.mics.map((mic) => mic.id) ?? [];
       get().actions.setAppMode("mood");
       get().actions.setMoodPerforming(true, 12.5);
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
       get().actions.armMoodSelection("mic-1", "take-b");
       get().actions.setMoodDrop(true);
       get().actions.setMoodHotMic("mic-2");
@@ -771,7 +772,12 @@ describe("useAppStore", () => {
       expect(get().mood.performance).toEqual({
         isPerforming: false,
         epoch: null,
-        selections: Object.fromEntries(micIds.map((micId) => [micId, "off"])),
+        // The committed mix survives the switch; pending arms do not (a stop
+        // resets the boundary queue, so a preserved arm could never commit).
+        selections: {
+          ...Object.fromEntries(micIds.map((micId) => [micId, "off"])),
+          "mic-0": "take-a",
+        },
         armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
         dropActive: false,
         hotMicId: null,

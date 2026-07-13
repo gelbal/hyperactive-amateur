@@ -98,6 +98,23 @@ function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["perf
   };
 }
 
+function stopMoodPerformanceState(
+  performance: AppState["mood"]["performance"],
+): AppState["mood"]["performance"] {
+  return {
+    ...performance,
+    isPerforming: false,
+    epoch: null,
+    dropActive: false,
+    hotMicId: null,
+    cycleCount: 0,
+    // The committed mix (selections) survives a stop/mode-switch, but pending
+    // arms do not: stopping resets the boundary queue, so a preserved arm would
+    // pulse forever with no boundary to commit at. Clear armed, keep selections.
+    armed: Object.fromEntries(Object.keys(performance.selections).map((micId) => [micId, null])),
+  };
+}
+
 function uniqueRecoveryScopes(scopes: RecoveryWarningScope[]): RecoveryWarningScope[] {
   const out: RecoveryWarningScope[] = [];
   for (const scope of scopes) {
@@ -338,7 +355,7 @@ export const useAppStore = create<AppStore>((set) => ({
           mood: {
             ...state.mood,
             performance: state.mood.piece
-              ? createMoodPerformanceForPiece(state.mood.piece)
+              ? stopMoodPerformanceState(state.mood.performance)
               : createIdleMoodPerformance(),
           },
         };
@@ -429,7 +446,7 @@ export const useAppStore = create<AppStore>((set) => ({
                 hotMicId: null,
                 cycleCount: 0,
               }
-            : createIdleMoodPerformance(),
+            : stopMoodPerformanceState(state.mood.performance),
         },
       })),
 
