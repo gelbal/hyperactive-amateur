@@ -234,7 +234,7 @@ describe("moodTransport", () => {
     createMoodWithCycle(2);
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "take-a" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "take-a" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
@@ -256,7 +256,7 @@ describe("moodTransport", () => {
     moodVideoPoolMocks.liveTakesFromSelections.mockClear();
     moodVideoPoolMocks.syncPool.mockClear();
     moodVideoPoolMocks.prepareUpcoming.mockClear();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
@@ -294,8 +294,8 @@ describe("moodTransport", () => {
     createMoodWithCycle(2);
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
-    armMoodLensCommit("splits", 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
+    armMoodLensCommit("splits", 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
@@ -320,7 +320,7 @@ describe("moodTransport", () => {
     actions.setMoodDrop(true);
     actions.setMoodHotMic("mic-0");
     actions.setMoodCycleCount(7);
-    armMoodSelectionCommit({ micId: "mic-1", entry: "take-b" }, 4);
+    armMoodSelectionCommit({ micId: "mic-1", entry: "take-b" }, 4, 2);
 
     stopMoodPerformance();
 

@@ -37,6 +37,7 @@ export const LOG_EVENTS = {
   AUTOSAVE_FLUSH: "autosave.flush",
   MOOD_CLICK_BPM_REJECTED: "mood.click-bpm-rejected",
   MOOD_TAKE_LIMIT_REJECTED: "mood.take-limit-rejected",
+  MOOD_PRINT_DEGRADED: "mood.print-degraded",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
 

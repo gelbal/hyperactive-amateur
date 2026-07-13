@@ -701,6 +701,7 @@ describe("useAppStore", () => {
         selections: { "mic-0": "off", "mic-1": "off" },
         armed: { "mic-0": null, "mic-1": null },
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -777,6 +778,44 @@ describe("useAppStore", () => {
       get().actions.setIsExporting(false);
     });
 
+    it("persists Mood vibe changes without bumping moodRevision and freezes them during export", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      const createdRevision = get().session.moodRevision;
+
+      get().actions.setMoodVibe("blocks");
+
+      expect(get().mood.piece?.vibe).toBe("blocks");
+      expect(get().session.moodRevision).toBe(createdRevision);
+
+      const pieceBeforeExport = get().mood.piece;
+      const revisionBeforeExport = get().session.moodRevision;
+      get().actions.setIsExporting(true);
+
+      get().actions.setMoodVibe("print");
+
+      expect(get().mood.piece).toBe(pieceBeforeExport);
+      expect(get().mood.piece?.vibe).toBe("blocks");
+      expect(get().session.moodRevision).toBe(revisionBeforeExport);
+      get().actions.setIsExporting(false);
+    });
+
+    it("freezes Mood vibe writes while performing and while capturing", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      const pieceBefore = get().mood.piece;
+
+      get().actions.setMoodPerforming(true, 4);
+      get().actions.setMoodVibe("blocks");
+      expect(get().mood.piece).toBe(pieceBefore);
+      expect(get().mood.piece?.vibe).toBe("clean");
+      get().actions.setMoodPerforming(false);
+
+      get().actions.setRecordingState("recording", null);
+      get().actions.setMoodVibe("blocks");
+      expect(get().mood.piece).toBe(pieceBefore);
+      expect(get().mood.piece?.vibe).toBe("clean");
+      get().actions.setRecordingState("idle", null);
+    });
+
     it("freezes piece writers during export while performance actions remain live", () => {
       get().actions.createMoodPiece("corners", "pocket");
       get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-a" }));
@@ -828,6 +867,7 @@ describe("useAppStore", () => {
         },
         armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,

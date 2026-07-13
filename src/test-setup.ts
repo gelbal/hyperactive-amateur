@@ -127,14 +127,14 @@ if (typeof HTMLCanvasElement !== "undefined") {
       if (existing) return existing;
 
       const stateStack: Array<{
-        fillStyle: string;
+        fillStyle: unknown;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
       const calls: Array<{
         method: string;
         args: unknown[];
-        fillStyle: string;
+        fillStyle: unknown;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
@@ -142,7 +142,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
         calls.push({
           method,
           args,
-          fillStyle: context.fillStyle as string,
+          fillStyle: context.fillStyle,
           globalAlpha: context.globalAlpha as number,
           globalCompositeOperation: context.globalCompositeOperation as string,
         });
@@ -169,8 +169,25 @@ if (typeof HTMLCanvasElement !== "undefined") {
         drawImage: vi.fn((...args: unknown[]) => {
           recordCall("drawImage", args);
         }),
+        createPattern: vi.fn((...args: unknown[]) => {
+          recordCall("createPattern", args);
+          return {
+            __haCanvasPattern: true,
+            source: args[0],
+            repetition: args[1],
+          };
+        }),
         beginPath: vi.fn((...args: unknown[]) => {
           recordCall("beginPath", args);
+        }),
+        moveTo: vi.fn((...args: unknown[]) => {
+          recordCall("moveTo", args);
+        }),
+        arc: vi.fn((...args: unknown[]) => {
+          recordCall("arc", args);
+        }),
+        fill: vi.fn((...args: unknown[]) => {
+          recordCall("fill", args);
         }),
         rect: vi.fn((...args: unknown[]) => {
           recordCall("rect", args);
@@ -180,7 +197,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
         }),
         save: vi.fn(() => {
           stateStack.push({
-            fillStyle: context.fillStyle as string,
+            fillStyle: context.fillStyle,
             globalAlpha: context.globalAlpha as number,
             globalCompositeOperation: context.globalCompositeOperation as string,
           });
@@ -194,7 +211,22 @@ if (typeof HTMLCanvasElement !== "undefined") {
         }),
         scale: vi.fn(),
         translate: vi.fn(),
-        getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+        // Honors the requested dimensions with a deterministic gray ramp so
+        // lattice readbacks (Print) see varied luminance across cells.
+        getImageData: vi.fn((...args: unknown[]) => {
+          recordCall("getImageData", args);
+          const w = Math.max(1, Number(args[2]) || 1);
+          const h = Math.max(1, Number(args[3]) || 1);
+          const data = new Uint8ClampedArray(w * h * 4);
+          for (let i = 0; i < w * h; i++) {
+            const value = (i % 32) * 8;
+            data[i * 4] = value;
+            data[i * 4 + 1] = value;
+            data[i * 4 + 2] = value;
+            data[i * 4 + 3] = 255;
+          }
+          return { data, width: w, height: h };
+        }),
         putImageData: () => undefined,
       };
       contexts.set(this, context);

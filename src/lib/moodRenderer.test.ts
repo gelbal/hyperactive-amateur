@@ -56,7 +56,11 @@ import {
   drawDesaturated,
   drawMoodFrame,
   initMoodRenderer,
+  PRINT_FRAME_BUDGET_MS,
+  PRINT_WATCHDOG_WINDOW_FRAMES,
 } from "./moodRenderer";
+import { getPrintDensity, setPrintDensity } from "./moodVibes";
+import { LOG_EVENTS, logger } from "./logger";
 import { setMoodRecordingPreviewStream } from "./moodCapture";
 import {
   __resetMoodVideoPoolForTesting,
@@ -234,6 +238,7 @@ describe("moodRenderer", () => {
   });
 
   afterEach(() => {
+    setPrintDensity("normal");
     stopMoodPerformance();
     setMoodRecordingPreviewStream(null);
     __resetMoodTransportForTesting();
@@ -254,7 +259,7 @@ describe("moodRenderer", () => {
     );
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
@@ -280,11 +285,11 @@ describe("moodRenderer", () => {
     createRenderer("row");
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
-    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 14);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 14, 10);
     boundaryCallback?.(14);
 
     drawMoodFrame(14, currentRenderState());
@@ -321,6 +326,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -343,6 +349,169 @@ describe("moodRenderer", () => {
     expect(imageCalls).toHaveLength(2);
     expect(imageCalls[0].globalAlpha).toBe(1);
     expect(imageCalls[1].globalAlpha).toBeCloseTo(0.28);
+  });
+
+  it("applies the wardrobe vibe on the render canvas after tile draws", () => {
+    const piece = createEmptyMoodPiece("corners", "pocket");
+    const liveTake = makeMoodTake({ id: "live", posterUrl: "blob:test/live-poster" });
+    const renderPiece: MoodPiece = {
+      ...piece,
+      vibe: "blocks",
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [liveTake] } : mic,
+      ),
+    };
+    const performance: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "live",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      armedDropActive: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    const ctx = createRenderer("corners");
+
+    drawMoodFrame(0, { piece: renderPiece, performance });
+
+    const drawCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+    const tileDrawIndex = drawCalls.findIndex((call) => call.args[0] instanceof Image);
+    const vibeDrawIndex = drawCalls.findIndex(
+      (call) => call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(tileDrawIndex).toBeGreaterThanOrEqual(0);
+    expect(vibeDrawIndex).toBeGreaterThan(tileDrawIndex);
+  });
+
+  it("uses the Drop while performing but still previews the wardrobe while stopped", () => {
+    const piece: MoodPiece = { ...createEmptyMoodPiece("corners", "pocket"), vibe: "blocks" };
+    const performance: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "off",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      armedDropActive: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    const ctx = createRenderer("corners");
+
+    drawMoodFrame(0, { piece, performance });
+    let vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(1);
+
+    ctx.__haCanvasCalls.length = 0;
+    drawMoodFrame(0, {
+      piece,
+      performance: { ...performance, isPerforming: true, epoch: 0, dropActive: false },
+    });
+    vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(0);
+
+    ctx.__haCanvasCalls.length = 0;
+    drawMoodFrame(0, {
+      piece,
+      performance: { ...performance, isPerforming: true, epoch: 0, dropActive: true },
+    });
+    vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(1);
+  });
+
+  function makePrintFrame(): { piece: MoodPiece; performanceState: MoodPerformanceState } {
+    const piece: MoodPiece = { ...createEmptyMoodPiece("corners", "pocket"), vibe: "print" };
+    const performanceState: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "off",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      armedDropActive: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    return { piece, performanceState };
+  }
+
+  it("degrades Print for the session after a window of over-budget frames", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    let clock = 0;
+    vi.spyOn(globalThis.performance, "now").mockImplementation(() => (clock += 13));
+    const { piece, performanceState } = makePrintFrame();
+    createRenderer("corners");
+
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+
+    expect(getPrintDensity()).toBe("degraded");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      LOG_EVENTS.MOOD_PRINT_DEGRADED,
+      expect.objectContaining({ budgetMs: PRINT_FRAME_BUDGET_MS }),
+    );
+
+    // Session-scoped: the tripped watchdog never re-measures or re-logs.
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(getPrintDensity()).toBe("degraded");
+  });
+
+  it("keeps Print at normal density while frames fit the budget", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    let clock = 0;
+    vi.spyOn(globalThis.performance, "now").mockImplementation(() => (clock += 0.01));
+    const { piece, performanceState } = makePrintFrame();
+    createRenderer("corners");
+
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES * 2; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+
+    expect(getPrintDensity()).toBe("normal");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("falls back to the live poster until the pooled take video is drawable", () => {
@@ -376,6 +545,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -423,7 +593,7 @@ describe("moodRenderer", () => {
       const ctx = createRenderer("corners");
       toneMocks.now.mockReturnValueOnce(10);
       await startMoodPerformance();
-      armMoodLensCommit("splits", 12);
+      armMoodLensCommit("splits", 12, 10);
 
       const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
       boundaryCallback?.(12);
@@ -480,6 +650,7 @@ describe("moodRenderer", () => {
           "mic-3": null,
         },
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -550,6 +721,7 @@ describe("moodRenderer", () => {
           "mic-3": null,
         },
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: "mic-1",
         cycleCount: 0,
@@ -629,6 +801,41 @@ describe("moodRenderer", () => {
           }),
         ]),
       );
+    });
+
+    it("suspends the vibe pass while a capture is active", () => {
+      const ctx = createRenderer("corners");
+      const piece: MoodPiece = { ...capturePiece(), vibe: "blocks" };
+      const performance: MoodPerformanceState = {
+        ...capturePerformance(),
+        dropActive: true,
+      };
+      useAppStore.getState().actions.setRecordingState("recording", null);
+      primeCapturePreview();
+
+      // Performing with the Drop on: the capture presentation (frozen band,
+      // B&W metronome, hot preview) must stay vibe-free — §7's reserved
+      // B&W grammar wins over the full-canvas pass during the take window.
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.1, { piece, performance });
+      const vibeDraws = ctx.__haCanvasCalls.filter(
+        (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+      );
+      expect(vibeDraws).toHaveLength(0);
+
+      // Recording the One while stopped (wardrobe would otherwise preview).
+      const stoppedPerformance: MoodPerformanceState = {
+        ...capturePerformance(),
+        isPerforming: false,
+        epoch: null,
+        dropActive: false,
+      };
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.2, { piece, performance: stoppedPerformance });
+      const stoppedVibeDraws = ctx.__haCanvasCalls.filter(
+        (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+      );
+      expect(stoppedVibeDraws).toHaveLength(0);
     });
 
     it("freezes every non-hot tile and skips the metronome when headphones are on", () => {

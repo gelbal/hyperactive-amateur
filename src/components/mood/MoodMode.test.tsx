@@ -491,6 +491,79 @@ describe("MoodMode", () => {
     expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
   });
 
+  it("writes the wardrobe vibe while stopped", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    const blocks = screen.getByRole("button", { name: "Blocks vibe" });
+    expect(screen.getByRole("group", { name: "Mood vibe" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clean vibe" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(blocks);
+
+    expect(useAppStore.getState().mood.piece?.vibe).toBe("blocks");
+    expect(blocks).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("disables the wardrobe vibe picker while exporting", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    act(() => {
+      useAppStore.getState().actions.setIsExporting(true);
+    });
+
+    const blocks = screen.getByRole("button", { name: "Blocks vibe" });
+    expect(blocks).toBeDisabled();
+    expect(blocks).toHaveAttribute("title", "Blocks vibe frozen during export");
+
+    fireEvent.click(blocks);
+
+    expect(useAppStore.getState().mood.piece?.vibe).toBe("clean");
+  });
+
+  it("disables the wardrobe vibe picker while performing", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+      useAppStore.getState().actions.setMoodPerforming(true, 4);
+    });
+    render(<MoodMode />);
+
+    const blocks = screen.getByRole("button", { name: "Blocks vibe" });
+    expect(blocks).toBeDisabled();
+    expect(blocks).toHaveAttribute("title", "Blocks vibe locked during performance");
+  });
+
+  it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
+    "disables the wardrobe vibe picker while capture is %s",
+    (recordingState) => {
+      act(() => {
+        useAppStore.getState().actions.setAppMode("mood");
+        useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+        useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+        useAppStore.getState().actions.setRecordingState(recordingState, 0);
+      });
+      render(<MoodMode />);
+
+      const blocks = screen.getByRole("button", { name: "Blocks vibe" });
+      expect(blocks).toBeDisabled();
+      expect(blocks).toHaveAttribute("title", "Blocks vibe locked during capture");
+    },
+  );
+
   it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
     "disables the Mood lens toggle while capture is %s",
     (recordingState) => {
