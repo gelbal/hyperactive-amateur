@@ -48,6 +48,90 @@ export interface Track {
   showVideo: boolean;
 }
 
+export type MoodStageId = "corners" | "row" | "stack";
+
+// Freestyle joins this union post-v1. Its v1 design representation is
+// cycleSeconds: null through the clock module, not a dead enum value here.
+export type MoodTimeFeel = "pocket" | "click";
+
+export type MoodLens = "wall" | "splits";
+
+export type MoodVibeId = "clean" | "print" | "mixtape" | "blocks" | "camcorder";
+
+export type MoodPart = "lead" | "harmony" | "bass" | "beatbox" | "adlib";
+
+export type AppMode = "chop" | "mood";
+
+export interface MoodTake {
+  id: string;
+  // Persisted recording blobs. The video blob is immutable; trim points below
+  // define the play/draw-time window without mutating the source.
+  videoBlob: Blob;
+  audioBlob: Blob | null;
+  posterBlob: Blob | null;
+  // Object URL for videoBlob; recreated on rehydrate (not persisted).
+  url: string;
+  // Decoded audio side of the take; null only for repair-state takes.
+  audioBuffer: AudioBuffer | null;
+  audioStatus: "ok" | "unavailable";
+  // Object URL for posterBlob; recreated on rehydrate (not persisted).
+  posterUrl: string | null;
+  trimStartMs: number;
+  trimEndMs: number;
+  // Silence-trimmed content length: (trimEndMs - trimStartMs) / 1000.
+  durationSeconds: number;
+  cycleMultiple: 0.5 | 1 | 2 | 4;
+  syncOffsetMs: number;
+  part: MoodPart | null;
+  partSource: "ai" | "user" | null;
+  recordedAt: number;
+}
+
+export interface MoodMic {
+  id: string;
+  takes: MoodTake[];
+}
+
+export interface MoodPiece {
+  moodSchemaVersion: 1;
+  stage: MoodStageId;
+  timeFeel: MoodTimeFeel;
+  bpm: number | null;
+  cycleBars: 1 | 2 | 4 | null;
+  cycleSeconds: number | null;
+  oneMicId: string | null;
+  oneTakeId: string | null;
+  vibe: MoodVibeId;
+  lens: MoodLens;
+  mics: MoodMic[];
+  updatedAt: number;
+}
+
+export type MoodSelectionEntry = string | "off";
+
+export interface MoodSelectionCommit {
+  micId: string;
+  entry: MoodSelectionEntry;
+}
+
+export interface MoodPerformanceState {
+  isPerforming: boolean;
+  epoch: number | null;
+  selections: Record<string, MoodSelectionEntry>;
+  armed: Record<string, MoodSelectionEntry | null>;
+  dropActive: boolean;
+  hotMicId: string | null;
+  cycleCount: number;
+}
+
+export type MoodHydrationState = "cold" | "hydrating" | "ready";
+
+export interface MoodSlice {
+  piece: MoodPiece | null;
+  hydration: MoodHydrationState;
+  performance: MoodPerformanceState;
+}
+
 export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
 
 export interface ActiveTrigger {
@@ -148,6 +232,9 @@ export interface SessionSlice {
   // Monotonic in-memory counter for edits that make pending AI pattern
   // responses stale. Not persisted; reloads start a fresh active project.
   projectRevision: number;
+  // Monotonic in-memory counter for Mood piece edits that make async
+  // refinements stale. Performance-only state does not bump it.
+  moodRevision: number;
   // Browser storage durability for this session. Not persisted because it is
   // a property of the current browser bucket, not the project.
   storageDurability: StorageDurability;
@@ -164,7 +251,9 @@ export interface SessionSlice {
 }
 
 export interface AppState {
+  appMode: AppMode;
   project: ProjectState;
+  mood: MoodSlice;
   playback: PlaybackState;
   recording: RecordingSlice;
   ui: UiState;

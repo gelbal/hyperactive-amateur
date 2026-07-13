@@ -14,8 +14,14 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { __resetMediaForTesting } from "../lib/media";
-import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
-import type { Clip } from "../types";
+import { logger, LOG_EVENTS } from "../lib/logger";
+import {
+  APP_MODE_STORAGE_KEY,
+  AUDIO_DEVICE_STORAGE_KEY,
+  VIDEO_DEVICE_STORAGE_KEY,
+} from "./initialState";
+import { MAX_TAKES_PER_MIC } from "../lib/moodStages";
+import type { Clip, MoodPart, MoodTake } from "../types";
 import { useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
@@ -31,6 +37,30 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     durationMs: 1000,
     posterBlob: null,
     posterUrl: null,
+    ...overrides,
+  };
+}
+
+function makeMoodTake(overrides: Partial<MoodTake> = {}): MoodTake {
+  const id = overrides.id ?? "take-1";
+  const durationSeconds = overrides.durationSeconds ?? 1.5;
+  return {
+    id,
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    audioBlob: null,
+    posterBlob: null,
+    url: `blob:test/${id}`,
+    audioBuffer: { duration: durationSeconds, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
+    posterUrl: null,
+    trimStartMs: 0,
+    trimEndMs: durationSeconds * 1000,
+    durationSeconds,
+    cycleMultiple: 1,
+    syncOffsetMs: 0,
+    part: null,
+    partSource: null,
+    recordedAt: 1,
     ...overrides,
   };
 }
@@ -68,6 +98,7 @@ describe("useAppStore", () => {
     __resetMediaForTesting();
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
     get().actions.setIsExporting(false);
+    window.localStorage.removeItem(APP_MODE_STORAGE_KEY);
     window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
     window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
     get().actions.reset();
@@ -577,6 +608,482 @@ describe("useAppStore", () => {
     expect(applied).toBe(false);
     expect(get().project.tracks[0].steps.every(Boolean)).toBe(false);
     expect(get().session.projectRevision).toBeGreaterThan(revision);
+  });
+
+  describe("mood slice", () => {
+    it("defaults to Chop mode and persists the last selected mode", () => {
+      expect(get().appMode).toBe("chop");
+
+      get().actions.setAppMode("mood");
+
+      expect(get().appMode).toBe("mood");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBe("mood");
+
+      get().actions.reset();
+      expect(get().appMode).toBe("mood");
+
+      window.localStorage.setItem(APP_MODE_STORAGE_KEY, "not-a-mode");
+      get().actions.reset();
+      expect(get().appMode).toBe("chop");
+    });
+
+    it("creates an empty Mood piece with idle all-Off performance state", () => {
+      const revision = get().session.moodRevision;
+
+      get().actions.createMoodPiece("row", "click", { bpm: 132, cycleBars: 4 });
+
+      expect(get().mood.piece).toMatchObject({
+        moodSchemaVersion: 1,
+        stage: "row",
+        timeFeel: "click",
+        bpm: 132,
+        cycleBars: 4,
+        cycleSeconds: null,
+        vibe: "clean",
+        lens: "wall",
+      });
+      expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual(["mic-0", "mic-1"]);
+      expect(get().mood.hydration).toBe("ready");
+      expect(get().mood.performance).toMatchObject({
+        isPerforming: false,
+        epoch: null,
+        selections: { "mic-0": "off", "mic-1": "off" },
+        armed: { "mic-0": null, "mic-1": null },
+        dropActive: false,
+        hotMicId: null,
+        cycleCount: 0,
+      });
+      expect(get().session.moodRevision).toBe(revision + 1);
+    });
+
+    it("rejects a Click piece without positive bpm and logs an HA event", () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const revision = get().session.moodRevision;
+
+      get().actions.createMoodPiece("corners", "click", { bpm: 0 });
+
+      expect(get().mood.piece).toBeNull();
+      expect(get().session.moodRevision).toBe(revision);
+      expect(warn).toHaveBeenCalledWith(
+        LOG_EVENTS.MOOD_CLICK_BPM_REJECTED,
+        expect.objectContaining({ stage: "corners", bpm: 0 }),
+      );
+      warn.mockRestore();
+    });
+
+    it("freezes piece writers during export while performance actions remain live", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      const pieceBeforeExport = get().mood.piece;
+      const revisionBeforeExport = get().session.moodRevision;
+      get().actions.setIsExporting(true);
+
+      get().actions.createMoodPiece("stack", "pocket");
+      get().actions.scratchMoodPiece();
+      get().actions.armMoodSelection("mic-0", "take-a");
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+      get().actions.setMoodDrop(true);
+
+      expect(get().mood.piece).toBe(pieceBeforeExport);
+      expect(get().session.moodRevision).toBe(revisionBeforeExport);
+      expect(get().mood.performance.selections["mic-0"]).toBe("take-a");
+      expect(get().mood.performance.armed["mic-0"]).toBeNull();
+      expect(get().mood.performance.dropActive).toBe(true);
+      get().actions.setIsExporting(false);
+    });
+
+    it("resets transient performance state on mode switch", () => {
+      get().actions.createMoodPiece("row", "pocket");
+      get().actions.setMoodTake("mic-0", makeMoodTake({ id: "baseline-a" }));
+      get().actions.setMoodTake("mic-1", makeMoodTake({ id: "baseline-b" }));
+      const micIds = get().mood.piece?.mics.map((mic) => mic.id) ?? [];
+      get().actions.setAppMode("mood");
+      get().actions.setMoodPerforming(true, 12.5);
+      get().actions.armMoodSelection("mic-1", "take-b");
+      get().actions.setMoodDrop(true);
+      get().actions.setMoodHotMic("mic-2");
+      get().actions.setMoodCycleCount(7);
+
+      get().actions.setAppMode("chop");
+      get().actions.setAppMode("mood");
+
+      expect(get().appMode).toBe("mood");
+      expect(get().mood.performance).toEqual({
+        isPerforming: false,
+        epoch: null,
+        selections: Object.fromEntries(micIds.map((micId) => [micId, "off"])),
+        armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
+        dropActive: false,
+        hotMicId: null,
+        cycleCount: 0,
+      });
+    });
+
+    it("ignores app mode changes and preference writes while exporting", () => {
+      expect(get().appMode).toBe("chop");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBeNull();
+      get().actions.setIsExporting(true);
+
+      get().actions.setAppMode("mood");
+
+      expect(get().appMode).toBe("chop");
+      expect(window.localStorage.getItem(APP_MODE_STORAGE_KEY)).toBeNull();
+      get().actions.setIsExporting(false);
+    });
+
+    it("bumps moodRevision for piece mutations but not performance mutations", () => {
+      const start = get().session.moodRevision;
+
+      get().actions.armMoodSelection("mic-0", "take-a");
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+      get().actions.setMoodPerforming(true, 4);
+      get().actions.setMoodDrop(true);
+      get().actions.setMoodHotMic("mic-0");
+      get().actions.setMoodCycleCount(2);
+      expect(get().session.moodRevision).toBe(start);
+
+      get().actions.createMoodPiece("row", "pocket");
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodPerforming(true, 8);
+      get().actions.scratchMoodPiece();
+      expect(get().mood.piece).not.toBeNull();
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodPerforming(false);
+      get().actions.scratchMoodPiece();
+      expect(get().mood.piece).toBeNull();
+      expect(get().session.moodRevision).toBe(start + 2);
+    });
+
+    describe("mood takes", () => {
+      it("establishes the One from a Pocket take and from Click timing rules", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "pocket-one", durationSeconds: 2.75 }));
+
+        expect(get().mood.piece).toMatchObject({
+          cycleSeconds: 2.75,
+          oneMicId: "mic-0",
+          oneTakeId: "pocket-one",
+        });
+
+        get().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "click-one", durationSeconds: 9 }));
+
+        expect(get().mood.piece).toMatchObject({
+          cycleSeconds: 4,
+          oneMicId: "mic-0",
+          oneTakeId: "click-one",
+        });
+      });
+
+      it("grows linear stage mics after every mic has a take and caps at the stage max", () => {
+        get().actions.createMoodPiece("row", "pocket");
+
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-0" }));
+        expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual(["mic-0", "mic-1"]);
+
+        get().actions.setMoodTake("mic-1", makeMoodTake({ id: "take-1" }));
+        expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual([
+          "mic-0",
+          "mic-1",
+          "mic-2",
+        ]);
+        expect(get().mood.performance.selections["mic-2"]).toBe("off");
+        expect(get().mood.performance.armed["mic-2"]).toBeNull();
+
+        get().actions.setMoodTake("mic-2", makeMoodTake({ id: "take-2" }));
+        get().actions.setMoodTake("mic-3", makeMoodTake({ id: "take-3" }));
+        get().actions.setMoodTake("mic-4", makeMoodTake({ id: "take-4" }));
+
+        expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual([
+          "mic-0",
+          "mic-1",
+          "mic-2",
+          "mic-3",
+          "mic-4",
+        ]);
+
+        get().actions.createMoodPiece("corners", "pocket");
+        for (let i = 0; i < 4; i++) {
+          get().actions.setMoodTake(`mic-${i}`, makeMoodTake({ id: `corner-${i}` }));
+        }
+
+        expect(get().mood.piece?.mics.map((mic) => mic.id)).toEqual([
+          "mic-0",
+          "mic-1",
+          "mic-2",
+          "mic-3",
+        ]);
+      });
+
+      it("rejects takes over the per-mic stack limit with an HA log event", () => {
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+        get().actions.createMoodPiece("corners", "pocket");
+
+        for (let i = 0; i < MAX_TAKES_PER_MIC; i++) {
+          get().actions.setMoodTake("mic-0", makeMoodTake({ id: `take-${i}` }));
+        }
+        const revision = get().session.moodRevision;
+
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-over-limit" }));
+
+        expect(get().mood.piece?.mics[0].takes).toHaveLength(MAX_TAKES_PER_MIC);
+        expect(get().session.moodRevision).toBe(revision);
+        expect(warn).toHaveBeenCalledWith(
+          LOG_EVENTS.MOOD_TAKE_LIMIT_REJECTED,
+          expect.objectContaining({ micId: "mic-0", takeId: "take-over-limit" }),
+        );
+        warn.mockRestore();
+      });
+
+      it("attaches posters only to the matching current take", () => {
+        const revoke = vi.spyOn(URL, "revokeObjectURL");
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-with-poster" }));
+        const firstPoster = new Blob([new Uint8Array([2])], { type: "image/jpeg" });
+        const secondPoster = new Blob([new Uint8Array([3])], { type: "image/jpeg" });
+        const revision = get().session.moodRevision;
+
+        get().actions.attachMoodTakePoster(
+          "mic-0",
+          "stale-take",
+          firstPoster,
+          "blob:test/poster-stale",
+        );
+
+        expect(get().mood.piece?.mics[0].takes[0].posterBlob).toBeNull();
+        expect(get().mood.piece?.mics[0].takes[0].posterUrl).toBeNull();
+        expect(get().session.moodRevision).toBe(revision);
+
+        const pieceBeforeAttach = get().mood.piece;
+        get().actions.attachMoodTakePoster(
+          "mic-0",
+          "take-with-poster",
+          firstPoster,
+          "blob:test/poster-1",
+        );
+        get().actions.attachMoodTakePoster(
+          "mic-0",
+          "take-with-poster",
+          secondPoster,
+          "blob:test/poster-2",
+        );
+
+        expect(get().mood.piece?.mics[0].takes[0].posterBlob).toBe(secondPoster);
+        expect(get().mood.piece?.mics[0].takes[0].posterUrl).toBe("blob:test/poster-2");
+        expect(get().mood.piece).not.toBe(pieceBeforeAttach);
+        expect(get().session.moodRevision).toBe(revision);
+        expect(revoke).toHaveBeenCalledWith("blob:test/poster-1");
+        revoke.mockRestore();
+      });
+
+      it("deletes takes, clears live references, and only resets the cycle after the last take", () => {
+        const revoke = vi.spyOn(URL, "revokeObjectURL");
+        get().actions.createMoodPiece("row", "pocket");
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({
+            id: "one",
+            durationSeconds: 3,
+            posterBlob: new Blob([new Uint8Array([4])], { type: "image/jpeg" }),
+            posterUrl: "blob:test/one-poster",
+          }),
+        );
+        get().actions.setMoodTake("mic-1", makeMoodTake({ id: "other" }));
+        get().actions.armMoodSelection("mic-0", "one");
+        get().actions.commitMoodSelections([{ micId: "mic-0", entry: "one" }]);
+        get().actions.armMoodSelection("mic-1", "one");
+
+        get().actions.deleteMoodTake("mic-0", "one");
+
+        expect(revoke).toHaveBeenCalledWith("blob:test/one");
+        expect(revoke).toHaveBeenCalledWith("blob:test/one-poster");
+        expect(get().mood.performance.selections["mic-0"]).toBe("off");
+        expect(get().mood.performance.armed["mic-1"]).toBe("off");
+        expect(get().mood.piece).toMatchObject({
+          cycleSeconds: 3,
+          oneMicId: null,
+          oneTakeId: null,
+        });
+        expect(get().mood.piece?.mics.find((mic) => mic.id === "mic-1")?.takes).toHaveLength(1);
+
+        get().actions.deleteMoodTake("mic-1", "other");
+
+        expect(get().mood.piece).toMatchObject({
+          cycleSeconds: null,
+          oneMicId: null,
+          oneTakeId: null,
+        });
+        expect(get().mood.piece?.mics.every((mic) => mic.takes.length === 0)).toBe(true);
+        revoke.mockRestore();
+      });
+
+      it("revokes all take object URLs when scratching or replacing a piece", () => {
+        const revoke = vi.spyOn(URL, "revokeObjectURL");
+        get().actions.createMoodPiece("row", "pocket");
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "scratch-a", posterUrl: "blob:test/scratch-a-poster" }),
+        );
+        get().actions.setMoodTake(
+          "mic-1",
+          makeMoodTake({ id: "scratch-b", posterUrl: "blob:test/scratch-b-poster" }),
+        );
+
+        get().actions.scratchMoodPiece();
+
+        expect(get().mood.piece).toBeNull();
+        expect(revoke).toHaveBeenCalledTimes(4);
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-a");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-a-poster");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-b");
+        expect(revoke).toHaveBeenCalledWith("blob:test/scratch-b-poster");
+
+        revoke.mockClear();
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "replace-a", posterUrl: "blob:test/replace-a-poster" }),
+        );
+        get().actions.setMoodTake(
+          "mic-1",
+          makeMoodTake({ id: "replace-b", posterUrl: "blob:test/replace-b-poster" }),
+        );
+
+        get().actions.createMoodPiece("stack", "pocket");
+
+        expect(get().mood.piece?.stage).toBe("stack");
+        expect(revoke).toHaveBeenCalledTimes(4);
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-a");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-a-poster");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-b");
+        expect(revoke).toHaveBeenCalledWith("blob:test/replace-b-poster");
+
+        revoke.mockClear();
+        get().actions.setMoodTake(
+          "mic-0",
+          makeMoodTake({ id: "frozen", posterUrl: "blob:test/frozen-poster" }),
+        );
+        const pieceBeforeExport = get().mood.piece;
+        get().actions.setIsExporting(true);
+
+        get().actions.scratchMoodPiece();
+        get().actions.createMoodPiece("row", "pocket");
+
+        expect(get().mood.piece).toBe(pieceBeforeExport);
+        expect(revoke).not.toHaveBeenCalled();
+        get().actions.setIsExporting(false);
+        revoke.mockRestore();
+      });
+
+      it("revision-guards async take appliers without churning moodRevision and lets manual parts beat AI parts", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-ai" }));
+        const staleRevision = get().session.moodRevision - 1;
+
+        expect(get().actions.applyMoodSyncOffsetIfCurrent("mic-0", "take-ai", 120, staleRevision)).toBe(
+          false,
+        );
+        expect(get().actions.applyMoodPartIfCurrent("mic-0", "take-ai", "bass", "ai", staleRevision)).toBe(
+          false,
+        );
+        expect(get().mood.piece?.mics[0].takes[0]).toMatchObject({
+          syncOffsetMs: 0,
+          part: null,
+          partSource: null,
+        });
+
+        const beforeStructuralEditRevision = get().session.moodRevision;
+        get().actions.setMoodTake("mic-1", makeMoodTake({ id: "structural-edit" }));
+        expect(
+          get().actions.applyMoodSyncOffsetIfCurrent(
+            "mic-0",
+            "take-ai",
+            80,
+            beforeStructuralEditRevision,
+          ),
+        ).toBe(false);
+        expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(0);
+
+        const revision = get().session.moodRevision;
+        expect(get().actions.applyMoodSyncOffsetIfCurrent("mic-0", "take-ai", 120, revision)).toBe(
+          true,
+        );
+        expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(120);
+        expect(
+          get().actions.applyMoodPartIfCurrent(
+            "mic-0",
+            "take-ai",
+            "beatbox" satisfies MoodPart,
+            "ai",
+            revision,
+          ),
+        ).toBe(true);
+        expect(get().session.moodRevision).toBe(revision);
+        expect(get().mood.piece?.mics[0].takes[0]).toMatchObject({
+          syncOffsetMs: 120,
+          part: "beatbox",
+          partSource: "ai",
+        });
+
+        expect(
+          get().actions.applyMoodPartIfCurrent(
+            "mic-0",
+            "take-ai",
+            "lead" satisfies MoodPart,
+            "user",
+            revision,
+          ),
+        ).toBe(true);
+
+        expect(get().actions.applyMoodPartIfCurrent("mic-0", "take-ai", "bass", "ai", revision)).toBe(
+          false,
+        );
+        expect(get().session.moodRevision).toBe(revision);
+        expect(get().mood.piece?.mics[0].takes[0]).toMatchObject({
+          part: "lead",
+          partSource: "user",
+        });
+      });
+
+      it("freezes take mutations during export", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "existing" }));
+        const pieceBeforeExport = get().mood.piece;
+        const revisionBeforeExport = get().session.moodRevision;
+        get().actions.setIsExporting(true);
+
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "blocked" }));
+        get().actions.attachMoodTakePoster(
+          "mic-0",
+          "existing",
+          new Blob([new Uint8Array([5])], { type: "image/jpeg" }),
+          "blob:test/blocked-poster",
+        );
+        get().actions.deleteMoodTake("mic-0", "existing");
+        expect(
+          get().actions.applyMoodSyncOffsetIfCurrent(
+            "mic-0",
+            "existing",
+            80,
+            revisionBeforeExport,
+          ),
+        ).toBe(false);
+        expect(
+          get().actions.applyMoodPartIfCurrent(
+            "mic-0",
+            "existing",
+            "adlib",
+            "ai",
+            revisionBeforeExport,
+          ),
+        ).toBe(false);
+
+        expect(get().mood.piece).toBe(pieceBeforeExport);
+        expect(get().session.moodRevision).toBe(revisionBeforeExport);
+        get().actions.setIsExporting(false);
+      });
+    });
   });
 
   describe("restoreTrackAudio", () => {

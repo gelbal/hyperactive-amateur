@@ -29,22 +29,55 @@ vi.mock("./lib/autoSave", () => ({
 vi.mock("./lib/useSpacebarPlayToggle", () => ({ useSpacebarPlayToggle: vi.fn() }));
 vi.mock("./lib/useKeyboardTriggers", () => ({ useKeyboardTriggers: vi.fn() }));
 vi.mock("./lib/aiSuggest", () => ({ AI_UNLOCK_CLIPS: 3 }));
-vi.mock("./components/Viewport", () => ({ Viewport: () => null }));
-vi.mock("./components/PadGrid", () => ({ PadGrid: () => null }));
-vi.mock("./components/StepGrid", () => ({ StepGrid: () => null }));
-vi.mock("./components/PlayButton", () => ({ PlayButton: () => null }));
-vi.mock("./components/BpmDial", () => ({ BpmDial: () => null }));
-vi.mock("./components/ExportButton", () => ({ ExportButton: () => null }));
-vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
-vi.mock("./components/FlowSelector", () => ({ FlowSelector: () => null }));
+vi.mock("./components/Viewport", () => ({
+  Viewport: () => <div data-testid="chop-viewport">Chop viewport</div>,
+}));
+vi.mock("./components/PadGrid", () => ({
+  PadGrid: () => <div data-testid="pad-grid">Pad grid</div>,
+}));
+vi.mock("./components/StepGrid", () => ({
+  StepGrid: () => <div data-testid="step-grid">Step grid</div>,
+}));
+vi.mock("./components/PlayButton", () => ({
+  PlayButton: () => <button type="button">Play</button>,
+}));
+vi.mock("./components/BpmDial", () => ({
+  BpmDial: () => <div>BPM</div>,
+}));
+vi.mock("./components/ExportButton", () => ({
+  ExportButton: () => <button type="button">Export</button>,
+}));
+vi.mock("./components/SuggestButton", () => ({
+  SuggestButton: () => <button type="button">Suggest</button>,
+}));
+vi.mock("./components/FlowSelector", () => ({
+  FlowSelector: () => <button type="button">Flow</button>,
+}));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
-vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => null }));
+vi.mock("./components/FeelDisclosure", () => ({
+  FeelDisclosure: () => <button type="button">Feel</button>,
+}));
 vi.mock("./components/StorageDurabilityChip", () => ({ StorageDurabilityChip: () => null }));
+vi.mock("./components/mood/MoodMode", () => new Promise(() => undefined));
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
 
 const REPAIR_WARNING = "Track 1 audio unavailable — re-record to restore sound.";
+
+function addClip(): void {
+  useAppStore.getState().actions.setTrackClip(0, {
+    blob: new Blob(["clip"], { type: "video/webm" }),
+    url: "blob:clip",
+    audioBuffer: null,
+    audioStatus: "unavailable",
+    trimStartMs: 0,
+    trimEndMs: 1000,
+    durationMs: 1000,
+    posterBlob: null,
+    posterUrl: null,
+  });
+}
 
 async function renderApp(): Promise<HTMLElement> {
   let container: HTMLElement = document.createElement("div");
@@ -59,6 +92,7 @@ async function renderApp(): Promise<HTMLElement> {
 
 describe("App autosave gating", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.clearAllMocks();
     useAppStore.getState().actions.reset();
     rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
@@ -141,5 +175,40 @@ describe("App autosave gating", () => {
     expect(useAppStore.getState().ui.recoveryWarnings).toEqual([
       "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
     ]);
+  });
+
+  it("shows the lazy Mood fallback and unmounts the Chop surface in Mood", async () => {
+    addClip();
+    useAppStore.getState().actions.setAppMode("mood");
+
+    await renderApp();
+
+    expect(screen.getByText("Loading mood...")).toBeInTheDocument();
+    expect(screen.queryByTestId("chop-viewport")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pad-grid")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
+  });
+
+  it("hides Chop header controls in Mood and restores them in Chop", async () => {
+    addClip();
+    await renderApp();
+
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByText("BPM")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mood" }));
+
+    expect(screen.queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
+    expect(screen.queryByText("BPM")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chop" }));
+
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByText("BPM")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+    expect(screen.getByTestId("step-grid")).toBeInTheDocument();
   });
 });

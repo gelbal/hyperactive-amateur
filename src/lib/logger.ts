@@ -35,6 +35,8 @@ export const LOG_EVENTS = {
   RECORDING_INTERRUPTED: "recording.interrupted",
   VIDEO_DRAW_ERROR: "video.draw-error",
   AUTOSAVE_FLUSH: "autosave.flush",
+  MOOD_CLICK_BPM_REJECTED: "mood.click-bpm-rejected",
+  MOOD_TAKE_LIMIT_REJECTED: "mood.take-limit-rejected",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
 

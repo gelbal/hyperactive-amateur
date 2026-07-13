@@ -1,6 +1,6 @@
 // ABOUTME: Root React component for Hyperactive Amateur — header (title + controls), viewport, pads, grid.
 // ABOUTME: Owns global app effects: Tone.Transport bootstrap, rehydration, auto-save, keyboard hooks.
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { BpmDial } from "./components/BpmDial";
@@ -13,6 +13,7 @@ import { StorageDurabilityChip } from "./components/StorageDurabilityChip";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
+import { ModeSwitch } from "./components/ModeSwitch";
 import { selectClipCount, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
@@ -25,11 +26,15 @@ import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, getStorageDurability } from "./lib/install";
 
+const MoodMode = lazy(() => import("./components/mood/MoodMode"));
+
 export function App() {
   const [hydrating, setHydrating] = useState(true);
+  const appMode = useAppStore((s) => s.appMode);
   const clipCount = useAppStore(selectClipCount);
   const hasAnyClips = clipCount > 0;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
+  const isChopMode = appMode === "chop";
 
   useEffect(() => {
     initTransport();
@@ -125,17 +130,22 @@ export function App() {
           </div>
           <div className="flex flex-col items-start sm:items-end gap-3 w-full sm:w-auto">
             <div className="flex flex-wrap items-center gap-4">
-              <PlayButton />
-              <span className="text-[10px] text-zinc-500 -ml-2">space</span>
-              <BpmDial />
-              {hasAnyClips && (
+              <ModeSwitch />
+              {isChopMode && (
                 <>
-                  <span className="h-6 w-px bg-zinc-800" aria-hidden />
-                  <ExportButton />
+                  <PlayButton />
+                  <span className="text-[10px] text-zinc-500 -ml-2">space</span>
+                  <BpmDial />
+                  {hasAnyClips && (
+                    <>
+                      <span className="h-6 w-px bg-zinc-800" aria-hidden />
+                      <ExportButton />
+                    </>
+                  )}
                 </>
               )}
             </div>
-            {hasAnyClips && (
+            {isChopMode && hasAnyClips && (
               <div className="flex flex-wrap items-center gap-2">
                 <FeelDisclosure />
                 {hasAiUnlock && (
@@ -153,7 +163,7 @@ export function App() {
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
-        ) : (
+        ) : isChopMode ? (
           <>
             <RecoveryBanner />
             <StorageDurabilityChip />
@@ -167,9 +177,13 @@ export function App() {
               </p>
             )}
           </>
+        ) : (
+          <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
+            <MoodMode />
+          </Suspense>
         )}
       </main>
-      {hasAnyClips && <StepGrid />}
+      {isChopMode && hasAnyClips && <StepGrid />}
     </div>
   );
 }

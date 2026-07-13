@@ -30,6 +30,7 @@ function Harness({ withInput = false }: { withInput?: boolean }) {
 
 describe("useKeyboardTriggers", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     triggerTrackNow.mockReset();
     triggerTrackNow.mockResolvedValue(undefined);
     useAppStore.getState().actions.reset();
@@ -58,6 +59,15 @@ describe("useKeyboardTriggers", () => {
     render(<Harness />);
     useAppStore.getState().actions.setRecordingState("recording", 0);
     document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
+    expect(triggerTrackNow).not.toHaveBeenCalled();
+  });
+
+  it("does not fire Chop digit triggers while Mood is active", () => {
+    render(<Harness />);
+    useAppStore.getState().actions.setAppMode("mood");
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
+
     expect(triggerTrackNow).not.toHaveBeenCalled();
   });
 

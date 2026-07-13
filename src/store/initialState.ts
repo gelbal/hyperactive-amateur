@@ -1,6 +1,6 @@
 // ABOUTME: Factory for a fresh, empty AppState — 8 untouched tracks at 90 BPM.
 // ABOUTME: Pure function so callers can rely on independent objects between calls.
-import type { AppState, Track } from "../types";
+import type { AppMode, AppState, MoodPerformanceState, Track } from "../types";
 
 const TRACK_COUNT = 8;
 export const DEFAULT_STEP_COUNT = 16;
@@ -10,6 +10,7 @@ export const MAX_STEP_COUNT = 64;
 
 export const VIDEO_DEVICE_STORAGE_KEY = "hyperactive-amateur-video-device";
 export const AUDIO_DEVICE_STORAGE_KEY = "hyperactive-amateur-audio-device";
+export const APP_MODE_STORAGE_KEY = "ha:lastMode";
 
 function readStoredDeviceId(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -18,6 +19,16 @@ function readStoredDeviceId(key: string): string | null {
     return value && value.length > 0 ? value : null;
   } catch {
     return null;
+  }
+}
+
+function readStoredAppMode(): AppMode {
+  if (typeof window === "undefined") return "chop";
+  try {
+    const value = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
+    return value === "mood" || value === "chop" ? value : "chop";
+  } catch {
+    return "chop";
   }
 }
 
@@ -34,8 +45,21 @@ function createEmptyTrack(id: number, stepCount: number): Track {
   };
 }
 
+export function createIdleMoodPerformance(): MoodPerformanceState {
+  return {
+    isPerforming: false,
+    epoch: null,
+    selections: {},
+    armed: {},
+    dropActive: false,
+    hotMicId: null,
+    cycleCount: 0,
+  };
+}
+
 export function createInitialState(): AppState {
   return {
+    appMode: readStoredAppMode(),
     project: {
       bpm: 90,
       swing: 0,
@@ -48,6 +72,11 @@ export function createInitialState(): AppState {
       tracks: Array.from({ length: TRACK_COUNT }, (_, i) =>
         createEmptyTrack(i, DEFAULT_STEP_COUNT),
       ),
+    },
+    mood: {
+      piece: null,
+      hydration: "cold",
+      performance: createIdleMoodPerformance(),
     },
     playback: {
       isPlaying: false,
@@ -78,6 +107,7 @@ export function createInitialState(): AppState {
     },
     session: {
       projectRevision: 0,
+      moodRevision: 0,
       storageDurability: "unknown",
       manuallyToggledShowVideo: [],
       manuallyTagged: [],

@@ -39,15 +39,15 @@ function stepBy(value: number, delta: number): number {
   return STOPS[next];
 }
 
-export function BpmDial() {
-  const bpm = useAppStore((s) => s.project.bpm);
-  // Export freezes project mutations; the dial must look disabled and ignore
-  // input, not just rely on the store writer's no-op.
-  const isExporting = useAppStore((s) => s.playback.isExporting);
+type BpmDialControlProps = {
+  bpm: number;
+  onChange: (bpm: number) => void;
+  disabled?: boolean;
+};
+
+export function BpmDialControl({ bpm, onChange, disabled = false }: BpmDialControlProps) {
   const dragRef = useRef<{ startY: number; startBpm: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-
-  const setBpm = (next: number) => useAppStore.getState().actions.setBpm(next);
 
   const angleDeg = angleFor(bpm);
   const angleRad = (angleDeg * Math.PI) / 180;
@@ -77,14 +77,14 @@ export function BpmDial() {
         aria-valuemax={STOPS[STOPS.length - 1]}
         aria-valuenow={bpm}
         role="slider"
-        disabled={isExporting}
+        disabled={disabled}
         onWheel={(event) => {
-          if (isExporting) return;
+          if (disabled) return;
           event.preventDefault();
-          setBpm(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
+          onChange(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
         }}
         onPointerDown={(event) => {
-          if (isExporting) return;
+          if (disabled) return;
           event.preventDefault();
           (event.currentTarget as HTMLButtonElement).setPointerCapture(
             event.pointerId,
@@ -93,10 +93,10 @@ export function BpmDial() {
           setDragging(true);
         }}
         onPointerMove={(event) => {
-          if (isExporting || !dragRef.current) return;
+          if (disabled || !dragRef.current) return;
           const dy = dragRef.current.startY - event.clientY;
           const stepDelta = Math.round(dy / DRAG_PIXELS_PER_STOP);
-          setBpm(stepBy(dragRef.current.startBpm, stepDelta));
+          onChange(stepBy(dragRef.current.startBpm, stepDelta));
         }}
         onPointerUp={(event) => {
           (event.currentTarget as HTMLButtonElement).releasePointerCapture(
@@ -110,13 +110,13 @@ export function BpmDial() {
           setDragging(false);
         }}
         onKeyDown={(event) => {
-          if (isExporting) return;
+          if (disabled) return;
           if (event.key === "ArrowUp" || event.key === "ArrowRight") {
             event.preventDefault();
-            setBpm(stepBy(bpm, 1));
+            onChange(stepBy(bpm, 1));
           } else if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
             event.preventDefault();
-            setBpm(stepBy(bpm, -1));
+            onChange(stepBy(bpm, -1));
           }
         }}
         title="Drag, scroll, or use arrow keys to change BPM"
@@ -163,5 +163,20 @@ export function BpmDial() {
         <span className="text-[10px] uppercase tracking-wider text-zinc-500">BPM</span>
       </div>
     </div>
+  );
+}
+
+export function BpmDial() {
+  const bpm = useAppStore((s) => s.project.bpm);
+  // Export freezes project mutations; the dial must look disabled and ignore
+  // input, not just rely on the store writer's no-op.
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+
+  return (
+    <BpmDialControl
+      bpm={bpm}
+      disabled={isExporting}
+      onChange={(next) => useAppStore.getState().actions.setBpm(next)}
+    />
   );
 }
