@@ -1,16 +1,16 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
-// ABOUTME: Starts with a stage picker, placeholder stage, and Mood practice controls.
+// ABOUTME: Starts with a stage picker, render stage, and Mood practice controls.
 import { useEffect, useRef, useState } from "react";
 import { Play, Square } from "lucide-react";
 import { BpmDialControl } from "../BpmDial";
 import { getAudioContext } from "../../lib/audio";
 import { canStartAudibleAction } from "../../lib/audibleActionGate";
 import { runAudibleAction } from "../../lib/audibleActionRunner";
-import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
 import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
+import { MoodStage } from "./MoodStage";
 
 const STAGE_LABELS: Record<MoodStageId, string> = {
   corners: "Corners",
@@ -417,21 +417,9 @@ export function MoodMode() {
 
   if (!piece) return <StagePicker disabled={isExporting} />;
 
-  const stageName = STAGE_LABELS[piece.stage];
-  const micCount = piece.mics.length;
-  const descriptor = STAGE_DESCRIPTORS[piece.stage];
-
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
-      <div className="flex aspect-square w-full max-w-[28rem] flex-col items-center justify-center gap-2 rounded border border-zinc-800 bg-zinc-900 text-center shadow-inner">
-        <span className="text-2xl font-black text-zinc-100">{stageName} stage</span>
-        <span className="font-mono text-sm tabular-nums text-orange-500">
-          {micCount} mics
-        </span>
-        <span className="text-xs text-zinc-500">
-          {descriptor.canvasSize.w} x {descriptor.canvasSize.h}
-        </span>
-      </div>
+      <MoodStage piece={piece} />
       <MoodPieceControls piece={piece} scratchDisabled={isExporting || isPerforming} />
     </section>
   );

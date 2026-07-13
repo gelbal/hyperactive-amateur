@@ -29,6 +29,12 @@ const audioLifecycleMocks = vi.hoisted(() => ({
   ensureAudioRunning: vi.fn(),
 }));
 
+const moodVideoPoolMocks = vi.hoisted(() => ({
+  liveTakesFromSelections: vi.fn(() => []),
+  prepareUpcoming: vi.fn(),
+  syncPool: vi.fn(),
+}));
+
 vi.mock("tone", () => ({
   getDraw: vi.fn(() => toneMocks.draw),
   getTransport: vi.fn(() => toneMocks.transport),
@@ -37,6 +43,12 @@ vi.mock("tone", () => ({
 
 vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
+}));
+
+vi.mock("./moodVideoPool", () => ({
+  liveTakesFromSelections: moodVideoPoolMocks.liveTakesFromSelections,
+  prepareUpcoming: moodVideoPoolMocks.prepareUpcoming,
+  syncPool: moodVideoPoolMocks.syncPool,
 }));
 
 import {
@@ -114,6 +126,10 @@ describe("moodTransport", () => {
     toneMocks.transport.scheduleRepeat.mockClear();
     toneMocks.transport.position = 0;
     toneMocks.draw.schedule.mockClear();
+    moodVideoPoolMocks.liveTakesFromSelections.mockReset();
+    moodVideoPoolMocks.liveTakesFromSelections.mockReturnValue([]);
+    moodVideoPoolMocks.prepareUpcoming.mockReset();
+    moodVideoPoolMocks.syncPool.mockReset();
   });
 
   afterEach(() => {
@@ -213,6 +229,24 @@ describe("moodTransport", () => {
     expect(consumeDueCommits(99)).toEqual([]);
     expect(toneMocks.draw.schedule).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().mood.performance.cycleCount).toBe(1);
+  });
+
+  it("prepares armed take videos from the boundary path", async () => {
+    createMoodWithCycle(2);
+    toneMocks.now.mockReturnValueOnce(10);
+    await startMoodPerformance();
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
+
+    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    boundaryCallback?.(12);
+
+    expect(moodVideoPoolMocks.liveTakesFromSelections).toHaveBeenCalledWith(
+      useAppStore.getState().mood.piece,
+      expect.objectContaining({ "mic-0": "the-one" }),
+    );
+    expect(moodVideoPoolMocks.syncPool).toHaveBeenCalledTimes(1);
+    expect(moodVideoPoolMocks.prepareUpcoming).toHaveBeenCalledTimes(1);
+    expect(moodVideoPoolMocks.prepareUpcoming).toHaveBeenCalledWith("the-one", 12);
   });
 
   it("stop cancels the repeat, resets flags, and preserves the mix", async () => {
