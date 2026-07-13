@@ -5,6 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import { waitMs } from "./async";
 import { getAudioContext } from "./audio";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
+import { getActiveExportSession } from "./exportSession";
 import { nextCycleBoundary } from "./moodClock";
 import { startMoodPerformanceForExportFlow, stopMoodPerformance } from "./moodTransport";
 import { getActiveCanvas } from "./videoEngine";
@@ -70,11 +71,22 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
       // Starts the live performance and holds until the cycle boundary so
       // the recorder's first frame lands on the One.
       prepare: async () => {
+        // Pessimistic ownership: once the start is ATTEMPTED, the rejection
+        // cleanup owns whatever state results — an abort landing inside the
+        // start's own await gap must not leave a zombie performance.
+        performanceStartedByExport = true;
         const started = await startMoodPerformanceForExportFlow();
         if (!started) {
+          performanceStartedByExport = false;
           throw new Error("Could not start the performance for the export.");
         }
-        performanceStartedByExport = true;
+        // The export may have aborted while the start awaited its own
+        // internals; the registered session is the mutex — if it died, the
+        // abandoned start must be undone here, not left running.
+        if (getActiveExportSession() === null) {
+          stopMoodPerformance();
+          throw new Error("Export ended before the performance start settled.");
+        }
         const current = useAppStore.getState();
         const epoch = current.mood.performance.epoch;
         const cycleSeconds = current.mood.piece?.cycleSeconds ?? null;

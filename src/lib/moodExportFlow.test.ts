@@ -53,6 +53,10 @@ vi.mock("tone", () => ({
 }));
 
 import { MOOD_EXPORT_MAX_MS, type ExportOptions } from "./export";
+import {
+  __resetExportSessionForTesting,
+  registerExportSession,
+} from "./exportSession";
 import { startMoodExport } from "./moodExportFlow";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodTake } from "../types";
@@ -90,8 +94,12 @@ function flushMicrotasks(): Promise<void> {
 }
 
 describe("moodExportFlow", () => {
+  let unregisterSession: (() => void) | null = null;
+
   beforeEach(() => {
     useAppStore.getState().actions.reset();
+    __resetExportSessionForTesting();
+    unregisterSession = registerExportSession({ abort: () => undefined });
     exportMocks.exportSong.mockReset();
     exportMocks.exportSong.mockResolvedValue(new Blob([new Uint8Array([1])]));
     videoEngineMocks.getActiveCanvas.mockReturnValue(makeCanvas());
@@ -106,6 +114,8 @@ describe("moodExportFlow", () => {
   });
 
   afterEach(() => {
+    unregisterSession?.();
+    __resetExportSessionForTesting();
     useAppStore.getState().actions.reset();
   });
 
@@ -222,6 +232,34 @@ describe("moodExportFlow", () => {
 
     await expect(handle.result).rejects.toThrow(/another export/i);
     expect(moodTransportMocks.stopMoodPerformance).not.toHaveBeenCalled();
+  });
+
+  it("stops the performance when the export dies during the start await", async () => {
+    createPieceWithCycle();
+    let resolveStart!: (started: boolean) => void;
+    moodTransportMocks.startMoodPerformanceForExportFlow.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    startMoodExport({ mimeType: "video/webm" });
+    const options = exportMocks.exportSong.mock.calls[0][2] as ExportOptions;
+
+    const prepare = Promise.resolve(options.drive?.prepare?.());
+    const rejection = expect(prepare).rejects.toThrow(/export ended/i);
+    await flushMicrotasks();
+
+    // The abort lands while the start is still awaiting its own internals:
+    // the session dies, then the abandoned start resolves. The prepare must
+    // stop the zombie performance instead of letting it run on.
+    unregisterSession?.();
+    unregisterSession = null;
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    resolveStart(true);
+
+    await rejection;
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
 
   it("exposes recordingStarted resolving when prepare completes", async () => {

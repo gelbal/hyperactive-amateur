@@ -160,6 +160,83 @@ describe("MoodMode", () => {
     expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
   });
 
+  it("returns abandoned hydration to cold so re-entry can restart it", async () => {
+    const load = deferred<moodRehydrate.MoodRehydrateResult>();
+    vi.spyOn(moodRehydrate, "rehydrateMoodFromStorage").mockReturnValue(load.promise);
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    const { unmount } = render(<MoodMode />);
+    expect(useAppStore.getState().mood.hydration).toBe("hydrating");
+
+    // Mode switch mid-hydrate: the continuation must not strand the store
+    // at "hydrating" (re-entry only starts from "cold").
+    unmount();
+    await act(async () => {
+      load.resolve({
+        status: "empty",
+        ok: false,
+        degraded: false,
+        piece: null,
+        warnings: [],
+      });
+      await load.promise;
+    });
+
+    expect(useAppStore.getState().mood.hydration).toBe("cold");
+  });
+
+  it("revokes regenerated poster URLs that fail to attach", async () => {
+    const posterBlob = new Blob([new Uint8Array([7])], { type: "image/jpeg" });
+    const poster = deferred<Blob | null>();
+    const load = deferred<moodRehydrate.MoodRehydrateResult>();
+    vi.spyOn(moodRehydrate, "rehydrateMoodFromStorage").mockReturnValue(load.promise);
+    const piece = createEmptyMoodPiece("corners", "pocket");
+    const decodedPiece = {
+      ...piece,
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [makeTake({ id: "regen-take" })] } : mic,
+      ),
+    };
+    vi.spyOn(moodRehydrate, "decodeMoodTakes").mockResolvedValue({
+      ok: true,
+      degraded: false,
+      piece: decodedPiece,
+      warnings: [],
+      posterJobs: [
+        { micId: "mic-0", takeId: "regen-take", posterPromise: poster.promise },
+      ],
+    });
+    const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/regen");
+    const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    render(<MoodMode />);
+    await act(async () => {
+      load.resolve({
+        status: "loaded",
+        ok: true,
+        degraded: false,
+        piece: decodedPiece,
+        warnings: [],
+      });
+      await load.promise;
+    });
+    await waitFor(() => expect(useAppStore.getState().mood.hydration).toBe("ready"));
+
+    // The piece is scratched before the poster regenerates: the attach
+    // no-ops, so the freshly minted URL must be revoked, not leaked.
+    act(() => {
+      useAppStore.getState().actions.scratchMoodPiece();
+    });
+    await act(async () => {
+      poster.resolve(posterBlob);
+      await poster.promise;
+    });
+
+    expect(createUrl).toHaveBeenCalledWith(posterBlob);
+    expect(revokeUrl).toHaveBeenCalledWith("blob:test/regen");
+  });
+
   it("restores a saved Mood piece from storage on first entry", async () => {
     const piece = createEmptyMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
     const take = makeTake({ id: "saved-take" });

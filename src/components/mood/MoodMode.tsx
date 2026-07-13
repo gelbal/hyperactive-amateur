@@ -486,7 +486,24 @@ function queueMoodPosterJobs(jobs: moodRehydrate.MoodPosterRegenerationJob[] = [
       useAppStore
         .getState()
         .actions.attachMoodTakePoster(job.micId, job.takeId, posterBlob, posterUrl);
+      // The attach no-ops when exporting or when the take/piece is gone
+      // (scratch, delete) — a URL that did not land must be revoked.
+      const attached = useAppStore
+        .getState()
+        .mood.piece?.mics.find((mic) => mic.id === job.micId)
+        ?.takes.find((take) => take.id === job.takeId)?.posterUrl;
+      if (attached !== posterUrl) URL.revokeObjectURL(posterUrl);
     });
+  }
+}
+
+// A hydrate abandoned by unmount (mode switch mid-load) must return the
+// store to "cold" — re-entry only restarts hydration from there. Guarded so
+// a newer mount's completed hydration is never clobbered.
+function abandonPendingHydration(): void {
+  const state = useAppStore.getState();
+  if (state.mood.hydration === "hydrating") {
+    state.actions.setMoodHydration("cold");
   }
 }
 
@@ -529,10 +546,10 @@ export function MoodMode() {
     void moodRehydrate
       .rehydrateMoodFromStorage()
       .then(async (loaded) => {
-        if (unmountedRef.current) return;
+        if (unmountedRef.current) return abandonPendingHydration();
         if (loaded.ok && loaded.piece) {
           const decoded = await moodRehydrate.decodeMoodTakes(loaded.piece, getAudioContext());
-          if (unmountedRef.current) return;
+          if (unmountedRef.current) return abandonPendingHydration();
           const result = mergeMoodHydrateResults(loaded, decoded);
           useAppStore.getState().actions.hydrateMoodPiece(result);
           queueMoodPosterJobs(result.posterJobs);
@@ -546,7 +563,7 @@ export function MoodMode() {
         });
       })
       .catch(() => {
-        if (unmountedRef.current) return;
+        if (unmountedRef.current) return abandonPendingHydration();
         useAppStore.getState().actions.hydrateMoodPiece({
           ok: false,
           degraded: true,
