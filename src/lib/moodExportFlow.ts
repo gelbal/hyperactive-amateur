@@ -6,7 +6,7 @@ import { waitMs } from "./async";
 import { getAudioContext } from "./audio";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
 import { nextCycleBoundary } from "./moodClock";
-import { startMoodPerformanceForExportFlow } from "./moodTransport";
+import { startMoodPerformanceForExportFlow, stopMoodPerformance } from "./moodTransport";
 import { getActiveCanvas } from "./videoEngine";
 
 export interface MoodExportOptions {
@@ -19,6 +19,10 @@ export interface MoodExportHandle {
   // Ends the render (a SUCCESS — the take is done); the performance keeps
   // running. Resolve-only: exportSong's stop signal must never reject.
   finish: () => void;
+  // Resolves when the boundary count-in ends and the recorder is about to
+  // roll — the UI must not offer finish before this (an early finish would
+  // stop a recorder that captured nothing).
+  recordingStarted: Promise<void>;
 }
 
 // No abort signal on purpose: exportSong races prepare against its own
@@ -49,6 +53,10 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
   const stopSignal = new Promise<void>((resolve) => {
     finish = resolve;
   });
+  let markRecordingStarted: () => void = () => undefined;
+  const recordingStarted = new Promise<void>((resolve) => {
+    markRecordingStarted = resolve;
+  });
 
   const result = exportSong(canvas, getAudioContext(), {
     stopSignal,
@@ -56,8 +64,8 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     mimeType: options.mimeType,
     onProgress: options.onProgress,
     drive: {
-      // Starts the live performance and holds until the next cycle boundary
-      // so the recorder's first frame lands on the One.
+      // Starts the live performance and holds until the cycle boundary so
+      // the recorder's first frame lands on the One.
       prepare: async () => {
         const started = await startMoodPerformanceForExportFlow();
         if (!started) {
@@ -69,17 +77,31 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
         if (epoch === null || cycleSeconds === null) {
           throw new Error("Export needs a running cycle.");
         }
-        await waitUntilAudioTime(
-          nextCycleBoundary(epoch, cycleSeconds, Tone.now()),
-          getAudioContext(),
-        );
+        const audioContext = getAudioContext();
+        // The epoch was captured from the lookahead clock, so Tone.now() is
+        // already past it here while the audible clock still trails: the
+        // epoch itself is the One's first boundary. nextCycleBoundary would
+        // skip it and stall the recorder a full extra cycle.
+        const boundaryTime =
+          audioContext.currentTime <= epoch
+            ? epoch
+            : nextCycleBoundary(epoch, cycleSeconds, Tone.now());
+        await waitUntilAudioTime(boundaryTime, audioContext);
+        markRecordingStarted();
       },
       start: () => undefined,
       // The performance keeps running when the render ends — the render just
       // stopped watching. Must never throw (runs inside exportSong's finally).
       cleanup: () => undefined,
     },
+  }).catch((err: unknown) => {
+    // A FAILED render (abort, interruption) stops the performance the
+    // export started — otherwise the UI shows a live performance over a
+    // transport the interruption handlers already stopped. A finished or
+    // capped render is a success and keeps performing.
+    stopMoodPerformance();
+    throw err;
   });
 
-  return { result, finish };
+  return { result, finish, recordingStarted };
 }

@@ -20,6 +20,7 @@ const videoEngineMocks = vi.hoisted(() => ({
 
 const moodTransportMocks = vi.hoisted(() => ({
   startMoodPerformanceForExportFlow: vi.fn(),
+  stopMoodPerformance: vi.fn(),
 }));
 
 const toneMocks = vi.hoisted(() => ({
@@ -44,6 +45,7 @@ vi.mock("./videoEngine", () => ({
 
 vi.mock("./moodTransport", () => ({
   startMoodPerformanceForExportFlow: moodTransportMocks.startMoodPerformanceForExportFlow,
+  stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
 vi.mock("tone", () => ({
@@ -96,6 +98,7 @@ describe("moodExportFlow", () => {
     audioMocks.audioContext.currentTime = 0;
     toneMocks.now.mockReturnValue(0);
     moodTransportMocks.startMoodPerformanceForExportFlow.mockReset();
+    moodTransportMocks.stopMoodPerformance.mockReset();
     moodTransportMocks.startMoodPerformanceForExportFlow.mockImplementation(async () => {
       useAppStore.getState().actions.setMoodPerforming(true, 10);
       return true;
@@ -164,6 +167,58 @@ describe("moodExportFlow", () => {
     audioMocks.audioContext.currentTime = 12;
     await prepare;
     expect(prepared).toBe(true);
+  });
+
+  it("prepare waits only to the audible epoch on a fresh start", async () => {
+    createPieceWithCycle();
+    startMoodExport({ mimeType: "video/webm" });
+    const options = exportMocks.exportSong.mock.calls[0][2] as ExportOptions;
+
+    // Fresh start: epoch was captured from the lookahead clock, so by
+    // prepare time Tone.now() is STRICTLY past it while the audible clock
+    // still trails. The recorder must start at the audible epoch — not a
+    // full cycle later.
+    toneMocks.now.mockReturnValue(10.05);
+    audioMocks.audioContext.currentTime = 9.9;
+    let prepared = false;
+    const prepare = Promise.resolve(options.drive?.prepare?.()).then(() => {
+      prepared = true;
+    });
+    await flushMicrotasks();
+    expect(prepared).toBe(false);
+
+    audioMocks.audioContext.currentTime = 10;
+    await prepare;
+    expect(prepared).toBe(true);
+  });
+
+  it("stops the performance when the export rejects", async () => {
+    createPieceWithCycle();
+    exportMocks.exportSong.mockRejectedValue(new Error("page hidden"));
+
+    const handle = startMoodExport({ mimeType: "video/webm" });
+
+    await expect(handle.result).rejects.toThrow(/page hidden/);
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes recordingStarted resolving when prepare completes", async () => {
+    createPieceWithCycle();
+    const handle = startMoodExport({ mimeType: "video/webm" });
+    const options = exportMocks.exportSong.mock.calls[0][2] as ExportOptions;
+
+    let started = false;
+    void handle.recordingStarted.then(() => {
+      started = true;
+    });
+    await flushMicrotasks();
+    expect(started).toBe(false);
+
+    toneMocks.now.mockReturnValue(10.05);
+    audioMocks.audioContext.currentTime = 10;
+    await Promise.resolve(options.drive?.prepare?.());
+    await flushMicrotasks();
+    expect(started).toBe(true);
   });
 
   it("prepare rejects when the performance cannot start", async () => {

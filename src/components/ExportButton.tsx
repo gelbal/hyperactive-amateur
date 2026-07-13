@@ -72,6 +72,7 @@ export function ExportButton() {
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [review, setReview] = useState<ExportReview | null>(null);
   const [capped, setCapped] = useState(false);
+  const [moodCountingIn, setMoodCountingIn] = useState(false);
   const [sharePending, setSharePending] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reviewObjectUrlRef = useRef<string | null>(null);
@@ -186,12 +187,16 @@ export function ExportButton() {
       dismissReview();
       setError(null);
       setProgress(0);
+      setMoodCountingIn(true);
       try {
         const handle = startMoodExport({
           mimeType: chosen.mimeType,
           onProgress: (p) => setProgress(p),
         });
         moodFinishRef.current = handle.finish;
+        void handle.recordingStarted.then(() => {
+          if (mountedRef.current) setMoodCountingIn(false);
+        });
         const blob = await handle.result;
         setCapped(blob.capped === true);
         setCurrentReview({
@@ -207,6 +212,7 @@ export function ExportButton() {
       } finally {
         moodFinishRef.current = null;
         setProgress(null);
+        setMoodCountingIn(false);
       }
       return;
     }
@@ -352,9 +358,11 @@ export function ExportButton() {
                 />
               </div>
               <span className="text-xs text-zinc-400">
-                Rendering… {Math.round(progress * 100)}%
+                {isMood && moodCountingIn
+                  ? "Counting in — the render starts on the One…"
+                  : `Rendering… ${Math.round(progress * 100)}%`}
               </span>
-              {isMood && (
+              {isMood && !moodCountingIn && (
                 <button
                   type="button"
                   onClick={() => moodFinishRef.current?.()}

@@ -582,8 +582,9 @@ describe("ExportButton in Mood", () => {
     expect(screen.queryByRole("slider", { name: "bars" })).not.toBeInTheDocument();
   });
 
-  it("renders through the mood flow with a finish control and mood- filename", async () => {
+  it("renders through the mood flow with a count-in, finish control, and mood- filename", async () => {
     let resolveResult!: (blob: Blob & { capped?: boolean }) => void;
+    let startRecording!: () => void;
     const finish = vi.fn();
     moodExportMocks.startMoodExport.mockImplementation(
       ({ onProgress }: { onProgress?: (f: number) => void }) => {
@@ -593,6 +594,9 @@ describe("ExportButton in Mood", () => {
             resolveResult = resolve;
           }),
           finish,
+          recordingStarted: new Promise<void>((resolve) => {
+            startRecording = resolve;
+          }),
         };
       },
     );
@@ -603,7 +607,16 @@ describe("ExportButton in Mood", () => {
     expect(moodExportMocks.startMoodExport).toHaveBeenCalledTimes(1);
     expect(vi.mocked(exportSong)).not.toHaveBeenCalled();
 
+    // The boundary count-in: no finish control until the recorder rolls —
+    // an early finish would stop a recorder that captured nothing.
+    expect(await screen.findByText(/counting in/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^finish$/i })).not.toBeInTheDocument();
+
+    await act(async () => {
+      startRecording();
+    });
     const finishButton = await screen.findByRole("button", { name: /^finish$/i });
+    expect(screen.queryByText(/counting in/i)).not.toBeInTheDocument();
     fireEvent.click(finishButton);
     expect(finish).toHaveBeenCalledTimes(1);
 
@@ -622,6 +635,7 @@ describe("ExportButton in Mood", () => {
     moodExportMocks.startMoodExport.mockReturnValue({
       result: Promise.resolve(cappedBlob),
       finish: vi.fn(),
+      recordingStarted: Promise.resolve(),
     });
     render(<ExportButton />);
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));

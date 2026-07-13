@@ -49,6 +49,7 @@ import {
   downloadBlob,
   exportSong,
   MOOD_EXPORT_MAX_MS,
+  type ExportOptions,
 } from "./export";
 import {
   abortActiveExport,
@@ -389,6 +390,51 @@ describe("exportSong", () => {
 
     await rejection;
     expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("never strands export state when a drive cleanup throws", async () => {
+    vi.useFakeTimers();
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+      drive: {
+        cleanup: () => {
+          throw new Error("cleanup exploded");
+        },
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    stopTake();
+    const blob = await promise;
+
+    expect(blob.size).toBeGreaterThan(0);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+  });
+
+  it("treats an explicit undefined stopSignal as duration mode", async () => {
+    vi.useFakeTimers();
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 240,
+      mimeType: "video/webm",
+      stopSignal: undefined,
+    } as ExportOptions);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    const blob = await promise;
+    expect(blob.capped).toBe(false);
     expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
 

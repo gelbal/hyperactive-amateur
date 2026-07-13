@@ -105,7 +105,12 @@ export function getExportDurationMs(bars: number, bpm: number): number {
 }
 
 function isStopSignalExport(options: ExportOptions): options is StopSignalExportOptions {
-  return "stopSignal" in options;
+  // Value check, not key check: a JS caller passing an explicit undefined
+  // stopSignal alongside bars/bpm must stay in duration mode.
+  return (
+    "stopSignal" in options &&
+    typeof (options as StopSignalExportOptions).stopSignal?.then === "function"
+  );
 }
 
 function isDurationMsExport(options: ExportOptions): options is DurationMsExportOptions {
@@ -304,7 +309,12 @@ export async function exportSong(
           // Recorder may already be inactive or in the middle of stopping.
         }
       }
-      await drive.cleanup();
+      try {
+        await drive.cleanup();
+      } catch {
+        // A throwing caller hook must never strand the export mutex or the
+        // audio tap below; the render's own result already settled.
+      }
       useAppStore.getState().actions.setIsExporting(false);
       exportStream?.cleanup();
     }

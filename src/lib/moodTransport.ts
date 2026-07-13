@@ -5,6 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodSelectionCommit } from "../types";
 import { claimPendingAudible, canStartAudibleAction } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
+import { getActiveExportSession } from "./exportSession";
 import { stopAllMoodPlayers } from "./moodPlayers";
 import {
   createBoundaryQueue,
@@ -120,13 +121,14 @@ export async function startMoodPerformanceForRecordingFlow(): Promise<boolean> {
 }
 
 // The export flow starts the performance INSIDE its own export session:
-// isExporting is already true (registering the session is the mutex), so
-// requiring it here keeps this entry unusable outside an active export.
+// a REGISTERED session (not just the isExporting flag) is the mutex, so
+// this entry stays unusable outside an actual export render.
 export async function startMoodPerformanceForExportFlow(): Promise<boolean> {
   const state = useAppStore.getState();
   if (
     !hasStartableMoodCycle() ||
     !state.playback.isExporting ||
+    getActiveExportSession() === null ||
     state.playback.isPlaying ||
     state.recording.state !== "idle"
   ) {
