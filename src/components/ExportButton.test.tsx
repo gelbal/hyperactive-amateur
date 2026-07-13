@@ -15,6 +15,14 @@ const exportMocks = vi.hoisted(() => ({
   exportSong: vi.fn(),
 }));
 
+const moodExportMocks = vi.hoisted(() => ({
+  startMoodExport: vi.fn(),
+}));
+
+vi.mock("../lib/moodExportFlow", () => ({
+  startMoodExport: moodExportMocks.startMoodExport,
+}));
+
 vi.mock("tone", () => ({
   start: vi.fn().mockResolvedValue(undefined),
   getTransport: vi.fn(() => ({
@@ -535,5 +543,103 @@ describe("ExportButton format picker", () => {
 
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/unmount");
+  });
+});
+
+describe("ExportButton in Mood", () => {
+  let originalRecorder: typeof MediaRecorder | undefined;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useAppStore.getState().actions.reset();
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    stubNavigatorShare({ canShare: false });
+    setActiveCanvas(document.createElement("canvas"));
+    vi.mocked(exportSong).mockReset();
+    moodExportMocks.startMoodExport.mockReset();
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+    });
+  });
+
+  afterEach(() => {
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+    setActiveCanvas(null);
+    clearNavigatorShare();
+    act(() => {
+      useAppStore.getState().actions.setAppMode("chop");
+    });
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("explains the one-take contract and hides the bars slider", () => {
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+
+    expect(screen.getByText(/live performance/i)).toBeInTheDocument();
+    expect(screen.getByText(/up to 3:00/i)).toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "bars" })).not.toBeInTheDocument();
+  });
+
+  it("renders through the mood flow with a finish control and mood- filename", async () => {
+    let resolveResult!: (blob: Blob & { capped?: boolean }) => void;
+    const finish = vi.fn();
+    moodExportMocks.startMoodExport.mockImplementation(
+      ({ onProgress }: { onProgress?: (f: number) => void }) => {
+        onProgress?.(0.25);
+        return {
+          result: new Promise<Blob>((resolve) => {
+            resolveResult = resolve;
+          }),
+          finish,
+        };
+      },
+    );
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    expect(moodExportMocks.startMoodExport).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(exportSong)).not.toHaveBeenCalled();
+
+    const finishButton = await screen.findByRole("button", { name: /^finish$/i });
+    fireEvent.click(finishButton);
+    expect(finish).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveResult(new Blob(["movie"], { type: "video/webm" }));
+    });
+    await screen.findByText(/^mood-hyperactive-amateur-\d{8}-\d{4}\.webm$/);
+    expect(screen.queryByText(/capped at 3:00/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the capped notice when the render hits the ceiling", async () => {
+    const cappedBlob = new Blob(["movie"], { type: "video/webm" }) as Blob & {
+      capped?: boolean;
+    };
+    Object.defineProperty(cappedBlob, "capped", { value: true, enumerable: true });
+    moodExportMocks.startMoodExport.mockReturnValue({
+      result: Promise.resolve(cappedBlob),
+      finish: vi.fn(),
+    });
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    await screen.findByText(/^mood-hyperactive-amateur-\d{8}-\d{4}\.webm$/);
+    expect(screen.getByText(/capped at 3:00/i)).toBeInTheDocument();
+  });
+
+  it("surfaces mood flow errors in the popover", async () => {
+    moodExportMocks.startMoodExport.mockImplementation(() => {
+      throw new Error("Record the One before exporting.");
+    });
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    expect(await screen.findByText(/record the One/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^finish$/i })).not.toBeInTheDocument();
   });
 });

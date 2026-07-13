@@ -119,6 +119,22 @@ export async function startMoodPerformanceForRecordingFlow(): Promise<boolean> {
   return startMoodPerformanceTransport();
 }
 
+// The export flow starts the performance INSIDE its own export session:
+// isExporting is already true (registering the session is the mutex), so
+// requiring it here keeps this entry unusable outside an active export.
+export async function startMoodPerformanceForExportFlow(): Promise<boolean> {
+  const state = useAppStore.getState();
+  if (
+    !hasStartableMoodCycle() ||
+    !state.playback.isExporting ||
+    state.playback.isPlaying ||
+    state.recording.state !== "idle"
+  ) {
+    return false;
+  }
+  return startMoodPerformanceTransport();
+}
+
 export function stopMoodPerformance(): void {
   clearScheduledBoundaryRepeat();
   resetBoundaryState();

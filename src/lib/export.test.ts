@@ -194,6 +194,12 @@ describe("exportSong", () => {
     );
   });
 
+  it("defaultExportFilename: mood exports get the mood- prefix", () => {
+    expect(defaultExportFilename("webm", "mood-")).toMatch(
+      /^mood-hyperactive-amateur-\d{4}\d{2}\d{2}-\d{2}\d{2}\.webm$/,
+    );
+  });
+
   it("exports the Mood stop-signal cap as three minutes", () => {
     expect(MOOD_EXPORT_MAX_MS).toBe(180_000);
   });
