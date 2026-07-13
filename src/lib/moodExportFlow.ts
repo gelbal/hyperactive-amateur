@@ -57,6 +57,9 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
   const recordingStarted = new Promise<void>((resolve) => {
     markRecordingStarted = resolve;
   });
+  // Ownership: the rejection cleanup may only stop a performance THIS
+  // export started — a pre-session refusal must not stop someone else's run.
+  let performanceStartedByExport = false;
 
   const result = exportSong(canvas, getAudioContext(), {
     stopSignal,
@@ -71,6 +74,7 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
         if (!started) {
           throw new Error("Could not start the performance for the export.");
         }
+        performanceStartedByExport = true;
         const current = useAppStore.getState();
         const epoch = current.mood.performance.epoch;
         const cycleSeconds = current.mood.piece?.cycleSeconds ?? null;
@@ -99,7 +103,7 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     // export started — otherwise the UI shows a live performance over a
     // transport the interruption handlers already stopped. A finished or
     // capped render is a success and keeps performing.
-    stopMoodPerformance();
+    if (performanceStartedByExport) stopMoodPerformance();
     throw err;
   });
 

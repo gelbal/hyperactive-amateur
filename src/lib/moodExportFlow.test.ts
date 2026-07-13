@@ -192,14 +192,36 @@ describe("moodExportFlow", () => {
     expect(prepared).toBe(true);
   });
 
-  it("stops the performance when the export rejects", async () => {
+  it("stops the performance when the export rejects after starting it", async () => {
     createPieceWithCycle();
-    exportMocks.exportSong.mockRejectedValue(new Error("page hidden"));
+    audioMocks.audioContext.currentTime = 10.1;
+    toneMocks.now.mockReturnValue(10.1);
+    exportMocks.exportSong.mockImplementation(async (_canvas, _ctx, options) => {
+      // Mirror exportSong: prepare runs (starting the performance), then
+      // the render aborts mid-flight.
+      audioMocks.audioContext.currentTime = 12;
+      await (options as ExportOptions).drive?.prepare?.();
+      throw new Error("page hidden");
+    });
 
     const handle = startMoodExport({ mimeType: "video/webm" });
 
     await expect(handle.result).rejects.toThrow(/page hidden/);
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not stop a performance it never started when the export is refused", async () => {
+    createPieceWithCycle();
+    // Rejection at exportSong's pre-session gate: prepare never ran, so the
+    // refusing state (someone else's run) must not be stopped.
+    exportMocks.exportSong.mockRejectedValue(
+      new Error("Cannot export while recording or another export is active."),
+    );
+
+    const handle = startMoodExport({ mimeType: "video/webm" });
+
+    await expect(handle.result).rejects.toThrow(/another export/i);
+    expect(moodTransportMocks.stopMoodPerformance).not.toHaveBeenCalled();
   });
 
   it("exposes recordingStarted resolving when prepare completes", async () => {

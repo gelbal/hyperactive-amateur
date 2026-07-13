@@ -645,6 +645,43 @@ describe("ExportButton in Mood", () => {
     expect(screen.getByText(/capped at 3:00/i)).toBeInTheDocument();
   });
 
+  it("ignores a stale count-in signal from a previous aborted render", async () => {
+    let rejectFirst!: (err: Error) => void;
+    let resolveFirstStarted!: () => void;
+    moodExportMocks.startMoodExport.mockImplementationOnce(() => ({
+      result: new Promise<Blob>((_, reject) => {
+        rejectFirst = reject;
+      }),
+      finish: vi.fn(),
+      recordingStarted: new Promise<void>((resolve) => {
+        resolveFirstStarted = resolve;
+      }),
+    }));
+    moodExportMocks.startMoodExport.mockImplementationOnce(() => ({
+      result: new Promise<Blob>(() => undefined),
+      finish: vi.fn(),
+      recordingStarted: new Promise<void>(() => undefined),
+    }));
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    await act(async () => {
+      rejectFirst(new Error("page hidden"));
+    });
+    expect(await screen.findByText(/page hidden/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    expect(await screen.findByText(/counting in/i)).toBeInTheDocument();
+
+    // The first render's abandoned prepare completes late — it must not
+    // reveal the second render's finish control mid-count-in.
+    await act(async () => {
+      resolveFirstStarted();
+    });
+    expect(screen.getByText(/counting in/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^finish$/i })).not.toBeInTheDocument();
+  });
+
   it("surfaces mood flow errors in the popover", async () => {
     moodExportMocks.startMoodExport.mockImplementation(() => {
       throw new Error("Record the One before exporting.");

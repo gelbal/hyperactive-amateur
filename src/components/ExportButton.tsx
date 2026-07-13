@@ -78,6 +78,7 @@ export function ExportButton() {
   const reviewObjectUrlRef = useRef<string | null>(null);
   const reviewRef = useRef<ExportReview | null>(null);
   const moodFinishRef = useRef<(() => void) | null>(null);
+  const moodHandleRef = useRef<object | null>(null);
   const mountedRef = useRef(true);
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
@@ -194,8 +195,13 @@ export function ExportButton() {
           onProgress: (p) => setProgress(p),
         });
         moodFinishRef.current = handle.finish;
+        moodHandleRef.current = handle;
         void handle.recordingStarted.then(() => {
-          if (mountedRef.current) setMoodCountingIn(false);
+          // An aborted render's abandoned count-in can resolve late — only
+          // the CURRENT handle may reveal the finish control.
+          if (mountedRef.current && moodHandleRef.current === handle) {
+            setMoodCountingIn(false);
+          }
         });
         const blob = await handle.result;
         setCapped(blob.capped === true);
@@ -211,6 +217,7 @@ export function ExportButton() {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         moodFinishRef.current = null;
+        moodHandleRef.current = null;
         setProgress(null);
         setMoodCountingIn(false);
       }
