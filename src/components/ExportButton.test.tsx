@@ -590,6 +590,21 @@ describe("ExportButton in Mood", () => {
     expect(screen.queryByRole("slider", { name: "bars" })).not.toBeInTheDocument();
   });
 
+  it("uses the fixed-inset mobile clamp for the Mood export popover", () => {
+    render(<ExportButton />);
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+
+    expect(screen.getByRole("dialog", { name: "Export song" })).toHaveClass(
+      "fixed",
+      "inset-x-3",
+      "w-auto",
+      "max-w-[24rem]",
+      "sm:absolute",
+      "sm:right-0",
+      "sm:top-full",
+    );
+  });
+
   it("renders through the mood flow with a count-in, finish control, and mood- filename", async () => {
     let resolveResult!: (blob: Blob & { capped?: boolean }) => void;
     let startRecording!: () => void;

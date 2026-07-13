@@ -106,9 +106,23 @@ describe("StackSheet", () => {
     );
 
     const takeRow = screen.getByRole("button", { name: /^Take 1 1\.5s$/i });
-    expect(takeRow).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
+    expect(takeRow).toHaveClass(
+      "min-h-11",
+      "pointer-coarse:min-h-12",
+      "focus-visible:ring-2",
+      "focus-visible:ring-orange-500",
+    );
     expect(screen.getByRole("button", { name: /Take 2 2\.0s Lead/i })).toBeInTheDocument();
     expect(screen.queryByText("No part yet")).not.toBeInTheDocument();
+    for (const part of ["lead", "harmony", "bass", "beatbox", "adlib", "none"]) {
+      expect(screen.getByRole("button", { name: `part ${part} for take 1` })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+    expect(screen.getByRole("button", { name: "Remove take 1" })).toHaveClass(
+      "pointer-coarse:h-11",
+      "pointer-coarse:w-11",
+    );
     expect(screen.getByRole("button", { name: /^Off/i })).toHaveClass(
       "min-h-11",
       "pointer-coarse:min-h-12",
@@ -323,5 +337,19 @@ describe("StackSheet", () => {
     expect(screen.queryByRole("button", { name: "Confirm remove take 1" })).not.toBeInTheDocument();
     expect(deleteMoodTake).not.toHaveBeenCalled();
     deleteMoodTake.mockRestore();
+  });
+
+  it("resets inline delete confirmation after the sheet closes", () => {
+    const mic = setupMood();
+    const { rerender } = render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove take 1" }));
+    expect(screen.getByRole("button", { name: "Confirm remove take 1" })).toBeInTheDocument();
+
+    rerender(<StackSheet mic={mic} micNumber={1} open={false} onClose={vi.fn()} />);
+    rerender(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Confirm remove take 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove take 1" })).toBeInTheDocument();
   });
 });

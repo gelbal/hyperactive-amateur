@@ -368,7 +368,7 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
             title={title}
             onClick={() => armLens(option.id)}
             className={
-              "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold pointer-coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
               (selected
                 ? "bg-orange-500 text-zinc-950"
                 : armed
@@ -423,7 +423,7 @@ function MoodVibeControl({ vibe }: { vibe: MoodVibeId }) {
             title={title}
             onClick={() => setMoodVibe(option.id)}
             className={
-              "inline-flex h-9 items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              "inline-flex h-9 items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold pointer-coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
               (selected
                 ? "bg-zinc-900 text-zinc-100 ring-2 ring-orange-500"
                 : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
@@ -564,6 +564,9 @@ export function MoodMode() {
 
   if (!piece) return <StagePicker disabled={isExporting} />;
 
+  // Focus order after the app mode switcher follows JSX order: stage invitation
+  // controls when present, mic chips, the open StackSheet rows for that mic,
+  // Lens, Vibe, Drop, Play/Stop, then Scratch controls.
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
       <MoodStage piece={piece} />

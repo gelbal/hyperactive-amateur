@@ -27,6 +27,20 @@ function stateLabel(state: MicChipState): string {
   return state;
 }
 
+function stateDescription(
+  state: MicChipState,
+  mic: MoodMic,
+  liveEntry: MoodSelectionEntry,
+  armedEntry: MoodSelectionEntry | null,
+): string {
+  const entry = state === "armed" ? armedEntry : state === "live" ? liveEntry : null;
+  if (entry && entry !== "off") {
+    const takeIndex = mic.takes.findIndex((take) => take.id === entry);
+    if (takeIndex >= 0) return `${stateLabel(state)}: take ${takeIndex + 1}`;
+  }
+  return stateLabel(state);
+}
+
 function visualLabel(state: MicChipState): string {
   if (state === "hot") return "REC";
   return state.toUpperCase();
@@ -127,6 +141,7 @@ export function MicStrip({ piece }: MicStripProps) {
               : "off";
         const open = openMicId === mic.id;
         const hotActionLabel = recordingState === "recording" ? "Stop take" : "Cancel take";
+        const spokenState = stateDescription(state, mic, liveEntry, armedEntry);
 
         const onChipClick = () => {
           if (isHot) {
@@ -146,11 +161,11 @@ export function MicStrip({ piece }: MicStripProps) {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={open}
-              aria-pressed={open}
+              aria-pressed={state === "live"}
               aria-label={
                 isHot
-                  ? `Mic ${micNumber}, ${stateLabel(state)}. ${hotActionLabel}`
-                  : `Mic ${micNumber}, ${stateLabel(state)}. Open stack`
+                  ? `mic ${micNumber} — ${spokenState}. ${hotActionLabel}`
+                  : `mic ${micNumber} — ${spokenState}. Open stack`
               }
               onClick={onChipClick}
               className={chipClass(state, open)}

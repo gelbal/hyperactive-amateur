@@ -231,7 +231,7 @@ describe("MoodMode", () => {
     fireEvent.click(screen.getByRole("button", { name: /Corners/i }));
 
     expect(screen.getByRole("group", { name: "Mood mics" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Mic 1, off/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /mic 1 — off/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Scratch this mood" })).not.toBeDisabled();
   });
 
@@ -438,6 +438,60 @@ describe("MoodMode", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("sizes Lens and Vibe segmented controls to 44px on coarse pointers", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    expect(screen.getByRole("group", { name: "Lens" })).toBeInTheDocument();
+    for (const lens of ["Wall lens", "Splits lens"]) {
+      expect(screen.getByRole("button", { name: lens })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+
+    expect(screen.getByRole("group", { name: "Vibe" })).toBeInTheDocument();
+    for (const vibe of [
+      "Clean vibe",
+      "Blocks vibe",
+      "Mixtape vibe",
+      "Camcorder vibe",
+      "Print vibe",
+    ]) {
+      expect(screen.getByRole("button", { name: vibe })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+  });
+
+  it("keeps Row-stage piece controls reachable in a 320px render", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("row", "pocket");
+      useAppStore.getState().actions.setMoodTake(
+        "mic-0",
+        makeTake({ id: "the-one", durationSeconds: 4, trimEndMs: 4000 }),
+      );
+    });
+    const { container } = render(
+      <div style={{ width: "320px" }}>
+        <MoodMode />
+      </div>,
+    );
+
+    const rowStage = screen.getByLabelText("Row stage");
+    expect(rowStage).toHaveStyle({ maxWidth: "min(100%, 46rem)" });
+    const lensGroup = screen.getByRole("group", { name: "Lens" });
+    const toolCluster = lensGroup.parentElement;
+    const controlsRow = toolCluster?.parentElement;
+    expect(toolCluster).toHaveClass("flex-wrap", "justify-center", "sm:justify-start");
+    expect(controlsRow).toHaveClass("flex-col", "sm:flex-row");
+    expect(container).toHaveTextContent("Cycle 0");
   });
 
   it("marks an armed Mood lens separately from the committed lens", () => {

@@ -190,8 +190,15 @@ function MoodSplitsZeroLiveOverlay({ piece }: MoodStageProps) {
 export function MoodStage({ piece }: MoodStageProps) {
   const renderCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
+  const recordingState = useAppStore((s) => s.recording.state);
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const stageLabel = STAGE_LABELS[piece.stage];
+  const stageStatus = isCaptureOverlayState(recordingState)
+    ? "recording"
+    : isPerforming
+      ? "performing"
+      : "stopped";
   const frameStyle = useMemo(
     () => ({
       aspectRatio: `${descriptor.canvasSize.w} / ${descriptor.canvasSize.h}`,
@@ -300,6 +307,9 @@ export function MoodStage({ piece }: MoodStageProps) {
       <MoodCaptureOverlay piece={piece} />
       <span className="sr-only">{stageLabel} stage</span>
       <span className="sr-only">{piece.mics.length} mics</span>
+      <span aria-live="polite" aria-atomic="true" className="sr-only">
+        {stageStatus}
+      </span>
     </div>
   );
 }
