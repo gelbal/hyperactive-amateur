@@ -458,6 +458,26 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
   });
 
+  it("applies a due selection even when the same mic re-arms before any drain", async () => {
+    createMoodWithStack(4);
+    toneMocks.setNow(10);
+    await startMoodPerformance();
+
+    toneMocks.setNow(10.2);
+    armSelection("mic-0", "take-a");
+
+    // The cycle boundary (14) passes with NO paint drain, then the
+    // performer re-arms the same mic. The due take-a swap must still land.
+    toneMocks.setNow(14.1);
+    armSelection("mic-0", "take-b");
+
+    applyDueCommits(14.2);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-a");
+
+    applyDueCommits(18);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+  });
+
   it("clears a queued Drop when performance stops", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("print");

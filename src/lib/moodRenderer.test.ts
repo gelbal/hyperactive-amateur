@@ -259,7 +259,7 @@ describe("moodRenderer", () => {
     );
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
@@ -285,11 +285,11 @@ describe("moodRenderer", () => {
     createRenderer("row");
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
-    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
-    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 14);
+    armMoodSelectionCommit({ micId: "mic-0", entry: "take-b" }, 14, 10);
     boundaryCallback?.(14);
 
     drawMoodFrame(14, currentRenderState());
@@ -593,7 +593,7 @@ describe("moodRenderer", () => {
       const ctx = createRenderer("corners");
       toneMocks.now.mockReturnValueOnce(10);
       await startMoodPerformance();
-      armMoodLensCommit("splits", 12);
+      armMoodLensCommit("splits", 12, 10);
 
       const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
       boundaryCallback?.(12);
@@ -801,6 +801,41 @@ describe("moodRenderer", () => {
           }),
         ]),
       );
+    });
+
+    it("suspends the vibe pass while a capture is active", () => {
+      const ctx = createRenderer("corners");
+      const piece: MoodPiece = { ...capturePiece(), vibe: "blocks" };
+      const performance: MoodPerformanceState = {
+        ...capturePerformance(),
+        dropActive: true,
+      };
+      useAppStore.getState().actions.setRecordingState("recording", null);
+      primeCapturePreview();
+
+      // Performing with the Drop on: the capture presentation (frozen band,
+      // B&W metronome, hot preview) must stay vibe-free — §7's reserved
+      // B&W grammar wins over the full-canvas pass during the take window.
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.1, { piece, performance });
+      const vibeDraws = ctx.__haCanvasCalls.filter(
+        (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+      );
+      expect(vibeDraws).toHaveLength(0);
+
+      // Recording the One while stopped (wardrobe would otherwise preview).
+      const stoppedPerformance: MoodPerformanceState = {
+        ...capturePerformance(),
+        isPerforming: false,
+        epoch: null,
+        dropActive: false,
+      };
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.2, { piece, performance: stoppedPerformance });
+      const stoppedVibeDraws = ctx.__haCanvasCalls.filter(
+        (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+      );
+      expect(stoppedVibeDraws).toHaveLength(0);
     });
 
     it("freezes every non-hot tile and skips the metronome when headphones are on", () => {

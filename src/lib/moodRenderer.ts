@@ -362,16 +362,20 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
 
+  const capture = captureRenderState(piece, performance);
+  // The take window is vibe-free: the capture presentation's reserved
+  // grammar (B&W = reference, hot preview = framing) must stay readable
+  // (spec §7), so an active capture suspends the full-canvas pass.
   const vibeActive =
-    piece.vibe !== "clean" && (!performance.isPerforming || performance.dropActive);
+    piece.vibe !== "clean" &&
+    !capture.active &&
+    (!performance.isPerforming || performance.dropActive);
   const watchPrintBudget =
     vibeActive && piece.vibe === "print" && !printWatchdogTripped && getPrintDensity() === "normal";
   const frameStartMs = watchPrintBudget ? frameNowMs() : 0;
 
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
-
-  const capture = captureRenderState(piece, performance);
   const micStates = piece.mics.map((mic) => ({
     micId: mic.id,
     live: capture.active || liveTakeFor(mic, performance.selections[mic.id]) !== null,

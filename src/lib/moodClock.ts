@@ -35,9 +35,9 @@ export interface BoundaryDropEvent {
 export type BoundaryQueueEvent = BoundarySelectionEvent | BoundaryLensEvent | BoundaryDropEvent;
 
 export interface BoundaryQueue {
-  armSelection(commit: MoodSelectionCommit, boundaryTime: number): void;
-  armLens(lens: MoodLens, boundaryTime: number): void;
-  armDrop(active: boolean, boundaryTime: number): void;
+  armSelection(commit: MoodSelectionCommit, boundaryTime: number, now: number): void;
+  armLens(lens: MoodLens, boundaryTime: number, now: number): void;
+  armDrop(active: boolean, boundaryTime: number, now: number): void;
   dueAt(now: number): BoundaryQueueEvent[];
 }
 
@@ -127,24 +127,38 @@ export function createBoundaryQueue(): BoundaryQueue {
   const selections = new Map<string, BoundarySelectionEvent>();
   let lens: BoundaryLensEvent | null = null;
   let drop: BoundaryDropEvent | null = null;
+  // Events whose boundary passed before the paint drain ran. Re-arming a
+  // slot may only cancel the FUTURE — a due commit must survive to the
+  // next drain, or a tap during a stalled frame silently erases it.
+  const ripe: BoundaryQueueEvent[] = [];
+
+  const holdIfDue = (event: BoundaryQueueEvent | null | undefined, now: number): void => {
+    if (event && event.boundaryTime <= now) ripe.push(event);
+  };
 
   return {
-    armSelection(commit, boundaryTime) {
+    armSelection(commit, boundaryTime, now) {
       assertFiniteSeconds("boundaryTime", boundaryTime);
+      assertFiniteSeconds("now", now);
+      holdIfDue(selections.get(commit.micId), now);
       selections.set(commit.micId, { type: "selection", ...commit, boundaryTime });
     },
-    armLens(nextLens, boundaryTime) {
+    armLens(nextLens, boundaryTime, now) {
       assertFiniteSeconds("boundaryTime", boundaryTime);
+      assertFiniteSeconds("now", now);
+      holdIfDue(lens, now);
       lens = { type: "lens", lens: nextLens, boundaryTime };
     },
-    armDrop(active, boundaryTime) {
+    armDrop(active, boundaryTime, now) {
       assertFiniteSeconds("boundaryTime", boundaryTime);
+      assertFiniteSeconds("now", now);
+      holdIfDue(drop, now);
       drop = { type: "drop", active, boundaryTime };
     },
     dueAt(now) {
       assertFiniteSeconds("now", now);
 
-      const due: BoundaryQueueEvent[] = [];
+      const due: BoundaryQueueEvent[] = ripe.splice(0);
 
       for (const [micId, event] of selections) {
         if (event.boundaryTime <= now) {

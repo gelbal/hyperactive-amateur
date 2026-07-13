@@ -133,16 +133,17 @@ export function stopMoodPerformance(): void {
 export function armMoodSelectionCommit(
   commit: MoodSelectionCommit,
   boundaryTime: number,
+  now: number,
 ): void {
-  boundaryQueue.armSelection(commit, boundaryTime);
+  boundaryQueue.armSelection(commit, boundaryTime, now);
 }
 
-export function armMoodLensCommit(lens: MoodLens, boundaryTime: number): void {
-  boundaryQueue.armLens(lens, boundaryTime);
+export function armMoodLensCommit(lens: MoodLens, boundaryTime: number, now: number): void {
+  boundaryQueue.armLens(lens, boundaryTime, now);
 }
 
-export function armMoodDropCommit(active: boolean, boundaryTime: number): void {
-  boundaryQueue.armDrop(active, boundaryTime);
+export function armMoodDropCommit(active: boolean, boundaryTime: number, now: number): void {
+  boundaryQueue.armDrop(active, boundaryTime, now);
 }
 
 export function consumeDueCommits(audioTime: number): BoundaryQueueEvent[] {
