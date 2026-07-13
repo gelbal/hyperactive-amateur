@@ -326,6 +326,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -376,6 +377,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -391,6 +393,58 @@ describe("moodRenderer", () => {
     );
     expect(tileDrawIndex).toBeGreaterThanOrEqual(0);
     expect(vibeDrawIndex).toBeGreaterThan(tileDrawIndex);
+  });
+
+  it("uses the Drop while performing but still previews the wardrobe while stopped", () => {
+    const piece: MoodPiece = { ...createEmptyMoodPiece("corners", "pocket"), vibe: "blocks" };
+    const performance: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "off",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      armedDropActive: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    const ctx = createRenderer("corners");
+
+    drawMoodFrame(0, { piece, performance });
+    let vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(1);
+
+    ctx.__haCanvasCalls.length = 0;
+    drawMoodFrame(0, {
+      piece,
+      performance: { ...performance, isPerforming: true, epoch: 0, dropActive: false },
+    });
+    vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(0);
+
+    ctx.__haCanvasCalls.length = 0;
+    drawMoodFrame(0, {
+      piece,
+      performance: { ...performance, isPerforming: true, epoch: 0, dropActive: true },
+    });
+    vibeDraws = ctx.__haCanvasCalls.filter(
+      (call) => call.method === "drawImage" && call.args[0] instanceof HTMLCanvasElement,
+    );
+    expect(vibeDraws).toHaveLength(1);
   });
 
   function makePrintFrame(): { piece: MoodPiece; performanceState: MoodPerformanceState } {
@@ -411,6 +465,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -490,6 +545,7 @@ describe("moodRenderer", () => {
         "mic-3": null,
       },
       armedLens: null,
+      armedDropActive: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -594,6 +650,7 @@ describe("moodRenderer", () => {
           "mic-3": null,
         },
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -664,6 +721,7 @@ describe("moodRenderer", () => {
           "mic-3": null,
         },
         armedLens: null,
+        armedDropActive: null,
         dropActive: false,
         hotMicId: "mic-1",
         cycleCount: 0,

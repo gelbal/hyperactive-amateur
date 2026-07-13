@@ -14,7 +14,6 @@ import {
 } from "./moodClock";
 
 let boundaryQueue: BoundaryQueue = createBoundaryQueue();
-let pendingCommits: BoundaryQueueEvent[] = [];
 let scheduledBoundaryEventId: number | null = null;
 let activeEpoch: number | null = null;
 
@@ -59,7 +58,6 @@ function clearScheduledBoundaryRepeat(): void {
 
 function resetBoundaryState(): void {
   boundaryQueue = createBoundaryQueue();
-  pendingCommits = [];
 }
 
 function scheduleCycleDisplayUpdate(audioTime: number): void {
@@ -82,10 +80,6 @@ function scheduleCycleDisplayUpdate(audioTime: number): void {
 }
 
 function onCycleBoundary(audioTime: number): void {
-  const due = boundaryQueue.dueAt(audioTime);
-  if (due.length > 0) {
-    pendingCommits = [...pendingCommits, ...due];
-  }
   scheduleCycleDisplayUpdate(audioTime);
 }
 
@@ -152,16 +146,7 @@ export function armMoodDropCommit(active: boolean, boundaryTime: number): void {
 }
 
 export function consumeDueCommits(audioTime: number): BoundaryQueueEvent[] {
-  const due: BoundaryQueueEvent[] = [];
-  const future: BoundaryQueueEvent[] = [];
-
-  for (const commit of pendingCommits) {
-    if (commit.boundaryTime <= audioTime) due.push(commit);
-    else future.push(commit);
-  }
-
-  pendingCommits = future;
-  return due;
+  return boundaryQueue.dueAt(audioTime);
 }
 
 export function __resetMoodTransportForTesting(): void {

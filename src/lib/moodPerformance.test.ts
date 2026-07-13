@@ -81,7 +81,7 @@ vi.mock("./moodPlayers", () => ({
 
 import { __resetPendingAudibleClaimForTesting } from "./audibleActionGate";
 import { applyDueCommits } from "./moodCommits";
-import { armLens, armSelection } from "./moodPerformance";
+import { armDrop, armLens, armSelection } from "./moodPerformance";
 import {
   __resetMoodRendererForTesting,
   drawMoodFrame,
@@ -89,6 +89,7 @@ import {
 } from "./moodRenderer";
 import {
   __resetMoodTransportForTesting,
+  consumeDueCommits,
   startMoodPerformance,
   stopMoodPerformance,
 } from "./moodTransport";
@@ -410,6 +411,70 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.armedLens).toBeNull();
   });
 
+  it("starts the wardrobe on and commits the Drop on the next beat", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("mixtape");
+    toneMocks.setNow(10);
+    await startMoodPerformance();
+
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(true);
+
+    toneMocks.setNow(10.2);
+    armDrop();
+
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(true);
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+
+    applyDueCommits(10.49);
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(true);
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+
+    applyDueCommits(10.5);
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
+  });
+
+  it("keeps the Drop live during export but blocked during capture", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("blocks");
+    toneMocks.setNow(20);
+    await startMoodPerformance();
+
+    useAppStore.getState().actions.setIsExporting(true);
+    toneMocks.setNow(20.2);
+    armDrop();
+
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+
+    useAppStore.getState().actions.setIsExporting(false);
+    applyDueCommits(20.5);
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    toneMocks.setNow(20.7);
+    armDrop();
+
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+  });
+
+  it("clears a queued Drop when performance stops", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("print");
+    toneMocks.setNow(30);
+    await startMoodPerformance();
+
+    toneMocks.setNow(30.2);
+    armDrop();
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+
+    stopMoodPerformance();
+
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
+    expect(consumeDueCommits(30.5)).toEqual([]);
+  });
+
   it("keeps outgoing and prepared incoming videos through the pre-boundary frame, then prunes after commit", async () => {
     createMoodWithStack(2);
     armSelection("mic-0", "take-a");
@@ -460,5 +525,23 @@ describe("moodPerformance", () => {
       new KeyboardEvent("keydown", { code: "Digit1", bubbles: true }),
     );
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
+  });
+
+  it("maps KeyD to the Drop and suppresses editable targets", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("blocks");
+    toneMocks.setNow(10);
+    await startMoodPerformance();
+    const { getByTestId } = render(createElement(KeyHarness, { withInput: true }));
+
+    toneMocks.setNow(10.2);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+
+    useAppStore.getState().actions.setMoodArmedDrop(null);
+    getByTestId("mood-input").dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }),
+    );
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
   });
 });

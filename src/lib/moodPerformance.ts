@@ -4,9 +4,13 @@ import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
 import { canStartMoodPerformanceTap } from "./audibleActionGate";
-import { nextCycleBoundary, takeLoopPeriod } from "./moodClock";
+import { nextBeatBoundary, nextCycleBoundary, takeLoopPeriod } from "./moodClock";
 import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
-import { armMoodLensCommit, armMoodSelectionCommit } from "./moodTransport";
+import {
+  armMoodDropCommit,
+  armMoodLensCommit,
+  armMoodSelectionCommit,
+} from "./moodTransport";
 import {
   liveTakesFromSelections,
   prepareUpcoming,
@@ -154,4 +158,26 @@ export function armLens(lens: MoodLens): void {
   state.actions.setMoodArmedLens(lens === piece.lens ? null : lens);
   const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, Tone.now());
   armMoodLensCommit(lens, boundaryTime);
+}
+
+export function armDrop(): void {
+  const state = useAppStore.getState();
+  if (!canStartMoodPerformanceTap(state)) return;
+
+  const piece = state.mood.piece;
+  const performance = state.mood.performance;
+  if (
+    !piece ||
+    piece.vibe === "clean" ||
+    !performance.isPerforming ||
+    performance.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
+    return;
+  }
+
+  const nextActive = !(performance.armedDropActive ?? performance.dropActive);
+  state.actions.setMoodArmedDrop(nextActive);
+  const boundaryTime = nextBeatBoundary(performance.epoch, piece.cycleSeconds, Tone.now());
+  armMoodDropCommit(nextActive, boundaryTime);
 }

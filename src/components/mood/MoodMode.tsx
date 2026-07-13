@@ -20,6 +20,7 @@ import type {
   MoodVibeId,
 } from "../../types";
 import { RecordingErrorNotice } from "../RecordingErrorNotice";
+import { DropPad } from "./DropPad";
 import { MicStrip } from "./MicStrip";
 import { MoodStage } from "./MoodStage";
 
@@ -451,6 +452,7 @@ function MoodPieceControls({ piece }: { piece: MoodPiece }) {
         <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
           <MoodLensControl lens={piece.lens} />
           <MoodVibeControl vibe={piece.vibe} />
+          <DropPad vibe={piece.vibe} />
           <span
             aria-label="Time feel"
             className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"

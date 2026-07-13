@@ -362,8 +362,10 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
 
+  const vibeActive =
+    piece.vibe !== "clean" && (!performance.isPerforming || performance.dropActive);
   const watchPrintBudget =
-    piece.vibe === "print" && !printWatchdogTripped && getPrintDensity() === "normal";
+    vibeActive && piece.vibe === "print" && !printWatchdogTripped && getPrintDensity() === "normal";
   const frameStartMs = watchPrintBudget ? frameNowMs() : 0;
 
   ctx.fillStyle = TILE_BLACK;
@@ -383,7 +385,7 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
     drawWallTile(ctx, mic, performance.selections[mic.id], rect, capture);
   }
 
-  if (piece.vibe !== "clean") {
+  if (vibeActive) {
     applyVibe(ctx, active.canvas, piece.vibe, active.vibeResources);
   }
 

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodMic, MoodSelectionEntry } from "../types";
-import { armSelection } from "./moodPerformance";
+import { armDrop, armSelection } from "./moodPerformance";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -40,6 +40,7 @@ export function useMoodKeys(): void {
 
       if (event.code === "KeyD") {
         event.preventDefault();
+        armDrop();
         return;
       }
 

@@ -120,6 +120,7 @@ export interface MoodPerformanceState {
   selections: Record<string, MoodSelectionEntry>;
   armed: Record<string, MoodSelectionEntry | null>;
   armedLens: MoodLens | null;
+  armedDropActive: boolean | null;
   dropActive: boolean;
   hotMicId: string | null;
   cycleCount: number;
