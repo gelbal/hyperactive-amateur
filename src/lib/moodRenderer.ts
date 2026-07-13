@@ -15,8 +15,6 @@ import { STAGE_DESCRIPTORS } from "./moodStages";
 import { layoutFor, type TileRect } from "./moodTilers";
 import {
   isVideoReadyForDraw,
-  liveTakesFromSelections,
-  syncPool,
   videoForTake,
 } from "./moodVideoPool";
 
@@ -170,8 +168,6 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const { piece, performance } = renderState;
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
-
-  syncPool(liveTakesFromSelections(piece, performance.selections));
 
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);

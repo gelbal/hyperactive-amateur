@@ -2,11 +2,12 @@
 // ABOUTME: Drains due transport commits once and applies store-visible performance state.
 import { useAppStore } from "../store/useAppStore";
 import type { MoodSelectionCommit } from "../types";
+import { syncCommittedMoodEngines } from "./moodPerformance";
 import { consumeDueCommits } from "./moodTransport";
+import { restartVideosAtPeriodBoundary } from "./moodVideoPool";
 
 export function applyDueCommits(audioTime: number): void {
   const due = consumeDueCommits(audioTime);
-  if (due.length === 0) return;
 
   const selections: MoodSelectionCommit[] = [];
   for (const commit of due) {
@@ -17,5 +18,21 @@ export function applyDueCommits(audioTime: number): void {
 
   if (selections.length > 0) {
     useAppStore.getState().actions.commitMoodSelections(selections);
+    syncCommittedMoodEngines();
   }
+
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const epoch = state.mood.performance.epoch;
+  if (
+    !state.mood.performance.isPerforming ||
+    !piece ||
+    piece.cycleSeconds === null ||
+    epoch === null ||
+    audioTime < epoch
+  ) {
+    return;
+  }
+
+  restartVideosAtPeriodBoundary(audioTime, epoch);
 }

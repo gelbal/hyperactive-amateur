@@ -1,16 +1,21 @@
 // ABOUTME: Hidden muted video pool for Mood live-take canvas drawing.
 // ABOUTME: Diffs live takes by id, pre-seeks boundary swaps, and exposes draw readiness guards.
 import * as Tone from "tone";
-import type { MoodPiece, MoodSelectionEntry } from "../types";
+import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
+import { takeLoopPeriod } from "./moodClock";
 import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
 
 const HAVE_CURRENT_DATA = 2;
+const LOOP_EPSILON_SECONDS = 1e-6;
 
 export interface MoodVideoPoolTake {
   takeId: string;
   url: string;
   loopStart: number;
   loopEnd: number;
+  loopPeriod?: number;
+  cycleMultiple?: MoodTake["cycleMultiple"];
+  epoch?: number | null;
 }
 
 interface PooledMoodVideo {
@@ -18,7 +23,19 @@ interface PooledMoodVideo {
   url: string;
   loopStart: number;
   loopEnd: number;
+  effectiveLoopEnd: number;
+  loopPeriod: number;
+  cycleMultiple: MoodTake["cycleMultiple"];
+  epoch: number | null;
+  holdingRest: boolean;
+  // Period-lock dedup: the index of the take's own loop period (which can be a
+  // half-cycle for cycleMultiple 0.5), scoped to the epoch it was computed
+  // under so a stop/restart re-seeks even inside the same period index.
+  restartEpoch: number | null;
+  lastPeriodIndex: number | null;
   onTimeUpdate: () => void;
+  onLoadedMetadata: () => void;
+  onEnded: () => void;
 }
 
 let host: HTMLDivElement | null = null;
@@ -36,6 +53,7 @@ function ensureHost(): HTMLDivElement {
 
 function seekToLoopStart(entry: PooledMoodVideo): boolean {
   try {
+    entry.holdingRest = false;
     entry.video.currentTime = entry.loopStart;
   } catch {
     // currentTime can throw before metadata loads; later boundary seeks retry.
@@ -44,27 +62,66 @@ function seekToLoopStart(entry: PooledMoodVideo): boolean {
 }
 
 function playVideo(entry: PooledMoodVideo): void {
+  entry.holdingRest = false;
   void entry.video.play().catch(() => undefined);
 }
 
-function clampAtLoopEnd(entry: PooledMoodVideo): void {
-  if (entry.loopEnd <= entry.loopStart) {
-    entry.video.pause();
-    return;
-  }
+function fallbackLoopPeriod(take: MoodVideoPoolTake): number {
+  return Math.max(take.loopEnd - take.loopStart, LOOP_EPSILON_SECONDS);
+}
 
-  if (entry.video.currentTime < entry.loopEnd) return;
+function updateEffectiveLoopEnd(entry: PooledMoodVideo): void {
+  const duration = entry.video.duration;
+  entry.effectiveLoopEnd =
+    Number.isFinite(duration) && duration > 0
+      ? Math.min(entry.loopEnd, duration)
+      : entry.loopEnd;
+}
 
+function contentFillsPeriod(entry: PooledMoodVideo): boolean {
+  return entry.effectiveLoopEnd - entry.loopStart >= entry.loopPeriod - LOOP_EPSILON_SECONDS;
+}
+
+function holdAtContentEnd(entry: PooledMoodVideo): void {
+  if (entry.holdingRest) return;
+  entry.holdingRest = true;
   try {
-    entry.video.currentTime = entry.loopEnd;
+    entry.video.currentTime = entry.effectiveLoopEnd;
   } catch {
-    // The frame will be re-armed from loopStart at the next boundary.
+    // Holding at the current decoded frame is still preferable to a content-loop seek.
   }
   entry.video.pause();
 }
 
+// The index of the take's OWN loop period at audioTime, phase-locked to the
+// epoch. loopPeriod = cycleMultiple × cycleSeconds, so this correctly counts
+// half-cycle periods (0.5) as well as multi-cycle ones (2, 4).
+function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
+  return Math.floor((audioTime - epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
+}
+
+function loopTrimmedWindow(entry: PooledMoodVideo): void {
+  updateEffectiveLoopEnd(entry);
+  if (entry.effectiveLoopEnd <= entry.loopStart) {
+    entry.video.pause();
+    return;
+  }
+
+  if (entry.video.currentTime < entry.effectiveLoopEnd) return;
+
+  if (!contentFillsPeriod(entry)) {
+    holdAtContentEnd(entry);
+    return;
+  }
+
+  seekToLoopStart(entry);
+  playVideo(entry);
+}
+
 function teardown(entry: PooledMoodVideo): void {
   entry.video.removeEventListener("timeupdate", entry.onTimeUpdate);
+  entry.video.removeEventListener("loadedmetadata", entry.onLoadedMetadata);
+  entry.video.removeEventListener("ended", entry.onEnded);
   entry.video.pause();
   entry.video.removeAttribute("src");
   entry.video.load();
@@ -78,16 +135,37 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     url: take.url,
     loopStart: take.loopStart,
     loopEnd: take.loopEnd,
+    effectiveLoopEnd: take.loopEnd,
+    loopPeriod: take.loopPeriod ?? fallbackLoopPeriod(take),
+    cycleMultiple: take.cycleMultiple ?? 1,
+    epoch: take.epoch ?? null,
+    holdingRest: false,
+    restartEpoch: null,
+    lastPeriodIndex: null,
     onTimeUpdate: () => undefined,
+    onLoadedMetadata: () => undefined,
+    onEnded: () => undefined,
   };
-  entry.onTimeUpdate = () => clampAtLoopEnd(entry);
+  entry.onTimeUpdate = () => loopTrimmedWindow(entry);
+  entry.onLoadedMetadata = () => updateEffectiveLoopEnd(entry);
+  entry.onEnded = () => {
+    updateEffectiveLoopEnd(entry);
+    if (contentFillsPeriod(entry)) {
+      seekToLoopStart(entry);
+      playVideo(entry);
+      return;
+    }
+    holdAtContentEnd(entry);
+  };
 
   video.muted = true;
   video.playsInline = true;
-  video.loop = true;
+  video.loop = false;
   video.preload = "auto";
   video.src = take.url;
   video.addEventListener("timeupdate", entry.onTimeUpdate);
+  video.addEventListener("loadedmetadata", entry.onLoadedMetadata);
+  video.addEventListener("ended", entry.onEnded);
   ensureHost().appendChild(video);
   seekToLoopStart(entry);
   playVideo(entry);
@@ -112,6 +190,10 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
     if (existing && existing.url === take.url) {
       existing.loopStart = take.loopStart;
       existing.loopEnd = take.loopEnd;
+      existing.loopPeriod = take.loopPeriod ?? fallbackLoopPeriod(take);
+      existing.cycleMultiple = take.cycleMultiple ?? 1;
+      existing.epoch = take.epoch ?? null;
+      updateEffectiveLoopEnd(existing);
       continue;
     }
 
@@ -125,6 +207,7 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
 export function liveTakesFromSelections(
   piece: MoodPiece,
   selections: Record<string, MoodSelectionEntry>,
+  epoch: number | null = null,
 ): MoodVideoPoolTake[] {
   const live = new Map<string, MoodVideoPoolTake>();
   for (const mic of piece.mics) {
@@ -137,18 +220,50 @@ export function liveTakesFromSelections(
       url: take.url,
       loopStart: take.trimStartMs / 1000,
       loopEnd: take.trimEndMs / 1000,
+      loopPeriod:
+        piece.cycleSeconds === null
+          ? Math.max(take.trimEndMs / 1000 - take.trimStartMs / 1000, LOOP_EPSILON_SECONDS)
+          : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
+      cycleMultiple: take.cycleMultiple,
+      epoch,
     });
   }
   return [...live.values()];
+}
+
+export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number): void {
+  for (const entry of videos.values()) {
+    // A new performance epoch resets the dedup so the first period of the new
+    // run always re-seeks, even if it lands on the same index as the old run.
+    if (entry.restartEpoch !== epoch) {
+      entry.restartEpoch = epoch;
+      entry.lastPeriodIndex = null;
+    }
+    const periodIndex = periodIndexAt(entry, audioTime, epoch);
+    if (periodIndex < 0) continue;
+    if (entry.lastPeriodIndex === periodIndex) continue;
+    entry.lastPeriodIndex = periodIndex;
+    seekToLoopStart(entry);
+    playVideo(entry);
+  }
 }
 
 export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
 
-  Tone.getDraw().schedule(() => {
+  const seekAndPlay = () => {
     seekToLoopStart(entry);
     playVideo(entry);
+  };
+
+  if (atAudioTime - Tone.now() <= VIDEO_SEEK_LEAD_SECONDS) {
+    seekAndPlay();
+    return;
+  }
+
+  Tone.getDraw().schedule(() => {
+    seekAndPlay();
   }, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
 }
 

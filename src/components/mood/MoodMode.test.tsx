@@ -1,5 +1,5 @@
 // ABOUTME: MoodMode tests — verifies the first lazy Mood shell and stage picker.
-// ABOUTME: Covers piece birth, placeholder stage display, and scratch confirmation.
+// ABOUTME: Covers piece birth, stage display, mic strip, and Mood performance controls.
 import "fake-indexeddb/auto";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,10 @@ vi.mock("../../lib/moodTransport", () => ({
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
   startMoodPerformance: moodTransportMocks.startMoodPerformance,
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
+}));
+
+vi.mock("../../lib/useMoodKeys", () => ({
+  useMoodKeys: vi.fn(),
 }));
 
 import { MoodMode } from "./MoodMode";
@@ -198,6 +202,8 @@ describe("MoodMode", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Corners/i }));
 
+    expect(screen.getByRole("group", { name: "Mood mics" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Mic 1, off/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Scratch this mood" })).not.toBeDisabled();
   });
 
@@ -364,44 +370,48 @@ describe("MoodMode", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     render(<MoodMode />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Scratch this mood" }));
-    expect(screen.getByText("This forgets this mood shell. Sure?")).toBeInTheDocument();
+    const scratchButton = screen.getByRole("button", { name: "Scratch this mood" });
+    expect(scratchButton).toHaveClass("pointer-coarse:min-h-11");
 
-    fireEvent.click(screen.getByRole("button", { name: "Yes, scratch it" }));
+    fireEvent.click(scratchButton);
+
+    const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    expect(confirmButton).toHaveClass("pointer-coarse:min-h-11");
+    expect(cancelButton).toHaveClass("pointer-coarse:min-h-11");
+
+    fireEvent.click(confirmButton);
 
     expect(useAppStore.getState().mood.piece).toBeNull();
-    expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
   });
 
-  it("disables scratch controls while exporting", () => {
+  it("disables scratch while exporting and keeps disabled clicks inert", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     const scratchMoodPiece = vi.spyOn(useAppStore.getState().actions, "scratchMoodPiece");
-    useAppStore.getState().actions.setIsExporting(true);
     render(<MoodMode />);
 
-    const scratchButton = screen.getByRole("button", { name: "Scratch this mood" });
-    expect(scratchButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Scratch this mood" }));
 
-    fireEvent.click(scratchButton);
+    act(() => {
+      useAppStore.getState().actions.setIsExporting(true);
+    });
 
-    expect(screen.queryByText("This forgets this mood shell. Sure?")).not.toBeInTheDocument();
+    const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.click(confirmButton);
+
     expect(scratchMoodPiece).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.piece).not.toBeNull();
     scratchMoodPiece.mockRestore();
   });
 
-  it("disables scratch controls while performing", () => {
+  it("disables scratch while performing", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     useAppStore.getState().actions.setMoodPerforming(true, 1);
-    const scratchMoodPiece = vi.spyOn(useAppStore.getState().actions, "scratchMoodPiece");
     render(<MoodMode />);
 
-    const scratchButton = screen.getByRole("button", { name: "Scratch this mood" });
-    expect(scratchButton).toBeDisabled();
-
-    fireEvent.click(scratchButton);
-
-    expect(screen.queryByText("This forgets this mood shell. Sure?")).not.toBeInTheDocument();
-    expect(scratchMoodPiece).not.toHaveBeenCalled();
-    scratchMoodPiece.mockRestore();
+    expect(screen.getByRole("group", { name: "Mood mics" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scratch this mood" })).toBeDisabled();
   });
 });

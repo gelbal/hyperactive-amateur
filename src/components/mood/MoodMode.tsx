@@ -8,8 +8,10 @@ import { canStartAudibleAction } from "../../lib/audibleActionGate";
 import { runAudibleAction } from "../../lib/audibleActionRunner";
 import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
+import { useMoodKeys } from "../../lib/useMoodKeys";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
+import { MicStrip } from "./MicStrip";
 import { MoodStage } from "./MoodStage";
 
 const STAGE_LABELS: Record<MoodStageId, string> = {
@@ -204,6 +206,12 @@ function StagePicker({ disabled }: { disabled: boolean }) {
   );
 }
 
+function moodFeelLabel(piece: MoodPiece): string {
+  if (piece.timeFeel !== "click") return "Pocket";
+  if (piece.bpm === null || piece.cycleBars === null) return "Click";
+  return `Click · ${piece.bpm} · ${piece.cycleBars} ${piece.cycleBars === 1 ? "bar" : "bars"}`;
+}
+
 function ScratchMoodControl({ disabled }: { disabled: boolean }) {
   const [armed, setArmed] = useState(false);
 
@@ -219,7 +227,7 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
         type="button"
         disabled={disabled}
         onClick={() => setArmed(true)}
-        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:bg-transparent"
+        className="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors pointer-coarse:min-h-11 hover:border-zinc-600 hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:bg-transparent"
       >
         Scratch this mood
       </button>
@@ -228,9 +236,7 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="text-center text-xs text-zinc-400">
-        This forgets this mood shell. Sure?
-      </p>
+      <p className="text-center text-xs text-zinc-400">This forgets this mood shell. Sure?</p>
       <div className="flex gap-2">
         <button
           type="button"
@@ -239,26 +245,20 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
             useAppStore.getState().actions.scratchMoodPiece();
             setArmed(false);
           }}
-          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600"
+          className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors pointer-coarse:min-h-11 hover:bg-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-600"
         >
           Yes, scratch it
         </button>
         <button
           type="button"
           onClick={() => setArmed(false)}
-          className="rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+          className="rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 transition-colors pointer-coarse:min-h-11 hover:bg-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
         >
           Cancel
         </button>
       </div>
     </div>
   );
-}
-
-function moodFeelLabel(piece: MoodPiece): string {
-  if (piece.timeFeel !== "click") return "Pocket";
-  if (piece.bpm === null || piece.cycleBars === null) return "Click";
-  return `Click · ${piece.bpm} · ${piece.cycleBars} ${piece.cycleBars === 1 ? "bar" : "bars"}`;
 }
 
 function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSeconds"] }) {
@@ -284,7 +284,7 @@ function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSecond
         disabled={disabled}
         onClick={handleClick}
         className={
-          "inline-flex h-10 items-center gap-2 rounded border px-3 text-sm font-semibold transition-colors " +
+          "inline-flex h-10 pointer-coarse:h-11 items-center gap-2 rounded border px-3 text-sm font-semibold transition-colors " +
           "disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600 " +
           (isPerforming
             ? "border-orange-500 bg-zinc-900 text-orange-500 hover:bg-zinc-800"
@@ -305,32 +305,33 @@ function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSecond
   );
 }
 
-function MoodPieceControls({
-  piece,
-  scratchDisabled,
-}: {
-  piece: MoodPiece;
-  scratchDisabled: boolean;
-}) {
+function MoodPieceControls({ piece }: { piece: MoodPiece }) {
   const cycleCount = useAppStore((s) => s.mood.performance.cycleCount);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
 
   return (
-    <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
-      <span
-        aria-label="Time feel"
-        className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
-      >
-        {moodFeelLabel(piece)}
-      </span>
-      <div className="flex items-center gap-2">
-        <MoodPlayButton cycleSeconds={piece.cycleSeconds} />
+    <div className="flex w-full flex-col gap-3">
+      <MicStrip piece={piece} />
+      <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
         <span
-          aria-label="Mood cycle count"
-          className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-orange-500"
+          aria-label="Time feel"
+          className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
         >
-          Cycle {cycleCount}
+          {moodFeelLabel(piece)}
         </span>
-        <ScratchMoodControl disabled={scratchDisabled} />
+        <div className="flex items-center gap-2">
+          <MoodPlayButton cycleSeconds={piece.cycleSeconds} />
+          <span
+            aria-label="Mood cycle count"
+            className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-orange-500"
+          >
+            Cycle {cycleCount}
+          </span>
+        </div>
+      </div>
+      <div className="flex justify-center sm:justify-end">
+        <ScratchMoodControl disabled={isExporting || isPerforming} />
       </div>
     </div>
   );
@@ -361,10 +362,10 @@ function mergeMoodHydrateResults(
 }
 
 export function MoodMode() {
+  useMoodKeys();
   const piece = useAppStore((s) => s.mood.piece);
   const hydration = useAppStore((s) => s.mood.hydration);
   const isExporting = useAppStore((s) => s.playback.isExporting);
-  const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
   const hydrationStartedRef = useRef(false);
   const unmountedRef = useRef(false);
 
@@ -420,7 +421,7 @@ export function MoodMode() {
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
       <MoodStage piece={piece} />
-      <MoodPieceControls piece={piece} scratchDisabled={isExporting || isPerforming} />
+      <MoodPieceControls piece={piece} />
     </section>
   );
 }

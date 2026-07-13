@@ -231,22 +231,24 @@ describe("moodTransport", () => {
     expect(useAppStore.getState().mood.performance.cycleCount).toBe(1);
   });
 
-  it("prepares armed take videos from the boundary path", async () => {
+  it("stages armed selections without syncing or pruning the video pool", async () => {
     createMoodWithCycle(2);
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
+    moodVideoPoolMocks.liveTakesFromSelections.mockClear();
+    moodVideoPoolMocks.syncPool.mockClear();
+    moodVideoPoolMocks.prepareUpcoming.mockClear();
     armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
 
     const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
 
-    expect(moodVideoPoolMocks.liveTakesFromSelections).toHaveBeenCalledWith(
-      useAppStore.getState().mood.piece,
-      expect.objectContaining({ "mic-0": "the-one" }),
-    );
-    expect(moodVideoPoolMocks.syncPool).toHaveBeenCalledTimes(1);
-    expect(moodVideoPoolMocks.prepareUpcoming).toHaveBeenCalledTimes(1);
-    expect(moodVideoPoolMocks.prepareUpcoming).toHaveBeenCalledWith("the-one", 12);
+    expect(consumeDueCommits(12)).toEqual([
+      { type: "selection", micId: "mic-0", entry: "the-one", boundaryTime: 12 },
+    ]);
+    expect(moodVideoPoolMocks.liveTakesFromSelections).not.toHaveBeenCalled();
+    expect(moodVideoPoolMocks.syncPool).not.toHaveBeenCalled();
+    expect(moodVideoPoolMocks.prepareUpcoming).not.toHaveBeenCalled();
   });
 
   it("stop cancels the repeat, resets flags, and preserves the mix", async () => {
