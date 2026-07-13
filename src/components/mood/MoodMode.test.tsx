@@ -213,7 +213,7 @@ describe("MoodMode", () => {
     render(<MoodMode />);
     await act(async () => {
       load.resolve({
-        status: "loaded",
+        status: "ok",
         ok: true,
         degraded: false,
         piece: decodedPiece,
