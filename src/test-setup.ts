@@ -127,14 +127,14 @@ if (typeof HTMLCanvasElement !== "undefined") {
       if (existing) return existing;
 
       const stateStack: Array<{
-        fillStyle: string;
+        fillStyle: unknown;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
       const calls: Array<{
         method: string;
         args: unknown[];
-        fillStyle: string;
+        fillStyle: unknown;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
@@ -142,7 +142,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
         calls.push({
           method,
           args,
-          fillStyle: context.fillStyle as string,
+          fillStyle: context.fillStyle,
           globalAlpha: context.globalAlpha as number,
           globalCompositeOperation: context.globalCompositeOperation as string,
         });
@@ -169,6 +169,14 @@ if (typeof HTMLCanvasElement !== "undefined") {
         drawImage: vi.fn((...args: unknown[]) => {
           recordCall("drawImage", args);
         }),
+        createPattern: vi.fn((...args: unknown[]) => {
+          recordCall("createPattern", args);
+          return {
+            __haCanvasPattern: true,
+            source: args[0],
+            repetition: args[1],
+          };
+        }),
         beginPath: vi.fn((...args: unknown[]) => {
           recordCall("beginPath", args);
         }),
@@ -180,7 +188,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
         }),
         save: vi.fn(() => {
           stateStack.push({
-            fillStyle: context.fillStyle as string,
+            fillStyle: context.fillStyle,
             globalAlpha: context.globalAlpha as number,
             globalCompositeOperation: context.globalCompositeOperation as string,
           });
