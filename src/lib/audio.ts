@@ -117,6 +117,11 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
   useAppStore.getState().actions.markTriggered(trackId);
 }
 
+export function triggerCountInClick(when: number): void {
+  const synth = metronomeSynths[0];
+  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[0], "16n", when, 0.35);
+}
+
 export async function triggerTrackNow(trackId: number): Promise<void> {
   const release = claimPendingAudible();
   if (!release) return;

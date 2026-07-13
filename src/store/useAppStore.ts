@@ -39,6 +39,7 @@ import {
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
+  MOOD_HEADPHONES_STORAGE_KEY,
   STEP_COUNT_INCREMENT,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
@@ -57,6 +58,16 @@ function persistAppMode(mode: AppMode): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage may be disabled in private mode; persistence is best-effort.
+  }
+}
+
+function persistMoodHeadphones(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) window.localStorage.setItem(MOOD_HEADPHONES_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
   } catch {
     // localStorage may be disabled in private mode; persistence is best-effort.
   }
@@ -224,6 +235,16 @@ function clearMoodTakePerformanceRefs(
     : { ...performance, selections, armed };
 }
 
+function commitEntryForExistingMoodTake(
+  piece: MoodPiece | null,
+  micId: string,
+  entry: MoodSelectionEntry,
+): MoodSelectionEntry {
+  if (entry === "off") return entry;
+  const mic = piece?.mics.find((candidate) => candidate.id === micId);
+  return mic?.takes.some((take) => take.id === entry) ? entry : "off";
+}
+
 export interface AppActions {
   setAppMode: (mode: AppMode) => void;
   setMoodHydration: (hydration: AppState["mood"]["hydration"]) => void;
@@ -240,6 +261,7 @@ export interface AppActions {
   ) => void;
   scratchMoodPiece: () => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
+  setMonitorWithHeadphones: (enabled: boolean) => void;
   armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
   commitMoodSelections: (dueArms: MoodSelectionCommit[]) => void;
   setMoodDrop: (dropActive: boolean) => void;
@@ -379,6 +401,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const piece = result.piece;
         return {
           mood: {
+            ...state.mood,
             piece,
             hydration: "ready",
             performance: piece
@@ -410,6 +433,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const piece = createEmptyMoodPiece(stage, timeFeel, opts);
         return {
           mood: {
+            ...state.mood,
             piece,
             hydration: "ready",
             performance: createMoodPerformanceForPiece(piece),
@@ -425,6 +449,7 @@ export const useAppStore = create<AppStore>((set) => ({
         revokeMoodPieceObjectUrls(state.mood.piece);
         return {
           mood: {
+            ...state.mood,
             piece: null,
             hydration: "ready",
             performance: createIdleMoodPerformance(),
@@ -450,6 +475,18 @@ export const useAppStore = create<AppStore>((set) => ({
         },
       })),
 
+    setMonitorWithHeadphones: (enabled) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        persistMoodHeadphones(enabled);
+        return {
+          mood: {
+            ...state.mood,
+            monitorWithHeadphones: enabled,
+          },
+        };
+      }),
+
     armMoodSelection: (micId, entry) =>
       set((state) => ({
         mood: {
@@ -467,7 +504,7 @@ export const useAppStore = create<AppStore>((set) => ({
         const selections = { ...state.mood.performance.selections };
         const armed = { ...state.mood.performance.armed };
         for (const { micId, entry } of dueArms) {
-          selections[micId] = entry;
+          selections[micId] = commitEntryForExistingMoodTake(state.mood.piece, micId, entry);
           armed[micId] = null;
         }
         return {

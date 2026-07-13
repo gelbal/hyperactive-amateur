@@ -10,9 +10,11 @@ vi.mock("tone", () => toneHarness.createToneModule());
 
 import {
   __resetMoodVideoPoolForTesting,
+  __getMoodVideoPoolStateForTesting,
   isVideoReadyForDraw,
   prepareUpcoming,
   restartVideosAtPeriodBoundary,
+  setCaptureVideoPolicy,
   syncPool,
   type MoodVideoPoolTake,
   videoForTake,
@@ -76,6 +78,7 @@ function spyVideoPlayback(video: HTMLVideoElement) {
 describe("moodVideoPool", () => {
   beforeEach(() => {
     __resetMoodVideoPoolForTesting();
+    setCaptureVideoPolicy(false);
     toneHarness.setImmediate(0);
     toneHarness.setLookahead(0);
     toneHarness.draw.reset();
@@ -252,5 +255,102 @@ describe("moodVideoPool", () => {
 
     setVideoFrameState(video, { readyState: 2, seeking: false, width: 640, height: 0 });
     expect(isVideoReadyForDraw(video)).toBe(false);
+  });
+
+  it("pauses non-metronome videos during capture and resumes them after", () => {
+    syncPool([
+      poolTake({ takeId: "metronome", url: "blob:test/metronome" }),
+      poolTake({ takeId: "band", url: "blob:test/band" }),
+    ]);
+    const metronome = videoForTake("metronome");
+    const band = videoForTake("band");
+    if (!metronome || !band) throw new Error("expected pooled videos");
+    const metronomePlayback = spyVideoPlayback(metronome);
+    const bandPlayback = spyVideoPlayback(band);
+
+    setCaptureVideoPolicy(true, "metronome");
+
+    expect(metronomePlayback.pause).not.toHaveBeenCalled();
+    expect(bandPlayback.pause).toHaveBeenCalledTimes(1);
+    expect(__getMoodVideoPoolStateForTesting()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ takeId: "metronome", playing: true, pausedForCapture: false }),
+        expect.objectContaining({ takeId: "band", playing: false, pausedForCapture: true }),
+      ]),
+    );
+
+    setCaptureVideoPolicy(false);
+
+    expect(bandPlayback.play).toHaveBeenCalledTimes(1);
+    expect(__getMoodVideoPoolStateForTesting()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ takeId: "metronome", playing: true, pausedForCapture: false }),
+        expect.objectContaining({ takeId: "band", playing: true, pausedForCapture: false }),
+      ]),
+    );
+  });
+
+  it("does not let period-boundary restarts unpause paused-for-capture videos", () => {
+    syncPool([
+      poolTake({ takeId: "metronome", url: "blob:test/metronome", loopStart: 0.125 }),
+      poolTake({ takeId: "band", url: "blob:test/band", loopStart: 0.25 }),
+    ]);
+    const metronome = videoForTake("metronome");
+    const band = videoForTake("band");
+    if (!metronome || !band) throw new Error("expected pooled videos");
+    const metronomePlayback = spyVideoPlayback(metronome);
+    const bandPlayback = spyVideoPlayback(band);
+
+    setCaptureVideoPolicy(true, "metronome");
+    metronomePlayback.play.mockClear();
+    metronomePlayback.seek.mockClear();
+    bandPlayback.play.mockClear();
+    bandPlayback.pause.mockClear();
+    bandPlayback.seek.mockClear();
+
+    restartVideosAtPeriodBoundary(1, 0);
+
+    expect(metronomePlayback.seek).toHaveBeenCalledWith(0.125);
+    expect(metronomePlayback.play).toHaveBeenCalledTimes(1);
+    expect(bandPlayback.seek).toHaveBeenCalledWith(0.25);
+    expect(bandPlayback.play).not.toHaveBeenCalled();
+    expect(bandPlayback.pause).not.toHaveBeenCalled();
+    expect(__getMoodVideoPoolStateForTesting()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ takeId: "band", playing: false, pausedForCapture: true }),
+      ]),
+    );
+  });
+
+  it("puts videos added by a mid-capture syncPool call directly under capture pause policy", () => {
+    syncPool([poolTake({ takeId: "metronome", url: "blob:test/metronome" })]);
+    setCaptureVideoPolicy(true, "metronome");
+    const prototypePlay = vi.spyOn(HTMLMediaElement.prototype, "play");
+    prototypePlay.mockClear();
+
+    try {
+      syncPool([
+        poolTake({ takeId: "metronome", url: "blob:test/metronome" }),
+        poolTake({ takeId: "new-band", url: "blob:test/new-band" }),
+      ]);
+
+      expect(videoForTake("new-band")).toBeInstanceOf(HTMLVideoElement);
+      expect(prototypePlay).not.toHaveBeenCalled();
+      expect(__getMoodVideoPoolStateForTesting()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ takeId: "new-band", playing: false, pausedForCapture: true }),
+        ]),
+      );
+
+      setCaptureVideoPolicy(false);
+
+      expect(__getMoodVideoPoolStateForTesting()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ takeId: "new-band", playing: true, pausedForCapture: false }),
+        ]),
+      );
+    } finally {
+      prototypePlay.mockRestore();
+    }
   });
 });

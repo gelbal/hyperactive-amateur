@@ -60,4 +60,16 @@ describe("autoTrim", () => {
     const { trimEndMs } = autoTrim(makeFakeBuffer({ durationMs: 4000, pulseAtMs: 200 }));
     expect(trimEndMs).toBeLessThanOrEqual(200 + 1500);
   });
+
+  it("keeps the Chop cap by default while allowing Mood to pass a wider cap", () => {
+    const buffer = makeFakeBuffer({ durationMs: 5000, pulseAtMs: 200 });
+    const implicitChop = autoTrim(buffer);
+    const explicitChop = autoTrim(buffer, 1500);
+    const mood = autoTrim(buffer, 3000);
+
+    expect(explicitChop).toEqual(implicitChop);
+    expect(mood.trimStartMs).toBe(implicitChop.trimStartMs);
+    expect(mood.trimEndMs).toBeGreaterThan(implicitChop.trimEndMs);
+    expect(mood.trimEndMs).toBeLessThanOrEqual(200 + 20 + 3000);
+  });
 });

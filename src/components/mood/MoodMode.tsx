@@ -9,8 +9,10 @@ import { runAudibleAction } from "../../lib/audibleActionRunner";
 import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useMoodKeys } from "../../lib/useMoodKeys";
+import { useRecordingEscapeCancel } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
+import { RecordingErrorNotice } from "../RecordingErrorNotice";
 import { MicStrip } from "./MicStrip";
 import { MoodStage } from "./MoodStage";
 
@@ -263,16 +265,20 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
 
 function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSeconds"] }) {
   const isExporting = useAppStore((s) => s.playback.isExporting);
+  const recordingState = useAppStore((s) => s.recording.state);
   const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
   const canStart = useAppStore(canStartAudibleAction);
   const needsCycle = cycleSeconds === null;
-  const disabled = isExporting || (!isPerforming && (needsCycle || !canStart));
+  const recordingActive = recordingState !== "idle";
+  const disabled = isExporting || recordingActive || (!isPerforming && (needsCycle || !canStart));
 
   const handleClick = () => {
+    if (isExporting || recordingActive) return;
     if (isPerforming) {
       stopMoodPerformance();
       return;
     }
+    if (needsCycle || !canStart) return;
     runAudibleAction(startMoodPerformance());
   };
 
@@ -366,8 +372,13 @@ export function MoodMode() {
   const piece = useAppStore((s) => s.mood.piece);
   const hydration = useAppStore((s) => s.mood.hydration);
   const isExporting = useAppStore((s) => s.playback.isExporting);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const recordingError = useAppStore((s) => s.recording.error);
   const hydrationStartedRef = useRef(false);
   const unmountedRef = useRef(false);
+  const recordingActive =
+    recordingState === "preparing" || recordingState === "countdown" || recordingState === "recording";
+  useRecordingEscapeCancel(recordingActive);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -421,6 +432,7 @@ export function MoodMode() {
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
       <MoodStage piece={piece} />
+      <RecordingErrorNotice message={recordingError} />
       <MoodPieceControls piece={piece} />
     </section>
   );

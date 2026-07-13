@@ -160,6 +160,22 @@ describe("useSpacebarPlayToggle", () => {
     expect(togglePlayback).not.toHaveBeenCalled();
   });
 
+  it("does not stop Mood performance from Space during an active overdub capture", () => {
+    render(<Harness />);
+    establishStartableMood();
+    useAppStore.getState().actions.setMoodPerforming(true, 12);
+    useAppStore.getState().actions.setRecordingState("recording", null);
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+
+    expect(stopMoodPerformance).not.toHaveBeenCalled();
+    expect(startMoodPerformance).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mood.performance).toMatchObject({
+      isPerforming: true,
+      epoch: 12,
+    });
+  });
+
   it("does not stop export-owned Mood performance from Space while exporting", () => {
     render(<Harness />);
     establishStartableMood();

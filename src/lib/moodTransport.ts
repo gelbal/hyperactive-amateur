@@ -46,6 +46,11 @@ function canStartAfterPendingAudible(): boolean {
   );
 }
 
+function canStartFromRecordingFlow(): boolean {
+  const state = useAppStore.getState();
+  return hasStartableMoodCycle() && !state.playback.isPlaying && !state.playback.isExporting;
+}
+
 function clearScheduledBoundaryRepeat(): void {
   if (scheduledBoundaryEventId === null) return;
   Tone.getTransport().clear(scheduledBoundaryEventId);
@@ -84,6 +89,23 @@ function onCycleBoundary(audioTime: number): void {
   scheduleCycleDisplayUpdate(audioTime);
 }
 
+async function startMoodPerformanceTransport(): Promise<boolean> {
+  const cycleSeconds = currentCycleSeconds();
+  if (cycleSeconds === null) return false;
+
+  clearScheduledBoundaryRepeat();
+  resetBoundaryState();
+  activeEpoch = Tone.now();
+  const transport = Tone.getTransport();
+  transport.position = 0;
+  scheduledBoundaryEventId = transport.scheduleRepeat(onCycleBoundary, cycleSeconds);
+  useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
+  const { syncCommittedMoodEngines } = await import("./moodPerformance");
+  syncCommittedMoodEngines();
+  transport.start();
+  return true;
+}
+
 export async function startMoodPerformance(): Promise<void> {
   if (!canClaimMoodStart()) return;
   const release = claimPendingAudible();
@@ -92,23 +114,15 @@ export async function startMoodPerformance(): Promise<void> {
   try {
     await ensureAudioRunning();
     if (!canStartAfterPendingAudible()) return;
-
-    const cycleSeconds = currentCycleSeconds();
-    if (cycleSeconds === null) return;
-
-    clearScheduledBoundaryRepeat();
-    resetBoundaryState();
-    activeEpoch = Tone.now();
-    const transport = Tone.getTransport();
-    transport.position = 0;
-    scheduledBoundaryEventId = transport.scheduleRepeat(onCycleBoundary, cycleSeconds);
-    useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
-    const { syncCommittedMoodEngines } = await import("./moodPerformance");
-    syncCommittedMoodEngines();
-    transport.start();
+    await startMoodPerformanceTransport();
   } finally {
     release();
   }
+}
+
+export async function startMoodPerformanceForRecordingFlow(): Promise<boolean> {
+  if (!canStartFromRecordingFlow()) return false;
+  return startMoodPerformanceTransport();
 }
 
 export function stopMoodPerformance(): void {

@@ -18,6 +18,7 @@ import { logger, LOG_EVENTS } from "../lib/logger";
 import {
   APP_MODE_STORAGE_KEY,
   AUDIO_DEVICE_STORAGE_KEY,
+  MOOD_HEADPHONES_STORAGE_KEY,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
 import { createEmptyMoodPiece, MAX_TAKES_PER_MIC } from "../lib/moodStages";
@@ -101,6 +102,7 @@ describe("useAppStore", () => {
     window.localStorage.removeItem(APP_MODE_STORAGE_KEY);
     window.localStorage.removeItem(VIDEO_DEVICE_STORAGE_KEY);
     window.localStorage.removeItem(AUDIO_DEVICE_STORAGE_KEY);
+    window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
     get().actions.reset();
     audioLifecycleMocks.noteMicHeld.mockClear();
     audioLifecycleMocks.noteMicReleased.mockClear();
@@ -655,6 +657,27 @@ describe("useAppStore", () => {
       expect(get().appMode).toBe("chop");
     });
 
+    it("defaults headphone monitoring off and persists it as a guarded machine pref", () => {
+      expect(get().mood.monitorWithHeadphones).toBe(false);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
+
+      get().actions.setMonitorWithHeadphones(true);
+
+      expect(get().mood.monitorWithHeadphones).toBe(true);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBe("1");
+
+      get().actions.reset();
+      expect(get().mood.monitorWithHeadphones).toBe(true);
+
+      get().actions.setMonitorWithHeadphones(false);
+
+      expect(get().mood.monitorWithHeadphones).toBe(false);
+      expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
+
+      get().actions.reset();
+      expect(get().mood.monitorWithHeadphones).toBe(false);
+    });
+
     it("creates an empty Mood piece with idle all-Off performance state", () => {
       const revision = get().session.moodRevision;
 
@@ -734,6 +757,7 @@ describe("useAppStore", () => {
 
     it("freezes piece writers during export while performance actions remain live", () => {
       get().actions.createMoodPiece("corners", "pocket");
+      get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-a" }));
       const pieceBeforeExport = get().mood.piece;
       const revisionBeforeExport = get().session.moodRevision;
       get().actions.setIsExporting(true);
@@ -759,7 +783,7 @@ describe("useAppStore", () => {
       const micIds = get().mood.piece?.mics.map((mic) => mic.id) ?? [];
       get().actions.setAppMode("mood");
       get().actions.setMoodPerforming(true, 12.5);
-      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "baseline-a" }]);
       get().actions.armMoodSelection("mic-1", "take-b");
       get().actions.setMoodDrop(true);
       get().actions.setMoodHotMic("mic-2");
@@ -776,13 +800,22 @@ describe("useAppStore", () => {
         // resets the boundary queue, so a preserved arm could never commit).
         selections: {
           ...Object.fromEntries(micIds.map((micId) => [micId, "off"])),
-          "mic-0": "take-a",
+          "mic-0": "baseline-a",
         },
         armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
       });
+    });
+
+    it("commits ghost Mood selection entries as off", () => {
+      get().actions.createMoodPiece("row", "pocket");
+
+      get().actions.commitMoodSelections([{ micId: "mic-0", entry: "ghost-take" }]);
+
+      expect(get().mood.performance.selections["mic-0"]).toBe("off");
+      expect(get().mood.performance.armed["mic-0"]).toBeNull();
     });
 
     it("ignores app mode changes and preference writes while exporting", () => {

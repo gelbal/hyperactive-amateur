@@ -51,9 +51,13 @@ vi.mock("./moodPlayers", () => ({
 
 import {
   __resetMoodRendererForTesting,
+  __getMoodRendererPreviewVideoForTesting,
+  deriveMoodMetronomeMicId,
+  drawDesaturated,
   drawMoodFrame,
   initMoodRenderer,
 } from "./moodRenderer";
+import { setMoodRecordingPreviewStream } from "./moodCapture";
 import {
   __resetMoodVideoPoolForTesting,
   syncPool,
@@ -75,6 +79,7 @@ type CanvasCall = {
   args: unknown[];
   fillStyle: string;
   globalAlpha: number;
+  globalCompositeOperation: string;
 };
 
 const originalImage = globalThis.Image;
@@ -229,6 +234,7 @@ describe("moodRenderer", () => {
 
   afterEach(() => {
     stopMoodPerformance();
+    setMoodRecordingPreviewStream(null);
     __resetMoodTransportForTesting();
     __resetMoodRendererForTesting();
     __resetMoodVideoPoolForTesting();
@@ -239,6 +245,7 @@ describe("moodRenderer", () => {
 
   it("promotes a due Mood selection commit exactly once from the paint loop", async () => {
     createMoodWithCycle(2);
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-b" }));
     const ctx = createRenderer("row");
     const commitSelections = vi.spyOn(
       useAppStore.getState().actions,
@@ -268,6 +275,7 @@ describe("moodRenderer", () => {
 
   it("lets a stalled paint catch up to the latest due boundary", async () => {
     createMoodWithCycle(2);
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-b" }));
     createRenderer("row");
     toneMocks.now.mockReturnValueOnce(10);
     await startMoodPerformance();
@@ -393,5 +401,224 @@ describe("moodRenderer", () => {
     imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
     expect(imageCalls).toHaveLength(1);
     expect(imageCalls[0].args[0]).toBe(video);
+  });
+
+  describe("capture render state", () => {
+    function capturePiece(): MoodPiece {
+      const piece = createEmptyMoodPiece("corners", "pocket");
+      const oneTake = makeMoodTake({
+        id: "the-one",
+        posterUrl: "blob:test/the-one-poster",
+        recordedAt: 10,
+      });
+      const hotTake = makeMoodTake({
+        id: "hot-live",
+        posterUrl: "blob:test/hot-live-poster",
+        recordedAt: 20,
+      });
+      const offTake = makeMoodTake({
+        id: "off-last",
+        posterUrl: "blob:test/off-last-poster",
+        recordedAt: 30,
+      });
+      return {
+        ...piece,
+        cycleSeconds: 2,
+        oneMicId: "mic-0",
+        oneTakeId: "the-one",
+        mics: piece.mics.map((mic, index) => {
+          if (index === 0) return { ...mic, takes: [oneTake] };
+          if (index === 1) return { ...mic, takes: [hotTake] };
+          if (index === 2) return { ...mic, takes: [offTake] };
+          return mic;
+        }),
+      };
+    }
+
+    function capturePerformance(): MoodPerformanceState {
+      return {
+        isPerforming: true,
+        epoch: 0,
+        selections: {
+          "mic-0": "the-one",
+          "mic-1": "hot-live",
+          "mic-2": "off",
+          "mic-3": "off",
+        },
+        armed: {
+          "mic-0": null,
+          "mic-1": null,
+          "mic-2": null,
+          "mic-3": null,
+        },
+        dropActive: false,
+        hotMicId: "mic-1",
+        cycleCount: 0,
+      };
+    }
+
+    function primeCapturePreview(): HTMLVideoElement {
+      const stream = new MediaStream();
+      setMoodRecordingPreviewStream(stream);
+      drawMoodFrame(1, {
+        piece: capturePiece(),
+        performance: capturePerformance(),
+      });
+      const preview = __getMoodRendererPreviewVideoForTesting();
+      if (!preview) throw new Error("expected a capture preview video");
+      setVideoFrameState(preview, {
+        readyState: 2,
+        seeking: false,
+        width: 640,
+        height: 480,
+      });
+      return preview;
+    }
+
+    it("draws hot preview, frozen posters, and the no-headphones B&W metronome", () => {
+      const ctx = createRenderer("corners");
+      const piece = capturePiece();
+      const performance = capturePerformance();
+      useAppStore.getState().actions.setRecordingState("countdown", null);
+      const preview = primeCapturePreview();
+      syncPool([
+        { takeId: "the-one", url: "blob:test/the-one", loopStart: 0, loopEnd: 2 },
+      ]);
+      const metronomeVideo = videoForTake("the-one");
+      if (!metronomeVideo) throw new Error("expected metronome video");
+      setVideoFrameState(metronomeVideo, {
+        readyState: 2,
+        seeking: false,
+        width: 640,
+        height: 480,
+      });
+
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.1, { piece, performance });
+
+      const imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+      expect(preview.muted).toBe(true);
+      expect(preview.playsInline).toBe(true);
+      expect(preview.autoplay).toBe(true);
+      expect(imageCalls.some((call) => call.args[0] === preview)).toBe(true);
+      expect(imageCalls.some((call) => call.args[0] === metronomeVideo)).toBe(true);
+      expect(imageCalls.some((call) => call.args[0] === videoForTake("hot-live"))).toBe(false);
+
+      const frozenPosterDraws = imageCalls.filter(
+        (call) =>
+          call.args[0] !== preview &&
+          call.args[0] !== metronomeVideo &&
+          call.globalAlpha > 0 &&
+          call.globalAlpha < 0.28,
+      );
+      expect(frozenPosterDraws.length).toBeGreaterThan(0);
+
+      expect(ctx.__haCanvasCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "rect",
+            args: [0, 0, 240, 240],
+          }),
+          expect.objectContaining({
+            method: "clip",
+            args: [],
+          }),
+          expect.objectContaining({
+            method: "fillRect",
+            args: [0, 0, 240, 240],
+            globalCompositeOperation: "saturation",
+          }),
+        ]),
+      );
+    });
+
+    it("freezes every non-hot tile and skips the metronome when headphones are on", () => {
+      const ctx = createRenderer("corners");
+      const piece = capturePiece();
+      const performance = capturePerformance();
+      useAppStore.getState().actions.setMonitorWithHeadphones(true);
+      useAppStore.getState().actions.setRecordingState("countdown", null);
+      const preview = primeCapturePreview();
+      syncPool([
+        { takeId: "the-one", url: "blob:test/the-one", loopStart: 0, loopEnd: 2 },
+      ]);
+      const metronomeVideo = videoForTake("the-one");
+      if (!metronomeVideo) throw new Error("expected metronome video");
+      setVideoFrameState(metronomeVideo, {
+        readyState: 2,
+        seeking: false,
+        width: 640,
+        height: 480,
+      });
+
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(1.1, { piece, performance });
+
+      const imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
+      expect(imageCalls.some((call) => call.args[0] === preview)).toBe(true);
+      expect(imageCalls.some((call) => call.args[0] === metronomeVideo)).toBe(false);
+      expect(
+        ctx.__haCanvasCalls.some(
+          (call) => call.globalCompositeOperation === "saturation",
+        ),
+      ).toBe(false);
+      expect(
+        imageCalls.filter(
+          (call) => call.args[0] !== preview && call.globalAlpha > 0 && call.globalAlpha < 0.28,
+        ).length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    it("derives the metronome mic from the One, then falls back to the earliest surviving take", () => {
+      const piece = capturePiece();
+      expect(deriveMoodMetronomeMicId(piece)).toBe("mic-0");
+
+      const fallbackPiece: MoodPiece = {
+        ...piece,
+        oneMicId: null,
+        oneTakeId: null,
+        mics: piece.mics.map((mic) => {
+          if (mic.id === "mic-0") return { ...mic, takes: [] };
+          if (mic.id === "mic-1") {
+            return {
+              ...mic,
+              takes: [makeMoodTake({ id: "oldest", recordedAt: 2 })],
+            };
+          }
+          if (mic.id === "mic-2") {
+            return {
+              ...mic,
+              takes: [makeMoodTake({ id: "newer", recordedAt: 5 })],
+            };
+          }
+          return mic;
+        }),
+      };
+      expect(deriveMoodMetronomeMicId(fallbackPiece)).toBe("mic-1");
+    });
+
+    it("clips drawDesaturated compositing to one tile without ctx.filter", () => {
+      const ctx = createRenderer("corners");
+      const image = new Image();
+      ctx.__haCanvasCalls.length = 0;
+
+      drawDesaturated(ctx, { micId: "mic-2", x: 11, y: 22, w: 33, h: 44 }, () => {
+        ctx.drawImage(image, 11, 22, 33, 44);
+      });
+
+      expect(ctx.__haCanvasCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ method: "beginPath", args: [] }),
+          expect.objectContaining({ method: "rect", args: [11, 22, 33, 44] }),
+          expect.objectContaining({ method: "clip", args: [] }),
+          expect.objectContaining({
+            method: "fillRect",
+            args: [11, 22, 33, 44],
+            globalCompositeOperation: "saturation",
+          }),
+        ]),
+      );
+      expect(ctx.__haCanvasCalls.map((call) => call.method)).not.toContain("filter");
+    });
   });
 });

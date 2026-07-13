@@ -19,6 +19,20 @@ export function canStartAudibleAction(state: AudibleActionGateState): boolean {
   );
 }
 
+export function canStartMoodTake(state: AudibleActionGateState): boolean {
+  return (
+    !pendingAudibleClaim &&
+    !state.playback.isPlaying &&
+    !state.playback.isExporting &&
+    state.recording.state === "idle"
+  );
+}
+
+export function canStartMoodPerformanceTap(state: AudibleActionGateState): boolean {
+  const moodIsPerforming = state.mood?.performance.isPerforming ?? false;
+  return state.recording.state === "idle" && (!state.playback.isExporting || moodIsPerforming);
+}
+
 export function claimPendingAudible(): (() => void) | null {
   if (!canStartAudibleAction(useAppStore.getState())) return null;
 

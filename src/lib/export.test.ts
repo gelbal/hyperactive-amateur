@@ -207,6 +207,22 @@ describe("exportSong", () => {
     expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
 
+  it("rejects export starts while recording is active", async () => {
+    useAppStore.getState().actions.setRecordingState("recording", 1);
+
+    await expect(
+      exportSong(makeCanvas(), makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+      }),
+    ).rejects.toThrow(/Cannot export while recording/);
+
+    expect(FakeMediaRecorder.startSpy).not.toHaveBeenCalled();
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
   it("exportSong honors a video/mp4 mimeType passed by the caller", async () => {
     const blob = await exportSong(makeCanvas(), makeAudioContext(), {
       bars: 1,

@@ -25,6 +25,7 @@ export function useSpacebarPlayToggle(): void {
       if (state.playback.isExporting) return;
 
       if (state.appMode === "mood") {
+        if (state.recording.state !== "idle") return;
         if (state.mood.performance.isPerforming) {
           event.preventDefault();
           stopMoodPerformance();

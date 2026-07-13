@@ -357,6 +357,38 @@ describe("media", () => {
     expect(useAppStore.getState().media.videoFacingMode).toBe("user");
   });
 
+  it("buildConstraints: default square hints stay intact while Mood can request stage aspect", () => {
+    const square = buildConstraints();
+    const squareVideo = square.video as MediaTrackConstraints;
+    expect(squareVideo.width).toEqual({ ideal: 720 });
+    expect(squareVideo.height).toEqual({ ideal: 720 });
+    expect(squareVideo.aspectRatio).toEqual({ ideal: 1 });
+
+    const portrait = buildConstraints({ w: 9, h: 16 });
+    const portraitVideo = portrait.video as MediaTrackConstraints;
+    expect(portraitVideo.width).toEqual({ ideal: 720 });
+    expect(portraitVideo.height).toEqual({ ideal: 1280 });
+    expect(portraitVideo.aspectRatio).toEqual({ ideal: 9 / 16 });
+    expect(portraitVideo.facingMode).toBe("user");
+  });
+
+  it("acquireRecordingStream passes Mood aspect hints into getUserMedia", async () => {
+    const fake = makeFakeStream();
+    const getUserMedia = vi.fn().mockResolvedValue(fake);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    await acquireRecordingStream({ w: 16, h: 9 });
+
+    const constraints = getUserMedia.mock.calls[0]?.[0] as MediaStreamConstraints;
+    const video = constraints.video as MediaTrackConstraints;
+    expect(video.width).toEqual({ ideal: 1280 });
+    expect(video.height).toEqual({ ideal: 720 });
+    expect(video.aspectRatio).toEqual({ ideal: 16 / 9 });
+  });
+
   it("buildConstraints: an explicit videoDeviceId wins over facingMode (Sources picker > flip hint)", () => {
     useAppStore.getState().actions.setVideoFacingMode("environment");
     useAppStore.getState().actions.setPreferredDevices({ video: "cam-id-123" });

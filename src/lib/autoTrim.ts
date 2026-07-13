@@ -1,5 +1,5 @@
 // ABOUTME: autoTrim — find a non-destructive trim window around the loudest part of a clip.
-// ABOUTME: Pure RMS-based onset detection in 10ms windows; cap at 1.5s after onset.
+// ABOUTME: Pure RMS-based onset detection in 10ms windows; default cap is 1.5s after onset.
 export interface TrimRange {
   trimStartMs: number;
   trimEndMs: number;
@@ -12,7 +12,7 @@ const MIN_CLIP_MS = 50;
 const SILENCE_RMS = 1e-6;
 const ONSET_THRESHOLD_RATIO = 0.05;
 
-export function autoTrim(buffer: AudioBuffer): TrimRange {
+export function autoTrim(buffer: AudioBuffer, maxContentMs = MAX_CONTENT_MS): TrimRange {
   const durationMs = buffer.duration * 1000;
 
   if (durationMs < MIN_CLIP_MS) {
@@ -66,7 +66,7 @@ export function autoTrim(buffer: AudioBuffer): TrimRange {
   const peakMs = peakWindow * WINDOW_MS;
 
   const trimStartMs = Math.max(0, onsetMs - PRE_ROLL_MS);
-  const trimEndMs = Math.min(durationMs, peakMs + MAX_CONTENT_MS);
+  const trimEndMs = Math.min(durationMs, peakMs + maxContentMs);
 
   return { trimStartMs, trimEndMs };
 }
