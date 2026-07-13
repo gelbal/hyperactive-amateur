@@ -23,7 +23,9 @@ export function applyDueCommits(audioTime: number): void {
     useAppStore.getState().actions.commitMoodSelections(selections);
   }
   if (lens !== null) {
-    useAppStore.getState().actions.setMoodLens(lens);
+    const actions = useAppStore.getState().actions;
+    actions.setMoodLens(lens);
+    actions.setMoodArmedLens(null);
   }
   if (selections.length > 0) {
     syncCommittedMoodEngines();

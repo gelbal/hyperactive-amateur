@@ -319,6 +319,9 @@ function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSecond
 
 function MoodLensControl({ lens }: { lens: MoodLens }) {
   const isExporting = useAppStore((s) => s.playback.isExporting);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const armedLens = useAppStore((s) => s.mood.performance.armedLens);
+  const disabled = isExporting || recordingState !== "idle";
 
   return (
     <div
@@ -328,25 +331,42 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
     >
       {LENS_OPTIONS.map((option) => {
         const selected = lens === option.id;
+        const armed = armedLens === option.id;
         const Icon = option.icon;
+        const armedDescriptionId = `mood-lens-${option.id}-armed`;
+        const title =
+          recordingState !== "idle"
+            ? `${option.label} lens locked during capture`
+            : isExporting
+              ? `${option.label} lens frozen during export`
+              : `${option.label} lens`;
         return (
           <button
             key={option.id}
             type="button"
             aria-label={`${option.label} lens`}
             aria-pressed={selected}
-            disabled={isExporting}
-            title={`${option.label} lens`}
+            aria-describedby={armed ? armedDescriptionId : undefined}
+            data-armed={armed ? "true" : undefined}
+            disabled={disabled}
+            title={title}
             onClick={() => armLens(option.id)}
             className={
               "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
               (selected
                 ? "bg-orange-500 text-zinc-950"
-                : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
+                : armed
+                  ? "animate-pulse border border-orange-400/50 text-orange-300 ring-2 ring-orange-500/40 hover:bg-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
             }
           >
             <Icon size={15} aria-hidden />
             <span>{option.label}</span>
+            {armed ? (
+              <span id={armedDescriptionId} className="sr-only">
+                armed for next cycle
+              </span>
+            ) : null}
           </button>
         );
       })}

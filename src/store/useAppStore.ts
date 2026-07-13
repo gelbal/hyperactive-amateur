@@ -124,6 +124,7 @@ function stopMoodPerformanceState(
     // arms do not: stopping resets the boundary queue, so a preserved arm would
     // pulse forever with no boundary to commit at. Clear armed, keep selections.
     armed: Object.fromEntries(Object.keys(performance.selections).map((micId) => [micId, null])),
+    armedLens: null,
   };
 }
 
@@ -262,6 +263,7 @@ export interface AppActions {
   ) => void;
   scratchMoodPiece: () => void;
   setMoodLens: (lens: MoodLens) => void;
+  setMoodArmedLens: (lens: MoodLens | null) => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
   setMonitorWithHeadphones: (enabled: boolean) => void;
   armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
@@ -474,9 +476,19 @@ export const useAppStore = create<AppStore>((set) => ({
               updatedAt: Date.now(),
             },
           },
-          session: bumpMoodRevision(state.session),
         };
       }),
+
+    setMoodArmedLens: (lens) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: {
+            ...state.mood.performance,
+            armedLens: lens,
+          },
+        },
+      })),
 
     setMoodPerforming: (isPerforming, epoch = null) =>
       set((state) => ({

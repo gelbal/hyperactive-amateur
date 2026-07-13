@@ -440,6 +440,35 @@ describe("MoodMode", () => {
     );
   });
 
+  it("marks an armed Mood lens separately from the committed lens", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+      const state = useAppStore.getState();
+      useAppStore.setState({
+        mood: {
+          ...state.mood,
+          performance: {
+            ...state.mood.performance,
+            armedLens: "splits",
+          },
+        },
+      });
+    });
+    render(<MoodMode />);
+
+    expect(screen.getByRole("button", { name: "Wall lens" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const splits = screen.getByRole("button", { name: "Splits lens" });
+    expect(splits).toHaveAttribute("aria-pressed", "false");
+    expect(splits).toHaveAttribute("data-armed", "true");
+    expect(splits).toHaveClass("animate-pulse");
+    expect(splits).toHaveClass("ring-2");
+  });
+
   it("disables the Mood lens toggle while exporting", () => {
     act(() => {
       useAppStore.getState().actions.setAppMode("mood");
@@ -461,6 +490,22 @@ describe("MoodMode", () => {
 
     expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
   });
+
+  it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
+    "disables the Mood lens toggle while capture is %s",
+    (recordingState) => {
+      act(() => {
+        useAppStore.getState().actions.setAppMode("mood");
+        useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+        useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+        useAppStore.getState().actions.setRecordingState(recordingState, 0);
+      });
+      render(<MoodMode />);
+
+      expect(screen.getByRole("button", { name: "Wall lens" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Splits lens" })).toBeDisabled();
+    },
+  );
 
   it("creates a Click mood piece with local bpm and bars", () => {
     render(<MoodMode />);

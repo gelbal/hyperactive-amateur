@@ -700,6 +700,7 @@ describe("useAppStore", () => {
         epoch: null,
         selections: { "mic-0": "off", "mic-1": "off" },
         armed: { "mic-0": null, "mic-1": null },
+        armedLens: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -762,7 +763,7 @@ describe("useAppStore", () => {
       get().actions.setMoodLens("splits");
 
       expect(get().mood.piece?.lens).toBe("splits");
-      expect(get().session.moodRevision).toBe(createdRevision + 1);
+      expect(get().session.moodRevision).toBe(createdRevision);
 
       const pieceBeforeExport = get().mood.piece;
       const revisionBeforeExport = get().session.moodRevision;
@@ -826,6 +827,7 @@ describe("useAppStore", () => {
           "mic-0": "baseline-a",
         },
         armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
+        armedLens: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -865,6 +867,9 @@ describe("useAppStore", () => {
       expect(get().session.moodRevision).toBe(start);
 
       get().actions.createMoodPiece("row", "pocket");
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodLens("splits");
       expect(get().session.moodRevision).toBe(start + 1);
 
       get().actions.setMoodPerforming(true, 8);
@@ -1167,6 +1172,25 @@ describe("useAppStore", () => {
           part: "lead",
           partSource: "user",
         });
+      });
+
+      it("keeps current sync-offset appliers valid across lens toggles", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-sync" }));
+        const revision = get().session.moodRevision;
+
+        get().actions.setMoodLens("splits");
+
+        expect(get().session.moodRevision).toBe(revision);
+        expect(
+          get().actions.applyMoodSyncOffsetIfCurrent(
+            "mic-0",
+            "take-sync",
+            96,
+            revision,
+          ),
+        ).toBe(true);
+        expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(96);
       });
 
       it("freezes take mutations during export", () => {

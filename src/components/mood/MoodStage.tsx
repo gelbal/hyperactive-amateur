@@ -164,6 +164,7 @@ function MoodSplitsZeroLiveOverlay({ piece }: MoodStageProps) {
   const recordingState = useAppStore((s) => s.recording.state);
   const show =
     piece.lens === "splits" &&
+    !pieceHasNoTakes(piece) &&
     !isCaptureOverlayState(recordingState) &&
     !hasLiveSelection(piece, performance.selections);
 
