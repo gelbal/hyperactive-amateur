@@ -36,7 +36,10 @@ import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
 import { classifyPart } from "./moodPartTag";
 import { syncAssist } from "./moodSyncAssist";
 import { snapTake } from "./moodTakeSnap";
-import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
+import {
+  armMoodSelectionCommit,
+  startMoodPerformanceForRecordingFlow,
+} from "./moodTransport";
 import { setCaptureVideoPolicy } from "./moodVideoPool";
 import { captureFirstFrame } from "./posterFrame";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
@@ -312,7 +315,13 @@ function fireSyncAssistWhenReady(
   if (!piece || cycleSeconds === null || piece.oneTakeId === take.id) return;
 
   const oneTake = findMoodTake(piece, piece.oneMicId, piece.oneTakeId);
-  if (!oneTake || oneTake.audioStatus !== "ok" || !oneTake.audioBuffer) return;
+  if (!oneTake || oneTake.audioStatus !== "ok" || !oneTake.audioBuffer) {
+    logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+      reason: "missing-reference-audio",
+      takeId: take.id,
+    });
+    return;
+  }
 
   let oneSlice: AudioBuffer;
   try {
@@ -335,7 +344,7 @@ function fireSyncAssistWhenReady(
   void syncAssist(take, oneSlice, cycleSeconds, undefined, signal)
     .then((result) => {
       if (!result) return;
-      useAppStore
+      const applied = useAppStore
         .getState()
         .actions.applyMoodSyncOffsetIfCurrent(
           micId,
@@ -343,6 +352,7 @@ function fireSyncAssistWhenReady(
           result.offsetMs,
           expectedRevision,
         );
+      if (applied) resyncLiveTakeAtBoundary(micId, take.id);
     })
     .catch((err) => {
       logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
@@ -351,6 +361,32 @@ function fireSyncAssistWhenReady(
         message: errorMessage(err),
       });
     });
+}
+
+// A landed offset only reaches the audio when players rebuild. If the take
+// is live in a running performance and the performer has nothing armed on
+// that mic, re-arm the CURRENT selection so the existing boundary drain
+// rebuilds the player in phase; an armed mic resyncs via its own commit.
+function resyncLiveTakeAtBoundary(micId: string, takeId: string): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const { performance } = state.mood;
+  if (
+    !piece ||
+    piece.cycleSeconds === null ||
+    !performance.isPerforming ||
+    performance.epoch === null
+  ) {
+    return;
+  }
+  if (performance.selections[micId] !== takeId) return;
+  if ((performance.armed[micId] ?? null) !== null) return;
+  const now = Tone.now();
+  armMoodSelectionCommit(
+    { micId, entry: takeId },
+    nextCycleBoundary(performance.epoch, piece.cycleSeconds, now),
+    now,
+  );
 }
 
 function firePartClassificationWhenReady(

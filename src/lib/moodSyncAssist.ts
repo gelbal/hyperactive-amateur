@@ -18,6 +18,11 @@ export const MOOD_SYNC_MODEL = "gemini-3.1-flash-lite";
 export const MOOD_SYNC_CONFIDENCE_THRESHOLD = 0.6;
 export const MOOD_SYNC_OFFSET_LIMIT_MS = 250;
 export const MOOD_SYNC_INLINE_BYTES_MAX = 3 * 1024 * 1024;
+// The proxy hard-caps the WHOLE request body (api/gemini.ts MAX_BODY_BYTES,
+// 4 MiB); the two inline WAVs share it, so their combined base64 stays under
+// it with headroom for JSON framing and the prompt. The relationship is
+// pinned by the proxy contract test.
+export const MOOD_SYNC_TOTAL_BYTES_MAX = 3.5 * 1024 * 1024;
 
 const BASE64_INFLATION = 4 / 3;
 
@@ -111,6 +116,15 @@ export async function syncAssist(
       return null;
     }
     const referenceSlice = sliceAudioBuffer(oneSlice, 0, cycleMs);
+    const combinedEstimated =
+      estimatedBase64Bytes(takeSlice) + estimatedBase64Bytes(referenceSlice);
+    if (combinedEstimated > MOOD_SYNC_TOTAL_BYTES_MAX) {
+      logMiss("payload-too-large", {
+        estimatedBytes: combinedEstimated,
+        limit: MOOD_SYNC_TOTAL_BYTES_MAX,
+      });
+      return null;
+    }
     const takeBase64 = await encodeInlineWav(takeSlice);
     if (!takeBase64) return null;
     const oneBase64 = await encodeInlineWav(referenceSlice);

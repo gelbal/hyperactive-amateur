@@ -180,6 +180,29 @@ describe("syncAssist", () => {
     expect((log?.payload as { reason?: string })?.reason).toBe("payload-too-large");
   });
 
+  it("fails open when the two wavs together would exceed the proxy body cap", async () => {
+    // Each slice passes the per-inline guard; the PAIR must still fit the
+    // proxy's whole-body limit (a ~14s pair crosses it, spec allows 20s).
+    const generateContent = vi.fn(async () => ({ text: JSON.stringify({ offsetMs: 0, confidence: 1 }) }));
+    const fourteenSeconds = makeBuffer(14.375, 48_000);
+
+    const result = await syncAssist(
+      makeTake({
+        audioBuffer: fourteenSeconds,
+        trimStartMs: 0,
+        trimEndMs: 14_375,
+      }),
+      makeBuffer(14.375, 48_000),
+      20,
+      { models: { generateContent } },
+    );
+
+    expect(result).toBeNull();
+    expect(generateContent).not.toHaveBeenCalled();
+    const log = getLogs().find((entry) => entry.event === "mood-sync.miss");
+    expect((log?.payload as { reason?: string })?.reason).toBe("payload-too-large");
+  });
+
   it("fails open quietly for malformed responses, missing keys, and network loss", async () => {
     expect(
       await syncAssist(
