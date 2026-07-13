@@ -56,7 +56,11 @@ import {
   drawDesaturated,
   drawMoodFrame,
   initMoodRenderer,
+  PRINT_FRAME_BUDGET_MS,
+  PRINT_WATCHDOG_WINDOW_FRAMES,
 } from "./moodRenderer";
+import { getPrintDensity, setPrintDensity } from "./moodVibes";
+import { LOG_EVENTS, logger } from "./logger";
 import { setMoodRecordingPreviewStream } from "./moodCapture";
 import {
   __resetMoodVideoPoolForTesting,
@@ -234,6 +238,7 @@ describe("moodRenderer", () => {
   });
 
   afterEach(() => {
+    setPrintDensity("normal");
     stopMoodPerformance();
     setMoodRecordingPreviewStream(null);
     __resetMoodTransportForTesting();
@@ -386,6 +391,72 @@ describe("moodRenderer", () => {
     );
     expect(tileDrawIndex).toBeGreaterThanOrEqual(0);
     expect(vibeDrawIndex).toBeGreaterThan(tileDrawIndex);
+  });
+
+  function makePrintFrame(): { piece: MoodPiece; performanceState: MoodPerformanceState } {
+    const piece: MoodPiece = { ...createEmptyMoodPiece("corners", "pocket"), vibe: "print" };
+    const performanceState: MoodPerformanceState = {
+      isPerforming: false,
+      epoch: null,
+      selections: {
+        "mic-0": "off",
+        "mic-1": "off",
+        "mic-2": "off",
+        "mic-3": "off",
+      },
+      armed: {
+        "mic-0": null,
+        "mic-1": null,
+        "mic-2": null,
+        "mic-3": null,
+      },
+      armedLens: null,
+      dropActive: false,
+      hotMicId: null,
+      cycleCount: 0,
+    };
+    return { piece, performanceState };
+  }
+
+  it("degrades Print for the session after a window of over-budget frames", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    let clock = 0;
+    vi.spyOn(globalThis.performance, "now").mockImplementation(() => (clock += 13));
+    const { piece, performanceState } = makePrintFrame();
+    createRenderer("corners");
+
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+
+    expect(getPrintDensity()).toBe("degraded");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      LOG_EVENTS.MOOD_PRINT_DEGRADED,
+      expect.objectContaining({ budgetMs: PRINT_FRAME_BUDGET_MS }),
+    );
+
+    // Session-scoped: the tripped watchdog never re-measures or re-logs.
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(getPrintDensity()).toBe("degraded");
+  });
+
+  it("keeps Print at normal density while frames fit the budget", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    let clock = 0;
+    vi.spyOn(globalThis.performance, "now").mockImplementation(() => (clock += 0.01));
+    const { piece, performanceState } = makePrintFrame();
+    createRenderer("corners");
+
+    for (let i = 0; i < PRINT_WATCHDOG_WINDOW_FRAMES * 2; i++) {
+      drawMoodFrame(0, { piece, performance: performanceState });
+    }
+
+    expect(getPrintDensity()).toBe("normal");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("falls back to the live poster until the pooled take video is drawable", () => {

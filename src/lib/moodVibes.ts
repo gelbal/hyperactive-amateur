@@ -2,7 +2,7 @@
 // ABOUTME: Owns reusable offscreen resources so per-frame painting stays allocation-free.
 import type { MoodStageId, MoodVibeId } from "../types";
 import { STAGE_DESCRIPTORS } from "./moodStages";
-import { CAMCORDER, CAMCORDER_NOISE_TILE_COUNT, MIXTAPE } from "./moodVibePalettes";
+import { CAMCORDER, CAMCORDER_NOISE_TILE_COUNT, MIXTAPE, PRINT } from "./moodVibePalettes";
 
 type VibeApplier = (
   ctx: CanvasRenderingContext2D,
@@ -31,10 +31,50 @@ export interface CamcorderVibeResources {
   frameCounter: number;
 }
 
+export type PrintDensity = "normal" | "degraded";
+
+// Lattice cells across the stage canvas's LONG axis per density. The
+// degraded lattice is the frame-budget fallback the renderer's watchdog
+// drops to on weak devices (spec §14 S5).
+export const PRINT_LATTICE_LONG_AXIS: Record<PrintDensity, number> = {
+  normal: 48,
+  degraded: 32,
+};
+
+// Dots smaller than this read as noise, not halftone — skip them.
+const PRINT_MIN_DOT_RADIUS_PX = 0.4;
+// Slight overlap at full darkness so shadows print solid, not dotted.
+const PRINT_MAX_RADIUS_CELL_SHARE = 0.62;
+
+export interface PrintLatticeResources {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  centers: Float32Array;
+  maxRadius: number;
+}
+
+export interface PrintVibeResources {
+  normal: PrintLatticeResources;
+  degraded: PrintLatticeResources;
+}
+
 export interface VibeResources {
   blocks: BlocksVibeResources;
   mixtape: MixtapeVibeResources;
   camcorder: CamcorderVibeResources;
+  print: PrintVibeResources;
+}
+
+// The degrade knob is session-scoped: once the renderer's watchdog trips
+// it, Print stays coarse until the tab reloads.
+let printDensity: PrintDensity = "normal";
+
+export function setPrintDensity(density: PrintDensity): void {
+  printDensity = density;
+}
+
+export function getPrintDensity(): PrintDensity {
+  return printDensity;
 }
 
 function createResourceCanvas(width: number, height: number): HTMLCanvasElement {
@@ -90,6 +130,35 @@ function createNoiseTile(): HTMLCanvasElement {
   return tile;
 }
 
+function createPrintLattice(
+  canvasW: number,
+  canvasH: number,
+  density: PrintDensity,
+): PrintLatticeResources {
+  const longAxis = Math.max(canvasW, canvasH);
+  const cellSize = longAxis / PRINT_LATTICE_LONG_AXIS[density];
+  const cellsX = Math.max(1, Math.round(canvasW / cellSize));
+  const cellsY = Math.max(1, Math.round(canvasH / cellSize));
+  const cellW = canvasW / cellsX;
+  const cellH = canvasH / cellsY;
+  const canvas = createResourceCanvas(cellsX, cellsY);
+  const ctx = getResourceContext(canvas, "Mood Print lattice vibe");
+  const centers = new Float32Array(cellsX * cellsY * 2);
+  for (let cy = 0; cy < cellsY; cy++) {
+    for (let cx = 0; cx < cellsX; cx++) {
+      const i = (cy * cellsX + cx) * 2;
+      centers[i] = (cx + 0.5) * cellW;
+      centers[i + 1] = (cy + 0.5) * cellH;
+    }
+  }
+  return {
+    canvas,
+    ctx,
+    centers,
+    maxRadius: Math.min(cellW, cellH) * PRINT_MAX_RADIUS_CELL_SHARE,
+  };
+}
+
 function clipFullCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
   ctx.beginPath();
   ctx.rect(0, 0, canvas.width, canvas.height);
@@ -139,6 +208,14 @@ export function initVibeResources(stage: MoodStageId): VibeResources {
       noiseTiles,
       noisePatterns,
       frameCounter: 0,
+    },
+    print: {
+      normal: createPrintLattice(descriptor.canvasSize.w, descriptor.canvasSize.h, "normal"),
+      degraded: createPrintLattice(
+        descriptor.canvasSize.w,
+        descriptor.canvasSize.h,
+        "degraded",
+      ),
     },
   };
 }
@@ -244,12 +321,50 @@ function applyCamcorder(
   ctx.restore();
 }
 
+const TWO_PI = Math.PI * 2;
+
+function applyPrint(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  resources: VibeResources,
+): void {
+  const lattice = resources.print[printDensity];
+  const { canvas: latticeCanvas, ctx: latticeCtx, centers, maxRadius } = lattice;
+  latticeCtx.drawImage(canvas, 0, 0, latticeCanvas.width, latticeCanvas.height);
+  // The ONLY readback in any vibe — lattice-sized, never full resolution.
+  const { data } = latticeCtx.getImageData(0, 0, latticeCanvas.width, latticeCanvas.height);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = PRINT.paper;
+  fillFullCanvas(ctx, canvas);
+
+  ctx.fillStyle = PRINT.ink;
+  ctx.beginPath();
+  const cellCount = centers.length / 2;
+  for (let i = 0; i < cellCount; i++) {
+    const o = i * 4;
+    const luma = 0.2126 * data[o] + 0.7152 * data[o + 1] + 0.0722 * data[o + 2];
+    const radius = maxRadius * (1 - luma / 255);
+    if (radius < PRINT_MIN_DOT_RADIUS_PX) continue;
+    const x = centers[i * 2];
+    const y = centers[i * 2 + 1];
+    // moveTo before each arc keeps the dots disjoint subpaths — without it
+    // the path chords dots together and the fill grows slivers.
+    ctx.moveTo(x + radius, y);
+    ctx.arc(x, y, radius, 0, TWO_PI);
+  }
+  ctx.fill();
+  ctx.restore();
+}
+
 const VIBE_APPLIERS = {
   clean: applyIdentity,
   blocks: applyBlocks,
   mixtape: applyMixtape,
   camcorder: applyCamcorder,
-  print: applyIdentity,
+  print: applyPrint,
 } satisfies Record<MoodVibeId, VibeApplier>;
 
 export function applyVibe(

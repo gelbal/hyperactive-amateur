@@ -20,3 +20,9 @@ export const CAMCORDER = {
 } as const;
 
 export const CAMCORDER_NOISE_TILE_COUNT = 4;
+
+// Tuned during the L-phase real-footage polish session.
+export const PRINT = {
+  paper: colors.stone[100],
+  ink: colors.stone[900],
+} as const;

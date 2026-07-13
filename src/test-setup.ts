@@ -180,6 +180,15 @@ if (typeof HTMLCanvasElement !== "undefined") {
         beginPath: vi.fn((...args: unknown[]) => {
           recordCall("beginPath", args);
         }),
+        moveTo: vi.fn((...args: unknown[]) => {
+          recordCall("moveTo", args);
+        }),
+        arc: vi.fn((...args: unknown[]) => {
+          recordCall("arc", args);
+        }),
+        fill: vi.fn((...args: unknown[]) => {
+          recordCall("fill", args);
+        }),
         rect: vi.fn((...args: unknown[]) => {
           recordCall("rect", args);
         }),
@@ -202,7 +211,22 @@ if (typeof HTMLCanvasElement !== "undefined") {
         }),
         scale: vi.fn(),
         translate: vi.fn(),
-        getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+        // Honors the requested dimensions with a deterministic gray ramp so
+        // lattice readbacks (Print) see varied luminance across cells.
+        getImageData: vi.fn((...args: unknown[]) => {
+          recordCall("getImageData", args);
+          const w = Math.max(1, Number(args[2]) || 1);
+          const h = Math.max(1, Number(args[3]) || 1);
+          const data = new Uint8ClampedArray(w * h * 4);
+          for (let i = 0; i < w * h; i++) {
+            const value = (i % 32) * 8;
+            data[i * 4] = value;
+            data[i * 4 + 1] = value;
+            data[i * 4 + 2] = value;
+            data[i * 4 + 3] = 255;
+          }
+          return { data, width: w, height: h };
+        }),
         putImageData: () => undefined,
       };
       contexts.set(this, context);

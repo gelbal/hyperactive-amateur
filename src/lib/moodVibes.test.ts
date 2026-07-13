@@ -1,10 +1,10 @@
 // ABOUTME: moodVibes tests — pins Mood full-frame vibe pass behavior.
 // ABOUTME: Covers identity fallbacks and Blocks offscreen resource reuse.
 import colors from "tailwindcss/colors";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { applyVibe, initVibeResources } from "./moodVibes";
-import { CAMCORDER, MIXTAPE } from "./moodVibePalettes";
+import { applyVibe, initVibeResources, setPrintDensity } from "./moodVibes";
+import { CAMCORDER, MIXTAPE, PRINT } from "./moodVibePalettes";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import type { MoodStageId, MoodVibeId } from "../types";
 
@@ -39,6 +39,10 @@ function drawImageCalls(ctx: RecordedContext): CanvasCall[] {
 }
 
 describe("moodVibes", () => {
+  afterEach(() => {
+    setPrintDensity("normal");
+  });
+
   it("keeps Clean as an identity pass", () => {
     const { canvas, ctx } = renderContext();
     const resources = initVibeResources("corners");
@@ -48,16 +52,102 @@ describe("moodVibes", () => {
     expect(ctx.__haCanvasCalls).toEqual([]);
   });
 
-  it("keeps Print as an identity fallback until its step ships", () => {
-    const { canvas, ctx } = renderContext();
+  it("draws Print as one tiny readback and one batched dot fill", () => {
+    const { canvas, ctx } = renderContext("corners");
     const resources = initVibeResources("corners");
+    const lattice = resources.print.normal;
+    const latticeCtx = lattice.ctx as RecordedContext;
 
     applyVibe(ctx, canvas, "print", resources);
 
-    expect(ctx.__haCanvasCalls).toEqual([]);
+    // One downsample into the lattice offscreen, one tiny readback.
+    const sampleDraws = drawImageCalls(latticeCtx);
+    expect(sampleDraws).toHaveLength(1);
+    expect(sampleDraws[0].args[0]).toBe(canvas);
+    const readbacks = latticeCtx.__haCanvasCalls.filter(
+      (call) => call.method === "getImageData",
+    );
+    expect(readbacks).toHaveLength(1);
+    expect(readbacks[0].args).toEqual([0, 0, lattice.canvas.width, lattice.canvas.height]);
+
+    // Paper field first, then ONE batched path of dots with ONE ink fill.
+    const fillRects = ctx.__haCanvasCalls.filter((call) => call.method === "fillRect");
+    expect(fillRects).toHaveLength(1);
+    expect(fillRects[0]).toMatchObject({
+      args: [0, 0, canvas.width, canvas.height],
+      fillStyle: PRINT.paper,
+      globalAlpha: 1,
+      globalCompositeOperation: "source-over",
+    });
+    const byMethod = (method: string) =>
+      ctx.__haCanvasCalls.filter((call) => call.method === method);
+    expect(byMethod("beginPath")).toHaveLength(1);
+    const arcs = byMethod("arc");
+    expect(arcs.length).toBeGreaterThan(0);
+    expect(arcs.length).toBeLessThanOrEqual(
+      lattice.canvas.width * lattice.canvas.height,
+    );
+    expect(byMethod("moveTo")).toHaveLength(arcs.length);
+    const fills = byMethod("fill");
+    expect(fills).toHaveLength(1);
+    expect(fills[0].fillStyle).toBe(PRINT.ink);
+    expect(ctx.__haCanvasCalls.indexOf(fillRects[0])).toBeLessThan(
+      ctx.__haCanvasCalls.indexOf(fills[0]),
+    );
   });
 
-  it("pulls fixed Mixtape and Camcorder palettes from Tailwind defaults", () => {
+  it("precomputes lattice geometry per density and stage shape", () => {
+    const corners = initVibeResources("corners").print;
+    expect([corners.normal.canvas.width, corners.normal.canvas.height]).toEqual([48, 48]);
+    expect([corners.degraded.canvas.width, corners.degraded.canvas.height]).toEqual([
+      32, 32,
+    ]);
+
+    const row = initVibeResources("row").print;
+    expect([row.normal.canvas.width, row.normal.canvas.height]).toEqual([48, 27]);
+    expect([row.degraded.canvas.width, row.degraded.canvas.height]).toEqual([32, 18]);
+
+    const stack = initVibeResources("stack").print;
+    expect([stack.normal.canvas.width, stack.normal.canvas.height]).toEqual([27, 48]);
+    expect([stack.degraded.canvas.width, stack.degraded.canvas.height]).toEqual([18, 32]);
+
+    expect(corners.normal.centers).toHaveLength(48 * 48 * 2);
+    expect(corners.degraded.centers).toHaveLength(32 * 32 * 2);
+  });
+
+  it("switches the lattice with the degrade knob for the session", () => {
+    const { canvas, ctx } = renderContext("corners");
+    const resources = initVibeResources("corners");
+    const normalCtx = resources.print.normal.ctx as RecordedContext;
+    const degradedCtx = resources.print.degraded.ctx as RecordedContext;
+
+    setPrintDensity("degraded");
+    applyVibe(ctx, canvas, "print", resources);
+
+    expect(drawImageCalls(degradedCtx)).toHaveLength(1);
+    expect(drawImageCalls(normalCtx)).toHaveLength(0);
+  });
+
+  it("reuses Print resources across frames", () => {
+    const { canvas, ctx } = renderContext("corners");
+    const resources = initVibeResources("corners");
+    const print = resources.print;
+    const normalCanvas = print.normal.canvas;
+    const centers = print.normal.centers;
+
+    applyVibe(ctx, canvas, "print", resources);
+    applyVibe(ctx, canvas, "print", resources);
+
+    expect(resources.print).toBe(print);
+    expect(resources.print.normal.canvas).toBe(normalCanvas);
+    expect(resources.print.normal.centers).toBe(centers);
+  });
+
+  it("pulls fixed Mixtape, Camcorder, and Print palettes from Tailwind defaults", () => {
+    expect(PRINT).toEqual({
+      paper: colors.stone[100],
+      ink: colors.stone[900],
+    });
     expect(MIXTAPE).toEqual({
       shadow: colors.zinc[950],
       highlight: colors.orange[500],
@@ -258,10 +348,12 @@ describe("moodVibes", () => {
       applyVibe(ctx, canvas, vibe, resources);
     }
 
-    expect(drawImageCalls(ctx).map((call) => call.args[0])).toEqual([
-      resources.blocks.canvas,
-      resources.camcorder.frameCanvas,
-      resources.camcorder.frameCanvas,
-    ]);
+    // toBe, not toEqual: two blank canvases of the same size are
+    // structurally equal, so toEqual cannot tell tint from snapshot.
+    const sources = drawImageCalls(ctx).map((call) => call.args[0]);
+    expect(sources).toHaveLength(3);
+    expect(sources[0]).toBe(resources.blocks.canvas);
+    expect(sources[1]).toBe(resources.camcorder.tintCanvas);
+    expect(sources[2]).toBe(resources.camcorder.tintCanvas);
   });
 });

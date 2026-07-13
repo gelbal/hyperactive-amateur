@@ -19,7 +19,14 @@ import {
 import { applyDueCommits } from "./moodCommits";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import { layoutFor, type TileRect } from "./moodTilers";
-import { applyVibe, initVibeResources, type VibeResources } from "./moodVibes";
+import {
+  applyVibe,
+  getPrintDensity,
+  initVibeResources,
+  setPrintDensity,
+  type VibeResources,
+} from "./moodVibes";
+import { LOG_EVENTS, logger } from "./logger";
 import {
   isVideoReadyForDraw,
   setCaptureVideoPolicy,
@@ -54,6 +61,39 @@ let renderer: MoodRenderer | null = null;
 const posterCache = new Map<string, PosterCacheEntry>();
 let capturePreviewVideo: HTMLVideoElement | null = null;
 let capturePreviewStream: MediaStream | null = null;
+
+// Print frame-budget watchdog. Thresholds are fallback defaults pending the
+// S5 spike rows in .claude/mood/spikes.md — 12ms approximates a 30fps
+// frame's paint share on a mid-tier phone; 60 frames of sustained overage
+// (~2s) before degrading avoids tripping on one-off jank.
+export const PRINT_FRAME_BUDGET_MS = 12;
+export const PRINT_WATCHDOG_WINDOW_FRAMES = 60;
+let printFrameTotalMs = 0;
+let printFrameCount = 0;
+let printWatchdogTripped = false;
+
+// drawMoodFrame destructures the mood `performance` state, which shadows
+// the global — the wall-clock reader must be bound out here. This is
+// diagnostic timing only; musical time stays on the audio clock.
+function frameNowMs(): number {
+  return performance.now();
+}
+
+function recordPrintFrameTime(durationMs: number): void {
+  printFrameTotalMs += durationMs;
+  printFrameCount += 1;
+  if (printFrameCount < PRINT_WATCHDOG_WINDOW_FRAMES) return;
+  const averageMs = printFrameTotalMs / printFrameCount;
+  printFrameTotalMs = 0;
+  printFrameCount = 0;
+  if (averageMs <= PRINT_FRAME_BUDGET_MS) return;
+  printWatchdogTripped = true;
+  setPrintDensity("degraded");
+  logger.warn(LOG_EVENTS.MOOD_PRINT_DEGRADED, {
+    averageMs: Math.round(averageMs * 100) / 100,
+    budgetMs: PRINT_FRAME_BUDGET_MS,
+  });
+}
 
 export function initMoodRenderer(canvas: HTMLCanvasElement, stage: MoodStageId): void {
   const descriptor = STAGE_DESCRIPTORS[stage];
@@ -322,6 +362,10 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
 
+  const watchPrintBudget =
+    piece.vibe === "print" && !printWatchdogTripped && getPrintDensity() === "normal";
+  const frameStartMs = watchPrintBudget ? frameNowMs() : 0;
+
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
 
@@ -342,6 +386,10 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   if (piece.vibe !== "clean") {
     applyVibe(ctx, active.canvas, piece.vibe, active.vibeResources);
   }
+
+  if (watchPrintBudget) {
+    recordPrintFrameTime(frameNowMs() - frameStartMs);
+  }
 }
 
 export function __resetMoodRendererForTesting(): void {
@@ -350,6 +398,9 @@ export function __resetMoodRendererForTesting(): void {
   clearCapturePreviewVideo();
   capturePreviewVideo = null;
   setCaptureVideoPolicy(false);
+  printFrameTotalMs = 0;
+  printFrameCount = 0;
+  printWatchdogTripped = false;
 }
 
 export function __getMoodRendererPreviewVideoForTesting(): HTMLVideoElement | null {
