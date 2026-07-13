@@ -65,6 +65,7 @@ import {
 } from "./moodVideoPool";
 import {
   __resetMoodTransportForTesting,
+  armMoodLensCommit,
   armMoodSelectionCommit,
   startMoodPerformance,
   stopMoodPerformance,
@@ -319,6 +320,7 @@ describe("moodRenderer", () => {
         "mic-2": null,
         "mic-3": null,
       },
+      armedLens: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -373,6 +375,7 @@ describe("moodRenderer", () => {
         "mic-2": null,
         "mic-3": null,
       },
+      armedLens: null,
       dropActive: false,
       hotMicId: null,
       cycleCount: 0,
@@ -401,6 +404,101 @@ describe("moodRenderer", () => {
     imageCalls = ctx.__haCanvasCalls.filter((call) => call.method === "drawImage");
     expect(imageCalls).toHaveLength(1);
     expect(imageCalls[0].args[0]).toBe(video);
+  });
+
+  describe("Splits lens", () => {
+    function fillRectArgs(ctx: { __haCanvasCalls: CanvasCall[] }): unknown[][] {
+      return ctx.__haCanvasCalls
+        .filter((call) => call.method === "fillRect")
+        .map((call) => call.args);
+    }
+
+    it("hard-cuts re-tiles only when the armed lens commit reaches the boundary", async () => {
+      const actions = useAppStore.getState().actions;
+      actions.createMoodPiece("corners", "pocket");
+      actions.setMoodTake("mic-0", makeMoodTake({ id: "the-one", durationSeconds: 2 }));
+      actions.setMoodTake("mic-1", makeMoodTake({ id: "take-b" }));
+      actions.commitMoodSelections([{ micId: "mic-0", entry: "the-one" }]);
+      actions.setAppMode("mood");
+      const ctx = createRenderer("corners");
+      toneMocks.now.mockReturnValueOnce(10);
+      await startMoodPerformance();
+      armMoodLensCommit("splits", 12);
+
+      const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+      boundaryCallback?.(12);
+
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(11.99, currentRenderState());
+      expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
+      expect(fillRectArgs(ctx)).toEqual(
+        expect.arrayContaining([
+          [0, 0, 240, 240],
+          [240, 0, 240, 240],
+          [0, 240, 240, 240],
+          [240, 240, 240, 240],
+        ]),
+      );
+
+      ctx.__haCanvasCalls.length = 0;
+      drawMoodFrame(12, currentRenderState());
+
+      expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
+      expect(fillRectArgs(ctx)).toEqual(expect.arrayContaining([[0, 0, 480, 480]]));
+      expect(fillRectArgs(ctx)).not.toEqual(
+        expect.arrayContaining([
+          [0, 0, 240, 240],
+          [240, 0, 240, 240],
+          [0, 240, 240, 240],
+          [240, 240, 240, 240],
+        ]),
+      );
+    });
+
+    it("renders the Corners three-live asymmetric Splits layout", () => {
+      const basePiece = createEmptyMoodPiece("corners", "pocket");
+      const piece: MoodPiece = {
+        ...basePiece,
+        lens: "splits",
+        mics: basePiece.mics.map((mic, index) =>
+          index < 3 ? { ...mic, takes: [makeMoodTake({ id: `take-${index}` })] } : mic,
+        ),
+      };
+      const performance: MoodPerformanceState = {
+        isPerforming: false,
+        epoch: null,
+        selections: {
+          "mic-0": "take-0",
+          "mic-1": "take-1",
+          "mic-2": "take-2",
+          "mic-3": "off",
+        },
+        armed: {
+          "mic-0": null,
+          "mic-1": null,
+          "mic-2": null,
+          "mic-3": null,
+        },
+        armedLens: null,
+        dropActive: false,
+        hotMicId: null,
+        cycleCount: 0,
+      };
+      const ctx = createRenderer("corners");
+
+      drawMoodFrame(1, { piece, performance });
+
+      expect(fillRectArgs(ctx)).toEqual(
+        expect.arrayContaining([
+          [0, 0, 240, 480],
+          [240, 0, 240, 240],
+          [240, 240, 240, 240],
+        ]),
+      );
+      expect(fillRectArgs(ctx)).not.toEqual(
+        expect.arrayContaining([[0, 240, 240, 240]]),
+      );
+    });
   });
 
   describe("capture render state", () => {
@@ -451,6 +549,7 @@ describe("moodRenderer", () => {
           "mic-2": null,
           "mic-3": null,
         },
+        armedLens: null,
         dropActive: false,
         hotMicId: "mic-1",
         cycleCount: 0,

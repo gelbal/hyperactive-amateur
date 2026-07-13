@@ -119,6 +119,7 @@ export interface MoodPerformanceState {
   epoch: number | null;
   selections: Record<string, MoodSelectionEntry>;
   armed: Record<string, MoodSelectionEntry | null>;
+  armedLens: MoodLens | null;
   dropActive: boolean;
   hotMicId: string | null;
   cycleCount: number;

@@ -2,11 +2,11 @@
 // ABOUTME: Keeps stack swaps quantized while syncing audio players and hidden video.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
+import type { MoodLens, MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
 import { canStartMoodPerformanceTap } from "./audibleActionGate";
 import { nextCycleBoundary, takeLoopPeriod } from "./moodClock";
 import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
-import { armMoodSelectionCommit } from "./moodTransport";
+import { armMoodLensCommit, armMoodSelectionCommit } from "./moodTransport";
 import {
   liveTakesFromSelections,
   prepareUpcoming,
@@ -135,4 +135,23 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
   if (entry !== "off") {
     prepareUpcoming(entry, boundaryTime);
   }
+}
+
+export function armLens(lens: MoodLens): void {
+  const state = useAppStore.getState();
+  if (state.playback.isExporting) return;
+  if (!canStartMoodPerformanceTap(state)) return;
+
+  const piece = state.mood.piece;
+  if (!piece) return;
+
+  const performance = state.mood.performance;
+  if (!performance.isPerforming || performance.epoch === null || piece.cycleSeconds === null) {
+    state.actions.setMoodLens(lens);
+    return;
+  }
+
+  state.actions.setMoodArmedLens(lens === piece.lens ? null : lens);
+  const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, Tone.now());
+  armMoodLensCommit(lens, boundaryTime);
 }

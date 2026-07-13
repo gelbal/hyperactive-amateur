@@ -61,6 +61,7 @@ export function createIdleMoodPerformance(): MoodPerformanceState {
     epoch: null,
     selections: {},
     armed: {},
+    armedLens: null,
     dropActive: false,
     hotMicId: null,
     cycleCount: 0,

@@ -700,6 +700,7 @@ describe("useAppStore", () => {
         epoch: null,
         selections: { "mic-0": "off", "mic-1": "off" },
         armed: { "mic-0": null, "mic-1": null },
+        armedLens: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -755,6 +756,27 @@ describe("useAppStore", () => {
       warn.mockRestore();
     });
 
+    it("persists Mood lens changes and freezes them during export", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      const createdRevision = get().session.moodRevision;
+
+      get().actions.setMoodLens("splits");
+
+      expect(get().mood.piece?.lens).toBe("splits");
+      expect(get().session.moodRevision).toBe(createdRevision);
+
+      const pieceBeforeExport = get().mood.piece;
+      const revisionBeforeExport = get().session.moodRevision;
+      get().actions.setIsExporting(true);
+
+      get().actions.setMoodLens("wall");
+
+      expect(get().mood.piece).toBe(pieceBeforeExport);
+      expect(get().mood.piece?.lens).toBe("splits");
+      expect(get().session.moodRevision).toBe(revisionBeforeExport);
+      get().actions.setIsExporting(false);
+    });
+
     it("freezes piece writers during export while performance actions remain live", () => {
       get().actions.createMoodPiece("corners", "pocket");
       get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-a" }));
@@ -764,11 +786,13 @@ describe("useAppStore", () => {
 
       get().actions.createMoodPiece("stack", "pocket");
       get().actions.scratchMoodPiece();
+      get().actions.setMoodLens("splits");
       get().actions.armMoodSelection("mic-0", "take-a");
       get().actions.commitMoodSelections([{ micId: "mic-0", entry: "take-a" }]);
       get().actions.setMoodDrop(true);
 
       expect(get().mood.piece).toBe(pieceBeforeExport);
+      expect(get().mood.piece?.lens).toBe("wall");
       expect(get().session.moodRevision).toBe(revisionBeforeExport);
       expect(get().mood.performance.selections["mic-0"]).toBe("take-a");
       expect(get().mood.performance.armed["mic-0"]).toBeNull();
@@ -803,6 +827,7 @@ describe("useAppStore", () => {
           "mic-0": "baseline-a",
         },
         armed: Object.fromEntries(micIds.map((micId) => [micId, null])),
+        armedLens: null,
         dropActive: false,
         hotMicId: null,
         cycleCount: 0,
@@ -842,6 +867,9 @@ describe("useAppStore", () => {
       expect(get().session.moodRevision).toBe(start);
 
       get().actions.createMoodPiece("row", "pocket");
+      expect(get().session.moodRevision).toBe(start + 1);
+
+      get().actions.setMoodLens("splits");
       expect(get().session.moodRevision).toBe(start + 1);
 
       get().actions.setMoodPerforming(true, 8);
@@ -1144,6 +1172,25 @@ describe("useAppStore", () => {
           part: "lead",
           partSource: "user",
         });
+      });
+
+      it("keeps current sync-offset appliers valid across lens toggles", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-sync" }));
+        const revision = get().session.moodRevision;
+
+        get().actions.setMoodLens("splits");
+
+        expect(get().session.moodRevision).toBe(revision);
+        expect(
+          get().actions.applyMoodSyncOffsetIfCurrent(
+            "mic-0",
+            "take-sync",
+            96,
+            revision,
+          ),
+        ).toBe(true);
+        expect(get().mood.piece?.mics[0].takes[0].syncOffsetMs).toBe(96);
       });
 
       it("freezes take mutations during export", () => {
