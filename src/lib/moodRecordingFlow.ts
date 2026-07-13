@@ -8,6 +8,7 @@ import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
 import { isAbortError } from "./aiClient";
 import { saveNow } from "./autoSave";
 import { autoTrim } from "./autoTrim";
+import { sliceAudioBuffer } from "./audioBufferSlice";
 import { canStartMoodTake } from "./audibleActionGate";
 import { armSelection } from "./moodPerformance";
 import { acquireRecordingStreamUntilAbort } from "./recordingAcquire";
@@ -32,8 +33,13 @@ import {
 } from "./moodCapture";
 import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
+import { classifyPart } from "./moodPartTag";
+import { syncAssist } from "./moodSyncAssist";
 import { snapTake } from "./moodTakeSnap";
-import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
+import {
+  armMoodSelectionCommit,
+  startMoodPerformanceForRecordingFlow,
+} from "./moodTransport";
 import { setCaptureVideoPolicy } from "./moodVideoPool";
 import { captureFirstFrame } from "./posterFrame";
 import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
@@ -293,6 +299,124 @@ function attachPosterWhenReady(
   })();
 }
 
+function findMoodTake(piece: MoodPiece, micId: string | null, takeId: string | null): MoodTake | null {
+  if (!micId || !takeId) return null;
+  return piece.mics.find((mic) => mic.id === micId)?.takes.find((take) => take.id === takeId) ?? null;
+}
+
+function fireSyncAssistWhenReady(
+  micId: string,
+  take: MoodTake,
+  signal: AbortSignal,
+): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const cycleSeconds = piece?.cycleSeconds ?? null;
+  if (!piece || cycleSeconds === null || piece.oneTakeId === take.id) return;
+
+  const oneTake = findMoodTake(piece, piece.oneMicId, piece.oneTakeId);
+  if (!oneTake || oneTake.audioStatus !== "ok" || !oneTake.audioBuffer) {
+    logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+      reason: "missing-reference-audio",
+      takeId: take.id,
+    });
+    return;
+  }
+
+  let oneSlice: AudioBuffer;
+  try {
+    const cycleMs = cycleSeconds * 1000;
+    oneSlice = sliceAudioBuffer(
+      oneTake.audioBuffer,
+      oneTake.trimStartMs,
+      Math.min(oneTake.trimEndMs, oneTake.trimStartMs + cycleMs),
+    );
+  } catch (err) {
+    logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+      reason: "slice",
+      takeId: take.id,
+      message: errorMessage(err),
+    });
+    return;
+  }
+
+  const expectedRevision = state.session.moodRevision;
+  void syncAssist(take, oneSlice, cycleSeconds, undefined, signal)
+    .then((result) => {
+      if (!result) return;
+      const applied = useAppStore
+        .getState()
+        .actions.applyMoodSyncOffsetIfCurrent(
+          micId,
+          take.id,
+          result.offsetMs,
+          expectedRevision,
+        );
+      if (applied) resyncLiveTakeAtBoundary(micId, take.id);
+    })
+    .catch((err) => {
+      logger.warn(LOG_EVENTS.MOOD_SYNC_MISS, {
+        reason: "flow-error",
+        takeId: take.id,
+        message: errorMessage(err),
+      });
+    });
+}
+
+// A landed offset only reaches the audio when players rebuild. If the take
+// is live in a running performance and the performer has nothing armed on
+// that mic, re-arm the CURRENT selection so the existing boundary drain
+// rebuilds the player in phase; an armed mic resyncs via its own commit.
+function resyncLiveTakeAtBoundary(micId: string, takeId: string): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const { performance } = state.mood;
+  if (
+    !piece ||
+    piece.cycleSeconds === null ||
+    !performance.isPerforming ||
+    performance.epoch === null
+  ) {
+    return;
+  }
+  if (performance.selections[micId] !== takeId) return;
+  if ((performance.armed[micId] ?? null) !== null) return;
+  const now = Tone.now();
+  armMoodSelectionCommit(
+    { micId, entry: takeId },
+    nextCycleBoundary(performance.epoch, piece.cycleSeconds, now),
+    now,
+  );
+}
+
+function firePartClassificationWhenReady(
+  micId: string,
+  take: MoodTake,
+  signal: AbortSignal,
+): void {
+  const expectedRevision = useAppStore.getState().session.moodRevision;
+  void classifyPart(take, undefined, signal)
+    .then((result) => {
+      if (!result) return;
+      useAppStore
+        .getState()
+        .actions.applyMoodPartIfCurrent(
+          micId,
+          take.id,
+          result.part,
+          "ai",
+          expectedRevision,
+        );
+    })
+    .catch((err) => {
+      logger.warn(LOG_EVENTS.MOOD_PART_MISS, {
+        reason: "flow-error",
+        takeId: take.id,
+        message: errorMessage(err),
+      });
+    });
+}
+
 async function recordWithEarlyStop(
   stream: MediaStream,
   capMs: number,
@@ -491,6 +615,8 @@ async function runFlow(
     actions.setRecordingState("idle", null);
     armSelection(micId, take.id);
     attachPosterWhenReady(micId, take.id, result.blob, signal);
+    fireSyncAssistWhenReady(micId, take, signal);
+    firePartClassificationWhenReady(micId, take, signal);
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {
