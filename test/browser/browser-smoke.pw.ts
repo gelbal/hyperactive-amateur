@@ -350,3 +350,139 @@ test("surfaces export MediaRecorder failures without camera permission", async (
 
   await expect(page.getByText("smoke encoder failed")).toBeVisible();
 });
+
+// Mood: mocked camera/mic tracks with the REAL MediaRecorder so the One
+// records and decodes for real — UI plumbing proof, not device proof.
+async function installMoodMediaMocks(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    function makeStream(): MediaStream {
+      const canvas = document.createElement("canvas");
+      canvas.width = 16;
+      canvas.height = 16;
+      const ctx = canvas.getContext("2d");
+      let hue = 0;
+      window.setInterval(() => {
+        if (!ctx) return;
+        hue = (hue + 37) % 360;
+        ctx.fillStyle = `hsl(${hue} 80% 50%)`;
+        ctx.fillRect(0, 0, 16, 16);
+      }, 100);
+      const videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+
+      const AudioCtor =
+        window.AudioContext ??
+        (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      const audioContext = new AudioCtor();
+      const destination = audioContext.createMediaStreamDestination();
+      const oscillator = audioContext.createOscillator();
+      oscillator.connect(destination);
+      oscillator.start();
+      const audioTrack = destination.stream.getAudioTracks()[0];
+
+      return new MediaStream(
+        [videoTrack, audioTrack].filter((track): track is MediaStreamTrack =>
+          Boolean(track),
+        ),
+      );
+    }
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => makeStream(),
+        enumerateDevices: async () => [],
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      },
+    });
+  });
+}
+
+async function recordTheOne(page: Page): Promise<void> {
+  await page.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Mood" }).click();
+  await page.getByRole("button", { name: /Corners/ }).click();
+  await page.getByRole("button", { name: "record the One" }).click();
+  await expect(page.getByRole("button", { name: /Stop take/ })).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.waitForTimeout(2500);
+  await page.getByRole("button", { name: /Stop take/ }).click();
+  await expect(page.getByRole("button", { name: "record the One" })).toHaveCount(0, {
+    timeout: 10_000,
+  });
+}
+
+test("records the One in Mood and performs from the keyboard", async ({ page }) => {
+  await installMoodMediaMocks(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+
+  await recordTheOne(page);
+
+  // The take lands on the mic chip and auto-commits live.
+  await expect(
+    page.getByRole("button", { name: /mic 1 — live: take 1/ }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // Spacebar starts and stops the performance; the stage live region and
+  // play control reflect the state (store/UI proof, not timing).
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Stop mood performance" })).toBeVisible();
+  await expect(page.locator("[aria-live='polite']", { hasText: "performing" })).toHaveCount(1);
+
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Start mood performance" })).toBeVisible();
+  await expect(page.locator("[aria-live='polite']", { hasText: "stopped" })).toHaveCount(1);
+});
+
+test("surfaces mood export recorder failures and stops the export-owned run", async ({
+  page,
+}) => {
+  await installMoodMediaMocks(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+
+  await recordTheOne(page);
+
+  // Swap in a failing recorder AFTER capture so only the export hits it.
+  await page.evaluate(() => {
+    class FailingRecorder extends EventTarget {
+      static isTypeSupported() {
+        return true;
+      }
+      state = "inactive";
+      mimeType = "video/webm";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      onstop: ((event: Event) => void) | null = null;
+      constructor() {
+        super();
+      }
+      start() {
+        this.state = "recording";
+        window.setTimeout(() => {
+          const error = new Error("smoke encoder failed");
+          this.state = "inactive";
+          this.onerror?.({ error } as ErrorEvent);
+          this.onstop?.(new Event("stop"));
+        }, 0);
+      }
+      requestData() {}
+      stop() {
+        this.state = "inactive";
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", {
+      configurable: true,
+      value: FailingRecorder,
+    });
+  });
+
+  await page.getByRole("button", { name: "Export" }).click();
+  await page.getByRole("button", { name: /^Render$/ }).click();
+
+  await expect(page.getByText("smoke encoder failed")).toBeVisible({ timeout: 15_000 });
+  // The failed render stops the performance the export started.
+  await expect(page.getByRole("button", { name: "Start mood performance" })).toBeVisible();
+});
