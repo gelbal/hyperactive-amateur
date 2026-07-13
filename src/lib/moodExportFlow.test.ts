@@ -262,6 +262,34 @@ describe("moodExportFlow", () => {
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
 
+  it("stops the zombie even when a retry has registered a NEW session", async () => {
+    createPieceWithCycle();
+    let resolveStart!: (started: boolean) => void;
+    moodTransportMocks.startMoodPerformanceForExportFlow.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    startMoodExport({ mimeType: "video/webm" });
+    const options = exportMocks.exportSong.mock.calls[0][2] as ExportOptions;
+
+    const prepare = Promise.resolve(options.drive?.prepare?.());
+    const rejection = expect(prepare).rejects.toThrow(/export ended/i);
+    await flushMicrotasks();
+
+    // The first export dies AND the user retries: a NEW session exists by
+    // the time the abandoned start resolves. Mere session EXISTENCE must
+    // not fool the guard — only the OWNING session counts.
+    unregisterSession?.();
+    unregisterSession = registerExportSession({ abort: () => undefined });
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    resolveStart(true);
+
+    await rejection;
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes recordingStarted resolving when prepare completes", async () => {
     createPieceWithCycle();
     const handle = startMoodExport({ mimeType: "video/webm" });

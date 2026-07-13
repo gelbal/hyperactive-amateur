@@ -61,6 +61,12 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
   // Ownership: the rejection cleanup may only stop a performance THIS
   // export started — a pre-session refusal must not stop someone else's run.
   let performanceStartedByExport = false;
+  // Captured after the exportSong call below: it registers its session
+  // synchronously before its first await, so the active session at that
+  // point is THIS export's own. Identity matters — a retry can register a
+  // NEW session before an abandoned start resumes, and mere existence must
+  // not fool the guard.
+  let ownSession: object | null = null;
 
   const result = exportSong(canvas, getAudioContext(), {
     stopSignal,
@@ -81,9 +87,11 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
           throw new Error("Could not start the performance for the export.");
         }
         // The export may have aborted while the start awaited its own
-        // internals; the registered session is the mutex — if it died, the
-        // abandoned start must be undone here, not left running.
-        if (getActiveExportSession() === null) {
+        // internals; the OWNING session is the mutex — if it died or was
+        // replaced by a retry, the abandoned start must be undone here,
+        // not left running. (A retry's own performance cannot exist yet:
+        // its start gate refuses while this zombie's isPerforming is up.)
+        if (getActiveExportSession() !== ownSession) {
           stopMoodPerformance();
           throw new Error("Export ended before the performance start settled.");
         }
@@ -118,6 +126,9 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     if (performanceStartedByExport) stopMoodPerformance();
     throw err;
   });
+  // exportSong registered its session synchronously before its first await,
+  // so the active session here is this export's own.
+  ownSession = getActiveExportSession();
 
   return { result, finish, recordingStarted };
 }
