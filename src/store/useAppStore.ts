@@ -7,6 +7,7 @@ import type {
   Clip,
   CutSubdivision,
   MediaStatus,
+  MoodLens,
   MoodPiece,
   MoodPart,
   MoodSelectionCommit,
@@ -260,6 +261,7 @@ export interface AppActions {
     opts?: { bpm?: number; cycleBars?: NonNullable<MoodPiece["cycleBars"]> },
   ) => void;
   scratchMoodPiece: () => void;
+  setMoodLens: (lens: MoodLens) => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
   setMonitorWithHeadphones: (enabled: boolean) => void;
   armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
@@ -453,6 +455,24 @@ export const useAppStore = create<AppStore>((set) => ({
             piece: null,
             hydration: "ready",
             performance: createIdleMoodPerformance(),
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
+    setMoodLens: (lens) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece || piece.lens === lens) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: {
+              ...piece,
+              lens,
+              updatedAt: Date.now(),
+            },
           },
           session: bumpMoodRevision(state.session),
         };

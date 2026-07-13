@@ -1,17 +1,18 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
 // ABOUTME: Starts with a stage picker, render stage, and Mood practice controls.
 import { useEffect, useRef, useState } from "react";
-import { Play, Square } from "lucide-react";
+import { LayoutGrid, Play, Square, SquareSplitHorizontal } from "lucide-react";
 import { BpmDialControl } from "../BpmDial";
 import { getAudioContext } from "../../lib/audio";
 import { canStartAudibleAction } from "../../lib/audibleActionGate";
 import { runAudibleAction } from "../../lib/audibleActionRunner";
+import { armLens } from "../../lib/moodPerformance";
 import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useMoodKeys } from "../../lib/useMoodKeys";
 import { useRecordingEscapeCancel } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
+import type { MoodLens, MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
 import { RecordingErrorNotice } from "../RecordingErrorNotice";
 import { MicStrip } from "./MicStrip";
 import { MoodStage } from "./MoodStage";
@@ -52,6 +53,11 @@ const FEEL_OPTIONS: FeelOption[] = [
 ];
 
 const CYCLE_BAR_OPTIONS: MoodCycleBars[] = [1, 2, 4];
+
+const LENS_OPTIONS: { id: MoodLens; label: string; icon: typeof LayoutGrid }[] = [
+  { id: "wall", label: "Wall", icon: LayoutGrid },
+  { id: "splits", label: "Splits", icon: SquareSplitHorizontal },
+];
 
 function StageGlyph({ stage }: { stage: MoodStageId }) {
   if (stage === "corners") {
@@ -311,6 +317,43 @@ function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSecond
   );
 }
 
+function MoodLensControl({ lens }: { lens: MoodLens }) {
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+
+  return (
+    <div
+      role="group"
+      aria-label="Mood lens"
+      className="inline-flex rounded border border-zinc-800 bg-zinc-950 p-1"
+    >
+      {LENS_OPTIONS.map((option) => {
+        const selected = lens === option.id;
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-label={`${option.label} lens`}
+            aria-pressed={selected}
+            disabled={isExporting}
+            title={`${option.label} lens`}
+            onClick={() => armLens(option.id)}
+            className={
+              "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              (selected
+                ? "bg-orange-500 text-zinc-950"
+                : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
+            }
+          >
+            <Icon size={15} aria-hidden />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MoodPieceControls({ piece }: { piece: MoodPiece }) {
   const cycleCount = useAppStore((s) => s.mood.performance.cycleCount);
   const isExporting = useAppStore((s) => s.playback.isExporting);
@@ -320,12 +363,15 @@ function MoodPieceControls({ piece }: { piece: MoodPiece }) {
     <div className="flex w-full flex-col gap-3">
       <MicStrip piece={piece} />
       <div className="flex w-full flex-col items-center justify-between gap-3 sm:flex-row">
-        <span
-          aria-label="Time feel"
-          className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
-        >
-          {moodFeelLabel(piece)}
-        </span>
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+          <MoodLensControl lens={piece.lens} />
+          <span
+            aria-label="Time feel"
+            className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs tabular-nums text-zinc-300"
+          >
+            {moodFeelLabel(piece)}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <MoodPlayButton cycleSeconds={piece.cycleSeconds} />
           <span

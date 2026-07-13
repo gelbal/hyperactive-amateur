@@ -1,6 +1,6 @@
 // ABOUTME: MoodStage tests — pins Mood render/display canvas contracts.
 // ABOUTME: Verifies active export-canvas registration and audio-clock paint loop wiring.
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toneMocks = vi.hoisted(() => ({
@@ -230,5 +230,25 @@ describe("MoodStage", () => {
     render(<MoodStage piece={piece} />);
 
     expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("1");
+  });
+
+  it("renders the Splits zero-live state as a cycle-driven DOM boundary pulse", () => {
+    const piece: MoodPiece = { ...makePiece("corners"), lens: "splits" };
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toHaveAttribute(
+      "data-cycle",
+      "0",
+    );
+
+    act(() => {
+      useAppStore.getState().actions.setMoodCycleCount(4);
+    });
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toHaveAttribute(
+      "data-cycle",
+      "4",
+    );
   });
 });

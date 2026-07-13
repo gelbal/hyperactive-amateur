@@ -9,6 +9,8 @@ const audioMocks = vi.hoisted(() => ({
 }));
 
 const moodTransportMocks = vi.hoisted(() => ({
+  armMoodLensCommit: vi.fn(),
+  armMoodSelectionCommit: vi.fn(),
   consumeDueCommits: vi.fn(() => []),
   startMoodPerformance: vi.fn(),
   stopMoodPerformance: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock("../../lib/audio", () => ({
 }));
 
 vi.mock("../../lib/moodTransport", () => ({
+  armMoodLensCommit: moodTransportMocks.armMoodLensCommit,
+  armMoodSelectionCommit: moodTransportMocks.armMoodSelectionCommit,
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
   startMoodPerformance: moodTransportMocks.startMoodPerformance,
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
@@ -101,6 +105,8 @@ describe("MoodMode", () => {
     moodTransportMocks.startMoodPerformance.mockReset();
     moodTransportMocks.startMoodPerformance.mockResolvedValue(undefined);
     moodTransportMocks.stopMoodPerformance.mockReset();
+    moodTransportMocks.armMoodLensCommit.mockReset();
+    moodTransportMocks.armMoodSelectionCommit.mockReset();
     moodTransportMocks.consumeDueCommits.mockReset();
     moodTransportMocks.consumeDueCommits.mockReturnValue([]);
     moodRecordingMocks.recordMoodTake.mockReset();
@@ -409,6 +415,51 @@ describe("MoodMode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop mood performance" }));
 
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles the Mood lens immediately while stopped", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    expect(screen.getByRole("group", { name: "Mood lens" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Wall lens" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Splits lens" }));
+
+    expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
+    expect(screen.getByRole("button", { name: "Splits lens" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("disables the Mood lens toggle while exporting", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    act(() => {
+      useAppStore.getState().actions.setIsExporting(true);
+    });
+
+    const wall = screen.getByRole("button", { name: "Wall lens" });
+    const splits = screen.getByRole("button", { name: "Splits lens" });
+    expect(wall).toBeDisabled();
+    expect(splits).toBeDisabled();
+
+    fireEvent.click(splits);
+
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
   });
 
   it("creates a Click mood piece with local bpm and bars", () => {

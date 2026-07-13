@@ -29,6 +29,11 @@ const audioLifecycleMocks = vi.hoisted(() => ({
   ensureAudioRunning: vi.fn(),
 }));
 
+const moodPlayersMocks = vi.hoisted(() => ({
+  stopAllMoodPlayers: vi.fn(),
+  syncMoodPlayers: vi.fn(),
+}));
+
 const moodVideoPoolMocks = vi.hoisted(() => ({
   liveTakesFromSelections: vi.fn(() => []),
   prepareUpcoming: vi.fn(),
@@ -46,6 +51,11 @@ vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
 }));
 
+vi.mock("./moodPlayers", () => ({
+  stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
+  syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
+}));
+
 vi.mock("./moodVideoPool", () => ({
   liveTakesFromSelections: moodVideoPoolMocks.liveTakesFromSelections,
   prepareUpcoming: moodVideoPoolMocks.prepareUpcoming,
@@ -55,6 +65,7 @@ vi.mock("./moodVideoPool", () => ({
 
 import {
   __resetMoodTransportForTesting,
+  armMoodLensCommit,
   armMoodSelectionCommit,
   consumeDueCommits,
   startMoodPerformance,
@@ -135,6 +146,8 @@ describe("moodTransport", () => {
     moodVideoPoolMocks.prepareUpcoming.mockReset();
     moodVideoPoolMocks.restartVideosAtPeriodBoundary.mockReset();
     moodVideoPoolMocks.syncPool.mockReset();
+    moodPlayersMocks.stopAllMoodPlayers.mockReset();
+    moodPlayersMocks.syncMoodPlayers.mockReset();
   });
 
   afterEach(() => {
@@ -275,6 +288,28 @@ describe("moodTransport", () => {
 
     expect(useAppStore.getState().mood.performance.selections["mic-1"]).toBe("off");
     expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBeNull();
+  });
+
+  it("applies due lens commits through the same paint-path drain", async () => {
+    createMoodWithCycle(2);
+    toneMocks.now.mockReturnValueOnce(10);
+    await startMoodPerformance();
+    armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12);
+    armMoodLensCommit("splits", 12);
+
+    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    boundaryCallback?.(12);
+
+    applyDueCommits(11.99);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
+
+    applyDueCommits(12);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("the-one");
+    expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
+    applyDueCommits(99);
+    expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
   });
 
   it("stop cancels the repeat, resets flags, and preserves the mix", async () => {

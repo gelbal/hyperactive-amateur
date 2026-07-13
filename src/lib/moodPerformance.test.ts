@@ -81,7 +81,7 @@ vi.mock("./moodPlayers", () => ({
 
 import { __resetPendingAudibleClaimForTesting } from "./audibleActionGate";
 import { applyDueCommits } from "./moodCommits";
-import { armSelection } from "./moodPerformance";
+import { armLens, armSelection } from "./moodPerformance";
 import {
   __resetMoodRendererForTesting,
   drawMoodFrame,
@@ -240,6 +240,15 @@ describe("moodPerformance", () => {
     expect(moodPlayersMocks.syncMoodPlayers).not.toHaveBeenCalled();
   });
 
+  it("applies lens changes immediately while stopped", () => {
+    createMoodWithStack(2);
+
+    armLens("splits");
+
+    expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
+    expect(toneMocks.repeatCallbacks).toHaveLength(0);
+  });
+
   it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
     "no-ops armSelection while a take is %s",
     (recordingState) => {
@@ -266,6 +275,17 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("take-a");
     expect(videoForTake("take-a")).toBeInstanceOf(HTMLVideoElement);
+  });
+
+  it("freezes lens changes during export because the lens belongs to the piece", () => {
+    createMoodWithStack(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    useAppStore.getState().actions.setIsExporting(true);
+    toneMocks.setNow(10.5);
+
+    armLens("splits");
+
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
   });
 
   it("seeds the already committed mix when performance starts", async () => {
@@ -305,6 +325,24 @@ describe("moodPerformance", () => {
     );
     expect(videoForTake("take-a")).toBeNull();
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
+  });
+
+  it("arms lens changes while performing and commits them on the One", async () => {
+    createMoodWithStack(2);
+    toneMocks.setNow(10);
+    await startMoodPerformance();
+
+    toneMocks.setNow(10.5);
+    armLens("splits");
+
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
+
+    fireCycleBoundary(12);
+    applyDueCommits(11.99);
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
+
+    applyDueCommits(12);
+    expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
   });
 
   it("keeps outgoing and prepared incoming videos through the pre-boundary frame, then prunes after commit", async () => {
