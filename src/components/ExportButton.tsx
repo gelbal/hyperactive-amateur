@@ -22,7 +22,7 @@ const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
-const SHARE_FALLBACK_MESSAGE = "Sharing failed — saved as a download instead.";
+const SHARE_FALLBACK_MESSAGE = "Sharing failed. Saved as a download instead.";
 
 type ExportReview = {
   blob: Blob;
@@ -318,12 +318,12 @@ export function ExportButton() {
           {isMood ? (
             <>
               <p className="text-sm text-zinc-200">
-                Renders your live performance from the One — every arm, swap,
-                and Drop is part of the take.
+                One-take render from the One. Every arm, swap, and Drop is part
+                of the take.
               </p>
               <p className="text-xs text-zinc-400">
-                Up to {MOOD_CEILING_LABEL} — hit finish to end the take. Keep
-                this screen open while rendering.
+                Up to {MOOD_CEILING_LABEL}. Hit finish to end the take. Keep this
+                screen open while rendering.
               </p>
             </>
           ) : (
@@ -347,7 +347,7 @@ export function ExportButton() {
                 />
               </label>
               <p className="text-xs text-zinc-400">
-                Keep this screen open — rendering takes about {exportDurationSeconds} s.
+                Keep this screen open. Rendering takes about {exportDurationSeconds} s.
               </p>
             </>
           )}
@@ -366,8 +366,8 @@ export function ExportButton() {
               </div>
               <span className="text-xs text-zinc-400">
                 {isMood && moodCountingIn
-                  ? "Counting in — the render starts on the One…"
-                  : `Rendering… ${Math.round(progress * 100)}%`}
+                  ? "Counting in: the render starts on the One..."
+                  : `Rendering... ${Math.round(progress * 100)}%`}
               </span>
               {isMood && !moodCountingIn && (
                 <button
@@ -407,7 +407,7 @@ export function ExportButton() {
                     type="button"
                     disabled={sharePending}
                     onClick={() => void handleShare()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Share2 size={14} />
                     Share
@@ -416,7 +416,7 @@ export function ExportButton() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
+                  className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
                 >
                   <Download size={14} />
                   Save
@@ -424,7 +424,7 @@ export function ExportButton() {
                 <button
                   type="button"
                   onClick={dismissReview}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-700 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-800"
+                  className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 rounded border border-zinc-700 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-800"
                 >
                   <Trash2 size={14} />
                   Discard
@@ -437,7 +437,7 @@ export function ExportButton() {
             type="button"
             onClick={() => void handleRender()}
             disabled={rendering || !canStart}
-            className="flex items-center justify-center gap-2 px-4 py-2 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50"
+            className="flex items-center justify-center gap-2 px-4 py-2 pointer-coarse:min-h-11 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50"
           >
             <Download size={16} />
             {rendering ? "Rendering" : review ? "Render again" : "Render"}

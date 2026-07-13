@@ -5,6 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import { waitMs } from "./async";
 import { getAudioContext } from "./audio";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
+import { getActiveExportSession } from "./exportSession";
 import { nextCycleBoundary } from "./moodClock";
 import { startMoodPerformanceForExportFlow, stopMoodPerformance } from "./moodTransport";
 import { getActiveCanvas } from "./videoEngine";
@@ -60,6 +61,12 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
   // Ownership: the rejection cleanup may only stop a performance THIS
   // export started — a pre-session refusal must not stop someone else's run.
   let performanceStartedByExport = false;
+  // Captured after the exportSong call below: it registers its session
+  // synchronously before its first await, so the active session at that
+  // point is THIS export's own. Identity matters — a retry can register a
+  // NEW session before an abandoned start resumes, and mere existence must
+  // not fool the guard.
+  let ownSession: object | null = null;
 
   const result = exportSong(canvas, getAudioContext(), {
     stopSignal,
@@ -70,11 +77,24 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
       // Starts the live performance and holds until the cycle boundary so
       // the recorder's first frame lands on the One.
       prepare: async () => {
+        // Pessimistic ownership: once the start is ATTEMPTED, the rejection
+        // cleanup owns whatever state results — an abort landing inside the
+        // start's own await gap must not leave a zombie performance.
+        performanceStartedByExport = true;
         const started = await startMoodPerformanceForExportFlow();
         if (!started) {
+          performanceStartedByExport = false;
           throw new Error("Could not start the performance for the export.");
         }
-        performanceStartedByExport = true;
+        // The export may have aborted while the start awaited its own
+        // internals; the OWNING session is the mutex — if it died or was
+        // replaced by a retry, the abandoned start must be undone here,
+        // not left running. (A retry's own performance cannot exist yet:
+        // its start gate refuses while this zombie's isPerforming is up.)
+        if (getActiveExportSession() !== ownSession) {
+          stopMoodPerformance();
+          throw new Error("Export ended before the performance start settled.");
+        }
         const current = useAppStore.getState();
         const epoch = current.mood.performance.epoch;
         const cycleSeconds = current.mood.piece?.cycleSeconds ?? null;
@@ -106,6 +126,9 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     if (performanceStartedByExport) stopMoodPerformance();
     throw err;
   });
+  // exportSong registered its session synchronously before its first await,
+  // so the active session here is this export's own.
+  ownSession = getActiveExportSession();
 
   return { result, finish, recordingStarted };
 }

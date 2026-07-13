@@ -160,6 +160,83 @@ describe("MoodMode", () => {
     expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
   });
 
+  it("returns abandoned hydration to cold so re-entry can restart it", async () => {
+    const load = deferred<moodRehydrate.MoodRehydrateResult>();
+    vi.spyOn(moodRehydrate, "rehydrateMoodFromStorage").mockReturnValue(load.promise);
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    const { unmount } = render(<MoodMode />);
+    expect(useAppStore.getState().mood.hydration).toBe("hydrating");
+
+    // Mode switch mid-hydrate: the continuation must not strand the store
+    // at "hydrating" (re-entry only starts from "cold").
+    unmount();
+    await act(async () => {
+      load.resolve({
+        status: "empty",
+        ok: false,
+        degraded: false,
+        piece: null,
+        warnings: [],
+      });
+      await load.promise;
+    });
+
+    expect(useAppStore.getState().mood.hydration).toBe("cold");
+  });
+
+  it("revokes regenerated poster URLs that fail to attach", async () => {
+    const posterBlob = new Blob([new Uint8Array([7])], { type: "image/jpeg" });
+    const poster = deferred<Blob | null>();
+    const load = deferred<moodRehydrate.MoodRehydrateResult>();
+    vi.spyOn(moodRehydrate, "rehydrateMoodFromStorage").mockReturnValue(load.promise);
+    const piece = createEmptyMoodPiece("corners", "pocket");
+    const decodedPiece = {
+      ...piece,
+      mics: piece.mics.map((mic, index) =>
+        index === 0 ? { ...mic, takes: [makeTake({ id: "regen-take" })] } : mic,
+      ),
+    };
+    vi.spyOn(moodRehydrate, "decodeMoodTakes").mockResolvedValue({
+      ok: true,
+      degraded: false,
+      piece: decodedPiece,
+      warnings: [],
+      posterJobs: [
+        { micId: "mic-0", takeId: "regen-take", posterPromise: poster.promise },
+      ],
+    });
+    const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/regen");
+    const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+    useAppStore.getState().actions.setMoodHydration("cold");
+
+    render(<MoodMode />);
+    await act(async () => {
+      load.resolve({
+        status: "ok",
+        ok: true,
+        degraded: false,
+        piece: decodedPiece,
+        warnings: [],
+      });
+      await load.promise;
+    });
+    await waitFor(() => expect(useAppStore.getState().mood.hydration).toBe("ready"));
+
+    // The piece is scratched before the poster regenerates: the attach
+    // no-ops, so the freshly minted URL must be revoked, not leaked.
+    act(() => {
+      useAppStore.getState().actions.scratchMoodPiece();
+    });
+    await act(async () => {
+      poster.resolve(posterBlob);
+      await poster.promise;
+    });
+
+    expect(createUrl).toHaveBeenCalledWith(posterBlob);
+    expect(revokeUrl).toHaveBeenCalledWith("blob:test/regen");
+  });
+
   it("restores a saved Mood piece from storage on first entry", async () => {
     const piece = createEmptyMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
     const take = makeTake({ id: "saved-take" });
@@ -193,15 +270,15 @@ describe("MoodMode", () => {
   it("shows the stage and feel options while no mood exists", () => {
     render(<MoodMode />);
 
-    expect(screen.getByRole("button", { name: /Corners/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Row/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Stack/i })).toBeInTheDocument();
-    expect(screen.getByText("Four square mics for tight framing.")).toBeInTheDocument();
+    expect(screen.getByText("pick your stage")).toBeInTheDocument();
     expect(
-      screen.getByText("Two to five portrait mics in a wide row."),
+      screen.getByRole("button", { name: "Corners 2×2 · square video" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Two to five landscape mics in a vertical stack."),
+      screen.getByRole("button", { name: "Row side by side · widescreen video" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stack stacked · vertical video" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Pocket/i })).toHaveAttribute(
       "aria-pressed",
@@ -231,7 +308,7 @@ describe("MoodMode", () => {
     fireEvent.click(screen.getByRole("button", { name: /Corners/i }));
 
     expect(screen.getByRole("group", { name: "Mood mics" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Mic 1, off/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /mic 1 — off/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Scratch this mood" })).not.toBeDisabled();
   });
 
@@ -425,7 +502,7 @@ describe("MoodMode", () => {
     });
     render(<MoodMode />);
 
-    expect(screen.getByRole("group", { name: "Mood lens" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Lens" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Wall lens" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -438,6 +515,60 @@ describe("MoodMode", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("sizes Lens and Vibe segmented controls to 44px on coarse pointers", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    render(<MoodMode />);
+
+    expect(screen.getByRole("group", { name: "Lens" })).toBeInTheDocument();
+    for (const lens of ["Wall lens", "Splits lens"]) {
+      expect(screen.getByRole("button", { name: lens })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+
+    expect(screen.getByRole("group", { name: "Vibe" })).toBeInTheDocument();
+    for (const vibe of [
+      "Clean vibe",
+      "Blocks vibe",
+      "Mixtape vibe",
+      "Camcorder vibe",
+      "Print vibe",
+    ]) {
+      expect(screen.getByRole("button", { name: vibe })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+  });
+
+  it("keeps Row-stage piece controls reachable in a 320px render", () => {
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+      useAppStore.getState().actions.createMoodPiece("row", "pocket");
+      useAppStore.getState().actions.setMoodTake(
+        "mic-0",
+        makeTake({ id: "the-one", durationSeconds: 4, trimEndMs: 4000 }),
+      );
+    });
+    const { container } = render(
+      <div style={{ width: "320px" }}>
+        <MoodMode />
+      </div>,
+    );
+
+    const rowStage = screen.getByLabelText("Row stage");
+    expect(rowStage).toHaveStyle({ maxWidth: "min(100%, 46rem)" });
+    const lensGroup = screen.getByRole("group", { name: "Lens" });
+    const toolCluster = lensGroup.parentElement;
+    const controlsRow = toolCluster?.parentElement;
+    expect(toolCluster).toHaveClass("flex-wrap", "justify-center", "sm:justify-start");
+    expect(controlsRow).toHaveClass("flex-col", "sm:flex-row");
+    expect(container).toHaveTextContent("Cycle 0");
   });
 
   it("marks an armed Mood lens separately from the committed lens", () => {
@@ -500,7 +631,7 @@ describe("MoodMode", () => {
     render(<MoodMode />);
 
     const blocks = screen.getByRole("button", { name: "Blocks vibe" });
-    expect(screen.getByRole("group", { name: "Mood vibe" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Vibe" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clean vibe" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -612,6 +743,7 @@ describe("MoodMode", () => {
 
     fireEvent.click(scratchButton);
 
+    expect(screen.getByText("Start over and clear this mood?")).toBeInTheDocument();
     const confirmButton = screen.getByRole("button", { name: "Yes, scratch it" });
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     expect(confirmButton).toHaveClass("pointer-coarse:min-h-11");

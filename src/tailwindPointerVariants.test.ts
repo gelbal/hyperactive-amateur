@@ -27,8 +27,11 @@ describe("tailwind pointer-coarse variants", () => {
   it("emits concrete rules for classes the components rely on", async () => {
     const css = await builtCss();
     // 44px step cells (StepGrid) and the camera Flip button (RecordingStation).
-    expect(css).toMatch(/pointer-coarse\\:h-11/);
+    expect(css).toMatch(/\.pointer-coarse\\:h-11\s*{\s*height: 2\.75rem;/);
+    expect(css).toMatch(/\.pointer-coarse\\:w-11\s*{\s*width: 2\.75rem;/);
     expect(css).toMatch(/\.pointer-coarse\\:min-h-11\s*{\s*min-height: 2\.75rem;/);
+    // Mood Lens/Vibe toggles and StackSheet part-picker chips reach 44px on coarse pointers.
+    expect(css).toMatch(/\.pointer-coarse\\:px-2\s*{\s*padding-left: 0\.5rem;\s*padding-right: 0\.5rem;/);
     // Mood stack sheet rows/chips grow past 44px on coarse pointers.
     expect(css).toMatch(/\.pointer-coarse\\:min-h-12\s*{\s*min-height: 3rem;/);
     expect(css).toMatch(/any-pointer-coarse\\:flex/);

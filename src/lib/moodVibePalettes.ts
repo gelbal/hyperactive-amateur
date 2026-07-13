@@ -2,13 +2,13 @@
 // ABOUTME: Pulls from Tailwind defaults so vibe colors stay aligned with app swatches.
 import colors from "tailwindcss/colors";
 
-// Tuned during the L-phase real-footage polish session.
+// Hand-picked fallbacks pending the real-footage tuning session (spec §18.4).
 export const MIXTAPE = {
   shadow: colors.zinc[950],
   highlight: colors.orange[500],
 } as const;
 
-// Tuned during the L-phase real-footage polish session.
+// Hand-picked fallbacks pending the real-footage tuning session (spec §18.4).
 export const CAMCORDER = {
   scanlineAlpha: 0.22,
   chromaAlpha: 0.22,
@@ -21,7 +21,7 @@ export const CAMCORDER = {
 
 export const CAMCORDER_NOISE_TILE_COUNT = 4;
 
-// Tuned during the L-phase real-footage polish session.
+// Hand-picked fallbacks pending the real-footage tuning session (spec §18.4).
 export const PRINT = {
   paper: colors.stone[100],
   ink: colors.stone[900],
