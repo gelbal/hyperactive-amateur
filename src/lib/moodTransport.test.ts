@@ -69,6 +69,7 @@ import {
   armMoodSelectionCommit,
   consumeDueCommits,
   startMoodPerformance,
+  startMoodPerformanceForExportFlow,
   stopMoodPerformance,
 } from "./moodTransport";
 import {
@@ -76,6 +77,7 @@ import {
   canStartAudibleAction,
 } from "./audibleActionGate";
 import { applyDueCommits } from "./moodCommits";
+import { registerExportSession, __resetExportSessionForTesting } from "./exportSession";
 import { armSelection } from "./moodPerformance";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodTake } from "../types";
@@ -228,6 +230,31 @@ describe("moodTransport", () => {
 
     expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
     expect(toneMocks.transport.start).not.toHaveBeenCalled();
+  });
+
+  it("startMoodPerformanceForExportFlow starts only inside an active export", async () => {
+    createMoodWithCycle(2);
+
+    // No export at all → refused (the export session is the mutex).
+    expect(await startMoodPerformanceForExportFlow()).toBe(false);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+
+    // isExporting alone is not enough — a REGISTERED session is required.
+    useAppStore.getState().actions.setIsExporting(true);
+    expect(await startMoodPerformanceForExportFlow()).toBe(false);
+
+    const unregister = registerExportSession({ abort: () => undefined });
+    if (!unregister) throw new Error("expected to register the export session");
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    expect(await startMoodPerformanceForExportFlow()).toBe(false);
+
+    useAppStore.getState().actions.setRecordingState("idle", null);
+    expect(await startMoodPerformanceForExportFlow()).toBe(true);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+
+    unregister();
+    useAppStore.getState().actions.setIsExporting(false);
   });
 
   it("stages boundary commits for paint-path consumption exactly once", async () => {

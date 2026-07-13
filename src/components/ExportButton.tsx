@@ -8,11 +8,13 @@ import {
   downloadBlob,
   defaultExportFilename,
   getExportDurationMs,
+  MOOD_EXPORT_MAX_MS,
   shareBlob,
 } from "../lib/export";
 import { detectSupportedFormats, extensionForMimeType } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
+import { startMoodExport } from "../lib/moodExportFlow";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 
@@ -55,19 +57,28 @@ function readStoredFormat(): string | null {
   }
 }
 
+const MOOD_CEILING_LABEL = `${Math.floor(MOOD_EXPORT_MAX_MS / 60_000)}:${String(
+  Math.round((MOOD_EXPORT_MAX_MS % 60_000) / 1000),
+).padStart(2, "0")}`;
+
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
   const canStart = useAppStore(canStartAudibleAction);
+  const isMood = useAppStore((s) => s.appMode === "mood");
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [review, setReview] = useState<ExportReview | null>(null);
+  const [capped, setCapped] = useState(false);
+  const [moodCountingIn, setMoodCountingIn] = useState(false);
   const [sharePending, setSharePending] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reviewObjectUrlRef = useRef<string | null>(null);
   const reviewRef = useRef<ExportReview | null>(null);
+  const moodFinishRef = useRef<(() => void) | null>(null);
+  const moodHandleRef = useRef<object | null>(null);
   const mountedRef = useRef(true);
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
@@ -113,6 +124,7 @@ export function ExportButton() {
     revokeReviewObjectUrl();
     setCurrentReview(null);
     setShareFallback(null);
+    setCapped(false);
   }, [revokeReviewObjectUrl, setCurrentReview]);
 
   // The setup body re-arms the ref so StrictMode's dev double-mount
@@ -166,14 +178,55 @@ export function ExportButton() {
       setError("Finish recording or export before rendering.");
       return;
     }
-    const canvas = getActiveCanvas();
-    if (!canvas) {
-      setError("Viewport canvas not ready");
-      return;
-    }
     const chosen = formats.find((f) => f.mimeType === mimeType) ?? formats[0];
     if (!chosen) {
       setError("This browser does not support video export.");
+      return;
+    }
+
+    if (isMood) {
+      dismissReview();
+      setError(null);
+      setProgress(0);
+      setMoodCountingIn(true);
+      try {
+        const handle = startMoodExport({
+          mimeType: chosen.mimeType,
+          onProgress: (p) => setProgress(p),
+        });
+        moodFinishRef.current = handle.finish;
+        moodHandleRef.current = handle;
+        void handle.recordingStarted.then(() => {
+          // An aborted render's abandoned count-in can resolve late — only
+          // the CURRENT handle may reveal the finish control.
+          if (mountedRef.current && moodHandleRef.current === handle) {
+            setMoodCountingIn(false);
+          }
+        });
+        const blob = await handle.result;
+        setCapped(blob.capped === true);
+        setCurrentReview({
+          blob,
+          filename: defaultExportFilename(
+            extensionForMimeType(blob.type, chosen.extension),
+            "mood-",
+          ),
+        });
+        setOpen(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        moodFinishRef.current = null;
+        moodHandleRef.current = null;
+        setProgress(null);
+        setMoodCountingIn(false);
+      }
+      return;
+    }
+
+    const canvas = getActiveCanvas();
+    if (!canvas) {
+      setError("Viewport canvas not ready");
       return;
     }
     dismissReview();
@@ -262,27 +315,42 @@ export function ExportButton() {
               </div>
             </fieldset>
           )}
-          <label className="flex flex-col gap-2 text-sm">
-            <span>
-              Length: <span className="text-orange-400 font-mono">{bars}</span> bar
-              {bars === 1 ? "" : "s"}{" "}
-              <span className="text-zinc-500">
-                ({Math.round(exportDurationMs / 100) / 10}s)
-              </span>
-            </span>
-            <input
-              type="range"
-              min={MIN_BARS}
-              max={MAX_BARS}
-              value={bars}
-              disabled={rendering}
-              onChange={(e) => setBars(Number(e.target.value))}
-              aria-label="bars"
-            />
-          </label>
-          <p className="text-xs text-zinc-400">
-            Keep this screen open — rendering takes about {exportDurationSeconds} s.
-          </p>
+          {isMood ? (
+            <>
+              <p className="text-sm text-zinc-200">
+                Renders your live performance from the One — every arm, swap,
+                and Drop is part of the take.
+              </p>
+              <p className="text-xs text-zinc-400">
+                Up to {MOOD_CEILING_LABEL} — hit finish to end the take. Keep
+                this screen open while rendering.
+              </p>
+            </>
+          ) : (
+            <>
+              <label className="flex flex-col gap-2 text-sm">
+                <span>
+                  Length: <span className="text-orange-400 font-mono">{bars}</span> bar
+                  {bars === 1 ? "" : "s"}{" "}
+                  <span className="text-zinc-500">
+                    ({Math.round(exportDurationMs / 100) / 10}s)
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={MIN_BARS}
+                  max={MAX_BARS}
+                  value={bars}
+                  disabled={rendering}
+                  onChange={(e) => setBars(Number(e.target.value))}
+                  aria-label="bars"
+                />
+              </label>
+              <p className="text-xs text-zinc-400">
+                Keep this screen open — rendering takes about {exportDurationSeconds} s.
+              </p>
+            </>
+          )}
 
           {progress !== null && (
             <div className="flex flex-col gap-1">
@@ -297,8 +365,19 @@ export function ExportButton() {
                 />
               </div>
               <span className="text-xs text-zinc-400">
-                Rendering… {Math.round(progress * 100)}%
+                {isMood && moodCountingIn
+                  ? "Counting in — the render starts on the One…"
+                  : `Rendering… ${Math.round(progress * 100)}%`}
               </span>
+              {isMood && !moodCountingIn && (
+                <button
+                  type="button"
+                  onClick={() => moodFinishRef.current?.()}
+                  className="flex items-center justify-center gap-2 px-4 py-2 pointer-coarse:min-h-11 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400"
+                >
+                  finish
+                </button>
+              )}
             </div>
           )}
 
@@ -314,6 +393,11 @@ export function ExportButton() {
                   {review.filename}
                 </span>
               </div>
+              {capped && (
+                <p className="text-xs text-orange-300">
+                  Capped at {MOOD_CEILING_LABEL}.
+                </p>
+              )}
               {shareFallback && (
                 <p className="text-xs text-orange-300">{shareFallback}</p>
               )}

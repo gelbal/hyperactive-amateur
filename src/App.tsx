@@ -35,6 +35,7 @@ export function App() {
   const hasAnyClips = clipCount > 0;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
   const isChopMode = appMode === "chop";
+  const moodHasCycle = useAppStore((s) => s.mood.piece?.cycleSeconds != null);
 
   useEffect(() => {
     initTransport();
@@ -142,6 +143,12 @@ export function App() {
                       <ExportButton />
                     </>
                   )}
+                </>
+              )}
+              {!isChopMode && moodHasCycle && (
+                <>
+                  <span className="h-6 w-px bg-zinc-800" aria-hidden />
+                  <ExportButton />
                 </>
               )}
             </div>
