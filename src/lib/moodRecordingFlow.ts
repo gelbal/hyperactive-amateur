@@ -33,6 +33,7 @@ import {
 } from "./moodCapture";
 import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
+import { classifyPart } from "./moodPartTag";
 import { syncAssist } from "./moodSyncAssist";
 import { snapTake } from "./moodTakeSnap";
 import { startMoodPerformanceForRecordingFlow } from "./moodTransport";
@@ -352,6 +353,34 @@ function fireSyncAssistWhenReady(
     });
 }
 
+function firePartClassificationWhenReady(
+  micId: string,
+  take: MoodTake,
+  signal: AbortSignal,
+): void {
+  const expectedRevision = useAppStore.getState().session.moodRevision;
+  void classifyPart(take, undefined, signal)
+    .then((result) => {
+      if (!result) return;
+      useAppStore
+        .getState()
+        .actions.applyMoodPartIfCurrent(
+          micId,
+          take.id,
+          result.part,
+          "ai",
+          expectedRevision,
+        );
+    })
+    .catch((err) => {
+      logger.warn(LOG_EVENTS.MOOD_PART_MISS, {
+        reason: "flow-error",
+        takeId: take.id,
+        message: errorMessage(err),
+      });
+    });
+}
+
 async function recordWithEarlyStop(
   stream: MediaStream,
   capMs: number,
@@ -551,6 +580,7 @@ async function runFlow(
     armSelection(micId, take.id);
     attachPosterWhenReady(micId, take.id, result.blob, signal);
     fireSyncAssistWhenReady(micId, take, signal);
+    firePartClassificationWhenReady(micId, take, signal);
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {

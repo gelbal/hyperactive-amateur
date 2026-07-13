@@ -126,6 +126,10 @@ const moodSyncMocks = vi.hoisted(() => ({
   syncAssist: vi.fn(),
 }));
 
+const moodPartMocks = vi.hoisted(() => ({
+  classifyPart: vi.fn(),
+}));
+
 const moodVideoPoolMocks = vi.hoisted(() => ({
   liveTakesFromSelections: vi.fn(() => []),
   prepareUpcoming: vi.fn(),
@@ -196,6 +200,10 @@ vi.mock("./install", () => ({
 
 vi.mock("./moodSyncAssist", () => ({
   syncAssist: moodSyncMocks.syncAssist,
+}));
+
+vi.mock("./moodPartTag", () => ({
+  classifyPart: moodPartMocks.classifyPart,
 }));
 
 vi.mock("./aiClient", () => ({
@@ -406,6 +414,8 @@ describe("moodRecordingFlow", () => {
     installMocks.requestPersistence.mockResolvedValue("best-effort");
     moodSyncMocks.syncAssist.mockReset();
     moodSyncMocks.syncAssist.mockResolvedValue(null);
+    moodPartMocks.classifyPart.mockReset();
+    moodPartMocks.classifyPart.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -871,6 +881,63 @@ describe("moodRecordingFlow", () => {
     await flushMicrotasks(5);
 
     expect(useAppStore.getState().mood.piece?.mics[1].takes[0].syncOffsetMs).toBe(96);
+    poster.resolve(null);
+  });
+
+  it("fires part classification after save without awaiting it, then applies ai parts", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 5);
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 2100 });
+    snapMocks.snapTake.mockReturnValue({
+      ok: true,
+      isOne: false,
+      durationSeconds: 2,
+      cycleMultiple: 1,
+    });
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 2200 }));
+    const poster = makeDeferred<Blob | null>();
+    const sync = makeDeferred<{ offsetMs: number; confidence: number } | null>();
+    const part = makeDeferred<{ part: "beatbox"; confidence: number } | null>();
+    const order: string[] = [];
+    autoSaveMocks.saveNow.mockImplementation(async () => {
+      order.push("save");
+      return true;
+    });
+    posterMocks.captureFirstFrame.mockImplementation(() => {
+      order.push("poster");
+      return poster.promise;
+    });
+    moodSyncMocks.syncAssist.mockImplementation(() => {
+      order.push("sync");
+      return sync.promise;
+    });
+    moodPartMocks.classifyPart.mockImplementation(() => {
+      order.push("part");
+      return part.promise;
+    });
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(order).toEqual(["save", "poster", "sync", "part"]);
+    const savedTake = useAppStore.getState().mood.piece?.mics[1].takes[0];
+    expect(savedTake?.part).toBeNull();
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledWith(
+      expect.objectContaining({ id: savedTake?.id }),
+      undefined,
+      expect.any(AbortSignal),
+    );
+
+    part.resolve({ part: "beatbox", confidence: 0.9 });
+    await flushMicrotasks(5);
+
+    const taggedTake = useAppStore.getState().mood.piece?.mics[1].takes[0];
+    expect(taggedTake?.part).toBe("beatbox");
+    expect(taggedTake?.partSource).toBe("ai");
+    sync.resolve(null);
     poster.resolve(null);
   });
 
