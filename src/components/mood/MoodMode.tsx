@@ -1,8 +1,10 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
 // ABOUTME: Starts with a stage picker and shows the placeholder stage until real performance UI lands.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BpmDialControl } from "../BpmDial";
+import { getAudioContext } from "../../lib/audio";
 import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
+import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
 
@@ -275,10 +277,84 @@ function MoodPieceControls({
   );
 }
 
+function queueMoodPosterJobs(jobs: moodRehydrate.MoodPosterRegenerationJob[] = []): void {
+  for (const job of jobs) {
+    void job.posterPromise.then((posterBlob) => {
+      if (!posterBlob) return;
+      const posterUrl = URL.createObjectURL(posterBlob);
+      useAppStore
+        .getState()
+        .actions.attachMoodTakePoster(job.micId, job.takeId, posterBlob, posterUrl);
+    });
+  }
+}
+
+function mergeMoodHydrateResults(
+  loaded: moodRehydrate.MoodRehydrateResult,
+  decoded: moodRehydrate.MoodHydrateResult,
+): moodRehydrate.MoodHydrateResult {
+  const warnings = Array.from(new Set([...loaded.warnings, ...decoded.warnings]));
+  return {
+    ...decoded,
+    degraded: loaded.degraded || decoded.degraded,
+    warnings,
+  };
+}
+
 export function MoodMode() {
   const piece = useAppStore((s) => s.mood.piece);
+  const hydration = useAppStore((s) => s.mood.hydration);
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
+  const hydrationStartedRef = useRef(false);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hydration !== "cold" || hydrationStartedRef.current) return;
+    hydrationStartedRef.current = true;
+    useAppStore.getState().actions.setMoodHydration("hydrating");
+    void moodRehydrate
+      .rehydrateMoodFromStorage()
+      .then(async (loaded) => {
+        if (unmountedRef.current) return;
+        if (loaded.ok && loaded.piece) {
+          const decoded = await moodRehydrate.decodeMoodTakes(loaded.piece, getAudioContext());
+          if (unmountedRef.current) return;
+          const result = mergeMoodHydrateResults(loaded, decoded);
+          useAppStore.getState().actions.hydrateMoodPiece(result);
+          queueMoodPosterJobs(result.posterJobs);
+          return;
+        }
+        useAppStore.getState().actions.hydrateMoodPiece({
+          ok: loaded.ok,
+          degraded: loaded.degraded,
+          piece: null,
+          warnings: loaded.warnings,
+        });
+      })
+      .catch(() => {
+        if (unmountedRef.current) return;
+        useAppStore.getState().actions.hydrateMoodPiece({
+          ok: false,
+          degraded: true,
+          piece: null,
+          warnings: [
+            "Saved mood could not be loaded. Autosave was paused to avoid overwriting it.",
+          ],
+        });
+      });
+  }, [hydration]);
+
+  if (hydration === "cold" || hydration === "hydrating") {
+    return <div className="text-zinc-500 text-sm">Loading mood...</div>;
+  }
 
   if (!piece) return <StagePicker disabled={isExporting} />;
 

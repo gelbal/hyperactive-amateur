@@ -20,7 +20,7 @@ import {
   AUDIO_DEVICE_STORAGE_KEY,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
-import { MAX_TAKES_PER_MIC } from "../lib/moodStages";
+import { createEmptyMoodPiece, MAX_TAKES_PER_MIC } from "../lib/moodStages";
 import type { Clip, MoodPart, MoodTake } from "../types";
 import { useAppStore } from "./useAppStore";
 
@@ -598,6 +598,34 @@ describe("useAppStore", () => {
     expect(get().ui.recoveryWarnings).toEqual(["bpm clamped", "track reset"]);
   });
 
+  it("keeps recovery warnings scope-tagged while preserving the string warning list", () => {
+    get().actions.setRecoveryWarningsForScope(
+      "chop",
+      ["Track 1 audio unavailable — re-record to restore sound."],
+      true,
+    );
+    get().actions.setRecoveryWarningsForScope(
+      "mood",
+      ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+      true,
+    );
+
+    expect(get().ui.recoveryWarnings).toEqual([
+      "Track 1 audio unavailable — re-record to restore sound.",
+      "Mood take take-1 in mic-0 audio unavailable — re-record to restore sound.",
+    ]);
+    expect(get().ui.recoveryWarningScopes).toEqual(["chop", "mood"]);
+    expect(get().ui.degradedRecoveryScopes).toEqual(["chop", "mood"]);
+
+    get().actions.clearRecoveryWarnings("mood");
+
+    expect(get().ui.recoveryWarnings).toEqual([
+      "Track 1 audio unavailable — re-record to restore sound.",
+    ]);
+    expect(get().ui.recoveryWarningScopes).toEqual(["chop"]);
+    expect(get().ui.degradedRecoveryScopes).toEqual(["chop"]);
+  });
+
   it("uses projectRevision to reject stale AI pattern applies", () => {
     const revision = get().session.projectRevision;
     const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
@@ -654,6 +682,39 @@ describe("useAppStore", () => {
         cycleCount: 0,
       });
       expect(get().session.moodRevision).toBe(revision + 1);
+    });
+
+    it("hydrates a decoded Mood piece and records scoped recovery warnings", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const take = makeMoodTake({ id: "take-1", audioStatus: "unavailable", audioBuffer: null });
+      const hydratedPiece = {
+        ...piece,
+        cycleSeconds: 1.5,
+        oneMicId: "mic-0",
+        oneTakeId: "take-1",
+        mics: piece.mics.map((mic, index) =>
+          index === 0 ? { ...mic, takes: [take] } : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece({
+        ok: true,
+        degraded: true,
+        piece: hydratedPiece,
+        warnings: ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+      });
+
+      expect(get().mood.hydration).toBe("ready");
+      expect(get().mood.piece).toBe(hydratedPiece);
+      expect(get().mood.performance.selections).toEqual({
+        "mic-0": "off",
+        "mic-1": "off",
+      });
+      expect(get().ui.recoveryWarnings).toEqual([
+        "Mood take take-1 in mic-0 audio unavailable — re-record to restore sound.",
+      ]);
+      expect(get().ui.recoveryWarningScopes).toEqual(["mood"]);
+      expect(get().ui.degradedRecoveryScopes).toEqual(["mood"]);
     });
 
     it("rejects a Click piece without positive bpm and logs an HA event", () => {

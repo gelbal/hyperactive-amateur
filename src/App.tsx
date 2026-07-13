@@ -60,8 +60,8 @@ export function App() {
         // recovery action that re-enables saving.
         resumeAutoSaveUnsubscribe = useAppStore.subscribe((state, prev) => {
           if (
-            prev.ui.recoveryWarnings.length > 0 &&
-            state.ui.recoveryWarnings.length === 0
+            prev.ui.recoveryWarningScopes.includes("chop") &&
+            !state.ui.recoveryWarningScopes.includes("chop")
           ) {
             resumeAutoSaveUnsubscribe?.();
             resumeAutoSaveUnsubscribe = null;
@@ -163,24 +163,28 @@ export function App() {
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
-        ) : isChopMode ? (
+        ) : (
           <>
             <RecoveryBanner />
-            <StorageDurabilityChip />
-            <Viewport />
-            {hasAnyClips ? (
-              <PadGrid />
+            {isChopMode ? (
+              <>
+                <StorageDurabilityChip />
+                <Viewport />
+                {hasAnyClips ? (
+                  <PadGrid />
+                ) : (
+                  <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
+                    Record your first sound to unlock the pads, the step grid, and
+                    the AI tools.
+                  </p>
+                )}
+              </>
             ) : (
-              <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
-                Record your first sound to unlock the pads, the step grid, and
-                the AI tools.
-              </p>
+              <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
+                <MoodMode />
+              </Suspense>
             )}
           </>
-        ) : (
-          <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
-            <MoodMode />
-          </Suspense>
         )}
       </main>
       {isChopMode && hasAnyClips && <StepGrid />}

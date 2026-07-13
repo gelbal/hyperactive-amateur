@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import * as persistence from "./persistence";
+import * as moodPersistence from "./moodPersistence";
 import {
   __flushAutoSaveForTesting,
   flushPending,
@@ -68,6 +69,73 @@ describe("autoSave", () => {
     expect(saveSpy.mock.calls[0][0].project.bpm).toBe(130);
   });
 
+  it("mood piece changes debounce into a mood save without writing Chop", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+
+    useAppStore.getState().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    expect(saveMoodSpy.mock.calls[0][0]).toMatchObject({
+      stage: "row",
+      timeFeel: "click",
+      bpm: 120,
+    });
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("Chop and Mood dirty scopes coalesce independently", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+
+    useAppStore.getState().actions.setBpm(122);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveMoodSpy).not.toHaveBeenCalled();
+
+    saveSpy.mockClear();
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    await vi.advanceTimersByTimeAsync(600);
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("saveNow(\"mood\") persists only the mood piece immediately", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore.getState().actions.createMoodPiece("stack", "pocket");
+
+    await expect(saveNow("mood")).resolves.toBe(true);
+
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    expect(saveMoodSpy.mock.calls[0][0]).toMatchObject({ stage: "stack" });
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("saveNow(\"mood\") skips a degraded mood pause and writes nothing", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore
+      .getState()
+      .actions.setRecoveryWarningsForScope(
+        "mood",
+        ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+        true,
+      );
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+
+    await expect(saveNow("mood")).resolves.toBe(false);
+
+    expect(saveMoodSpy).not.toHaveBeenCalled();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
   it("saveNow during the debounce window cancels the pending timer", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
     startAutoSave();
@@ -125,6 +193,31 @@ describe("autoSave", () => {
     expect(savedBpm).toEqual([132, 133]);
   });
 
+  it("shutdownAutoSave still writes a change queued behind an in-flight save", async () => {
+    const firstSave = makeDeferred();
+    const savedBpm: number[] = [];
+    vi.spyOn(persistence, "saveProject").mockImplementation(async (state) => {
+      savedBpm.push(state.project.bpm);
+      if (savedBpm.length === 1) await firstSave.promise;
+    });
+
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(150);
+    const first = saveNow();
+    expect(savedBpm).toEqual([150]);
+
+    // A newer change lands, then a clean shutdown fires while the first save is
+    // still in flight. flushPending queues the change behind the in-flight
+    // drain; stopAutoSave must not discard it — a clean shutdown is a flush.
+    useAppStore.getState().actions.setBpm(151);
+    shutdownAutoSave();
+
+    firstSave.resolve();
+    await first;
+
+    expect(savedBpm).toEqual([150, 151]);
+  });
+
   it("does not save while recording is in progress", async () => {
     startAutoSave();
     useAppStore.getState().actions.setRecordingState("recording", 0);
@@ -133,6 +226,21 @@ describe("autoSave", () => {
     vi.useRealTimers();
     const loaded = await loadProject();
     expect(loaded).toBeNull();
+  });
+
+  it("does not save a mood piece while recording is in progress", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveMoodSpy).not.toHaveBeenCalled();
+
+    useAppStore.getState().actions.setRecordingState("idle", null);
+    await vi.waitFor(() => {
+      expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("flushPending flushes a pending debounce best-effort and no-ops when clean", async () => {
@@ -149,6 +257,21 @@ describe("autoSave", () => {
     expect(flushPending()).toBe(false);
     await Promise.resolve();
     expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("flushPending flushes pending Chop and Mood saves through the shared drain", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(155);
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+
+    expect(flushPending()).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+      expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("shutdownAutoSave flushes a pending debounced change before detaching", async () => {

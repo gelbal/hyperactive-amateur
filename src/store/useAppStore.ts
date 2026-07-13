@@ -15,6 +15,7 @@ import type {
   MoodTake,
   MoodTimeFeel,
   RecordingState,
+  RecoveryWarningScope,
   StorageDurability,
   Subgenre,
   Tag,
@@ -97,6 +98,65 @@ function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["perf
   };
 }
 
+function uniqueRecoveryScopes(scopes: RecoveryWarningScope[]): RecoveryWarningScope[] {
+  const out: RecoveryWarningScope[] = [];
+  for (const scope of scopes) {
+    if (!out.includes(scope)) out.push(scope);
+  }
+  return out;
+}
+
+function setRecoveryWarningsForScopeState(
+  ui: AppState["ui"],
+  scope: RecoveryWarningScope,
+  warnings: string[],
+  degraded: boolean,
+): AppState["ui"] {
+  const recoveryWarnings = ui.recoveryWarnings.filter(
+    (_warning, index) => ui.recoveryWarningScopes[index] !== scope,
+  );
+  const recoveryWarningScopes = ui.recoveryWarningScopes.filter(
+    (candidate) => candidate !== scope,
+  );
+  recoveryWarnings.push(...warnings);
+  recoveryWarningScopes.push(...warnings.map(() => scope));
+  const withoutScope = ui.degradedRecoveryScopes.filter((candidate) => candidate !== scope);
+  const degradedRecoveryScopes =
+    degraded && warnings.length > 0 ? uniqueRecoveryScopes([...withoutScope, scope]) : withoutScope;
+  return {
+    ...ui,
+    recoveryWarnings,
+    recoveryWarningScopes,
+    degradedRecoveryScopes,
+  };
+}
+
+function clearRecoveryWarningsState(
+  ui: AppState["ui"],
+  scope?: RecoveryWarningScope,
+): AppState["ui"] {
+  if (!scope) {
+    return {
+      ...ui,
+      recoveryWarnings: [],
+      recoveryWarningScopes: [],
+      degradedRecoveryScopes: [],
+    };
+  }
+  return {
+    ...ui,
+    recoveryWarnings: ui.recoveryWarnings.filter(
+      (_warning, index) => ui.recoveryWarningScopes[index] !== scope,
+    ),
+    recoveryWarningScopes: ui.recoveryWarningScopes.filter(
+      (candidate) => candidate !== scope,
+    ),
+    degradedRecoveryScopes: ui.degradedRecoveryScopes.filter(
+      (candidate) => candidate !== scope,
+    ),
+  };
+}
+
 function hasPositiveBpm(bpm: number | undefined): bpm is number {
   return typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0;
 }
@@ -149,6 +209,13 @@ function clearMoodTakePerformanceRefs(
 
 export interface AppActions {
   setAppMode: (mode: AppMode) => void;
+  setMoodHydration: (hydration: AppState["mood"]["hydration"]) => void;
+  hydrateMoodPiece: (result: {
+    ok: boolean;
+    degraded: boolean;
+    piece: MoodPiece | null;
+    warnings: string[];
+  }) => void;
   createMoodPiece: (
     stage: MoodStageId,
     timeFeel: MoodTimeFeel,
@@ -206,6 +273,13 @@ export interface AppActions {
     audioBlob?: Blob | null,
     expectedClip?: Clip,
   ) => void;
+  restoreMoodTakeAudio: (
+    micId: string,
+    takeId: string,
+    audioBuffer: AudioBuffer,
+    audioBlob?: Blob | null,
+    expectedTake?: MoodTake,
+  ) => void;
   clearTrackClip: (trackId: number) => void;
   setTrackTag: (
     trackId: number,
@@ -219,6 +293,12 @@ export interface AppActions {
     source?: "user" | "system",
   ) => void;
   setRecoveryWarnings: (warnings: string[]) => void;
+  setRecoveryWarningsForScope: (
+    scope: RecoveryWarningScope,
+    warnings: string[],
+    degraded: boolean,
+  ) => void;
+  clearRecoveryWarnings: (scope?: RecoveryWarningScope) => void;
   setStorageDurability: (durability: StorageDurability) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
@@ -264,6 +344,38 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       });
     },
+
+    setMoodHydration: (hydration) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          hydration,
+        },
+      })),
+
+    hydrateMoodPiece: (result) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (state.mood.piece && state.mood.piece !== result.piece) {
+          revokeMoodPieceObjectUrls(state.mood.piece);
+        }
+        const piece = result.piece;
+        return {
+          mood: {
+            piece,
+            hydration: "ready",
+            performance: piece
+              ? createMoodPerformanceForPiece(piece)
+              : createIdleMoodPerformance(),
+          },
+          ui: setRecoveryWarningsForScopeState(
+            state.ui,
+            "mood",
+            result.warnings,
+            result.degraded,
+          ),
+        };
+      }),
 
     createMoodPiece: (stage, timeFeel, opts) =>
       set((state) => {
@@ -845,6 +957,38 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    restoreMoodTakeAudio: (micId, takeId, audioBuffer, audioBlob, expectedTake) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let restored = false;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.map((take) => {
+            if (take.id !== takeId) return take;
+            if (take.audioStatus !== "unavailable") return take;
+            if (expectedTake && take !== expectedTake) return take;
+            restored = true;
+            return {
+              ...take,
+              audioBuffer,
+              audioStatus: "ok" as const,
+              audioBlob: audioBlob !== undefined ? audioBlob : take.audioBlob,
+            };
+          });
+          return restored ? { ...mic, takes } : mic;
+        });
+        if (!restored) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: { ...piece, mics, updatedAt: Date.now() },
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
     clearTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -949,7 +1093,22 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setRecoveryWarnings: (warnings) =>
-      set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
+      set((state) => ({
+        ui: {
+          ...state.ui,
+          recoveryWarnings: [...warnings],
+          recoveryWarningScopes: warnings.map(() => "chop" as const),
+          degradedRecoveryScopes: warnings.length > 0 ? ["chop"] : [],
+        },
+      })),
+
+    setRecoveryWarningsForScope: (scope, warnings, degraded) =>
+      set((state) => ({
+        ui: setRecoveryWarningsForScopeState(state.ui, scope, warnings, degraded),
+      })),
+
+    clearRecoveryWarnings: (scope) =>
+      set((state) => ({ ui: clearRecoveryWarningsState(state.ui, scope) })),
 
     setStorageDurability: (storageDurability) =>
       set((state) => ({ session: { ...state.session, storageDurability } })),

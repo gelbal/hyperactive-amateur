@@ -49,4 +49,25 @@ describe("RecoveryBanner", () => {
       screen.getByText("2 tracks have audio unavailable and need re-recording."),
     ).toBeInTheDocument();
   });
+
+  it("renders scoped Mood warnings through the existing recovery notice", () => {
+    useAppStore
+      .getState()
+      .actions.setRecoveryWarningsForScope(
+        "mood",
+        ["Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."],
+        true,
+      );
+
+    render(<RecoveryBanner />);
+
+    expect(
+      screen.getByText("Mood take take-1 in mic-0 audio unavailable — re-record to restore sound."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
+
+    expect(useAppStore.getState().ui.recoveryWarnings).toEqual([]);
+    expect(useAppStore.getState().ui.degradedRecoveryScopes).toEqual([]);
+  });
 });

@@ -1,11 +1,19 @@
 // ABOUTME: audioRepair — retries decoding repair-state clip audio once sound is available.
 // ABOUTME: Subscribes to audioState transitions; heals audioStatus:"unavailable" clips in place.
 import { useAppStore } from "../store/useAppStore";
+import { getAudioContext } from "./audio";
+import { decodeMoodTakeAudio } from "./moodRehydrate";
 import { decodeClipAudio } from "./rehydrate";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
+import type { MoodTake } from "../types";
 
 let repairInFlight = false;
+
+type MoodRepairCandidate = {
+  micId: string;
+  take: MoodTake;
+};
 
 // One pass over every repair-state clip: decode the kept sidecar (or the
 // video container as legacy fallback) and heal the track on success. Failures
@@ -17,7 +25,13 @@ export async function attemptAudioRepair(): Promise<void> {
   const candidates = state.project.tracks.filter(
     (track) => track.clip && track.clip.audioStatus === "unavailable",
   );
-  if (candidates.length === 0) return;
+  const moodCandidates: MoodRepairCandidate[] =
+    state.mood.piece?.mics.flatMap((mic) =>
+      mic.takes
+        .filter((take) => take.audioStatus === "unavailable")
+        .map((take) => ({ micId: mic.id, take })),
+    ) ?? [];
+  if (candidates.length === 0 && moodCandidates.length === 0) return;
   repairInFlight = true;
   try {
     for (const track of candidates) {
@@ -44,6 +58,26 @@ export async function attemptAudioRepair(): Promise<void> {
         }
       } catch {
         // Still undecodable — stays in repair state.
+      }
+    }
+    if (useAppStore.getState().mood.piece) {
+      for (const { micId, take } of moodCandidates) {
+        try {
+          const audioBuffer = await decodeMoodTakeAudio(take, getAudioContext());
+          let audioBlob = take.audioBlob ?? null;
+          if (!audioBlob) {
+            try {
+              audioBlob = audioBufferToWav(audioBuffer);
+            } catch {
+              audioBlob = null;
+            }
+          }
+          useAppStore
+            .getState()
+            .actions.restoreMoodTakeAudio(micId, take.id, audioBuffer, audioBlob, take);
+        } catch {
+          // Still undecodable — stays in repair state.
+        }
       }
     }
   } finally {

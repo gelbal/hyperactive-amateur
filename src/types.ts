@@ -205,10 +205,14 @@ export interface RecordingSlice {
   state: RecordingState;
 }
 
+export type RecoveryWarningScope = "chop" | "mood";
+
 export interface UiState {
   selectedTrackId: number | null;
   showExportDialog: boolean;
   recoveryWarnings: string[];
+  recoveryWarningScopes: RecoveryWarningScope[];
+  degradedRecoveryScopes: RecoveryWarningScope[];
 }
 
 export type MediaStatus = "idle" | "requesting" | "granted" | "denied" | "suspended";
