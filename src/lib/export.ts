@@ -12,6 +12,16 @@ import { holdScreenWakeLock, type ScreenWakeLockHandle } from "./wakeLock";
 const FRAMERATE = 30;
 const EXPORT_STOP_TIMEOUT_MS = 5000;
 const BEATS_PER_BAR = 4;
+// Spec §18 holds the Mood export ceiling at 3:00 pending S6 thermal results.
+export const MOOD_EXPORT_MAX_MS = 180_000;
+
+type MaybePromise<T> = T | PromiseLike<T>;
+
+export interface ExportDriveHooks {
+  prepare?: () => MaybePromise<void>;
+  start?: () => MaybePromise<void>;
+  cleanup?: () => MaybePromise<void>;
+}
 
 export interface ExportStream {
   stream: MediaStream;
@@ -48,18 +58,101 @@ export function buildExportStream(
   return { stream, cleanup };
 }
 
-export interface ExportOptions {
-  bars: number;
-  bpm: number;
+interface ExportCommonOptions {
   // Caller-chosen MediaRecorder MIME. Use `detectSupportedFormats()` to find
   // a supported one; the export pipeline is codec-agnostic (canvas+audio go
   // in as raw streams) so any supported MIME works.
   mimeType: string;
   onProgress?: (fraction: number) => void;
+  drive?: ExportDriveHooks;
+}
+
+interface BarsDurationExportOptions extends ExportCommonOptions {
+  bars: number;
+  bpm: number;
+  durationMs?: never;
+  stopSignal?: never;
+  maxDurationMs?: never;
+}
+
+interface DurationMsExportOptions extends ExportCommonOptions {
+  durationMs: number;
+  bars?: never;
+  bpm?: never;
+  stopSignal?: never;
+  maxDurationMs?: never;
+}
+
+interface StopSignalExportOptions extends ExportCommonOptions {
+  stopSignal: PromiseLike<void>;
+  maxDurationMs?: number;
+  bars?: never;
+  bpm?: never;
+  durationMs?: never;
+}
+
+export type ExportOptions =
+  | BarsDurationExportOptions
+  | DurationMsExportOptions
+  | StopSignalExportOptions;
+
+export interface ExportResult extends Blob {
+  readonly capped?: boolean;
 }
 
 export function getExportDurationMs(bars: number, bpm: number): number {
   return (bars * BEATS_PER_BAR * 60_000) / bpm;
+}
+
+function isStopSignalExport(options: ExportOptions): options is StopSignalExportOptions {
+  return "stopSignal" in options;
+}
+
+function isDurationMsExport(options: ExportOptions): options is DurationMsExportOptions {
+  return "durationMs" in options && typeof options.durationMs === "number";
+}
+
+function getRenderDurationMs(options: ExportOptions): number {
+  if (isStopSignalExport(options)) return options.maxDurationMs ?? MOOD_EXPORT_MAX_MS;
+  if (isDurationMsExport(options)) return options.durationMs;
+  return getExportDurationMs(options.bars, options.bpm);
+}
+
+function createExportResult(blob: Blob, capped: boolean): ExportResult {
+  Object.defineProperty(blob, "capped", {
+    configurable: false,
+    enumerable: true,
+    value: capped,
+    writable: false,
+  });
+  return blob as ExportResult;
+}
+
+function buildExportDrive(options: ExportOptions): Required<ExportDriveHooks> {
+  const defaultDrive: Required<ExportDriveHooks> = isStopSignalExport(options)
+    ? {
+        prepare: () => undefined,
+        start: () => undefined,
+        cleanup: () => undefined,
+      }
+    : {
+        prepare: () => {
+          stopPlayback({ allowExportStop: true });
+          useAppStore.getState().actions.setIsPlaying(true);
+        },
+        start: () => {
+          Tone.getTransport().start();
+        },
+        cleanup: () => {
+          stopPlayback({ allowExportStop: true });
+        },
+      };
+
+  return {
+    prepare: options.drive?.prepare ?? defaultDrive.prepare,
+    start: options.drive?.start ?? defaultDrive.start,
+    cleanup: options.drive?.cleanup ?? defaultDrive.cleanup,
+  };
 }
 
 // Real-time render: starts the Transport at step 0 plus a MediaRecorder on the
@@ -69,9 +162,11 @@ export async function exportSong(
   canvas: HTMLCanvasElement,
   audioContext: AudioContext,
   options: ExportOptions,
-): Promise<Blob> {
-  const { bars, bpm, mimeType, onProgress } = options;
-  const durationMs = getExportDurationMs(bars, bpm);
+): Promise<ExportResult> {
+  const { mimeType, onProgress } = options;
+  const stopSignalMode = isStopSignalExport(options);
+  const durationMs = getRenderDurationMs(options);
+  const drive = buildExportDrive(options);
 
   let progressTimer: ReturnType<typeof setInterval> | null = null;
   let exportStream: ExportStream | null = null;
@@ -142,12 +237,12 @@ export async function exportSong(
       };
     });
 
-    stopPlayback({ allowExportStop: true });
-    useAppStore.getState().actions.setIsPlaying(true);
-    const transport = Tone.getTransport();
+    await Promise.race([Promise.resolve(drive.prepare()), exportAbort]);
+    if (abortError) throw abortError;
 
     recorder.start(1000);
-    transport.start();
+    await Promise.race([Promise.resolve(drive.start()), exportAbort]);
+    if (abortError) throw abortError;
 
     const startedAt = Date.now();
     if (onProgress) {
@@ -158,10 +253,21 @@ export async function exportSong(
       }, 100);
     }
 
+    const timedCompletion = waitMs(durationMs).then(() =>
+      stopSignalMode ? ("max-duration" as const) : ("duration" as const),
+    );
+    const stopCompletion = stopSignalMode
+      ? Promise.resolve(options.stopSignal).then(async () => {
+          await Promise.resolve();
+          if (abortError) throw abortError;
+          return "stop" as const;
+        })
+      : null;
     const renderResult = await Promise.race([
-      waitMs(durationMs).then(() => "duration" as const),
-      recorderDone.then(() => "recorder" as const),
       exportAbort,
+      ...(stopCompletion ? [stopCompletion] : []),
+      timedCompletion,
+      recorderDone.then(() => "recorder" as const),
     ]);
     if (renderResult === "recorder") {
       if (recorderError) throw recorderError;
@@ -182,7 +288,10 @@ export async function exportSong(
       throw new Error("MediaRecorder finished export without producing data.");
     }
 
-    return new Blob(chunks, { type: recorder.mimeType || mimeType });
+    return createExportResult(
+      new Blob(chunks, { type: recorder.mimeType || mimeType }),
+      renderResult === "max-duration",
+    );
   } finally {
     if (progressTimer) clearInterval(progressTimer);
     await wakeLock?.release();
@@ -195,7 +304,7 @@ export async function exportSong(
           // Recorder may already be inactive or in the middle of stopping.
         }
       }
-      stopPlayback({ allowExportStop: true });
+      await drive.cleanup();
       useAppStore.getState().actions.setIsExporting(false);
       exportStream?.cleanup();
     }

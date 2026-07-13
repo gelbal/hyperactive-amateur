@@ -43,7 +43,13 @@ vi.mock("./audioLifecycle", () => ({
   AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
-import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
+import {
+  buildExportStream,
+  defaultExportFilename,
+  downloadBlob,
+  exportSong,
+  MOOD_EXPORT_MAX_MS,
+} from "./export";
 import {
   abortActiveExport,
   getActiveExportSession,
@@ -188,6 +194,10 @@ describe("exportSong", () => {
     );
   });
 
+  it("exports the Mood stop-signal cap as three minutes", () => {
+    expect(MOOD_EXPORT_MAX_MS).toBe(180_000);
+  });
+
   it("starts/stops the Transport, reports progress, and resolves with a Blob using the caller's mimeType", async () => {
     const onProgress = vi.fn();
     const blob = await exportSong(makeCanvas(), makeAudioContext(), {
@@ -204,6 +214,175 @@ describe("exportSong", () => {
     expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalled();
     expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
     expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("resolves stop-signal exports without touching the chop transport by default", async () => {
+    vi.useFakeTimers();
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(FakeMediaRecorder.startSpy).toHaveBeenCalledTimes(1);
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
+
+    stopTake();
+    const blob = await promise;
+
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBeGreaterThan(0);
+    expect(blob.capped).toBe(false);
+    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("runs supplied drive hooks around a stop-signal export", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    FakeMediaRecorder.startSpy.mockImplementation(() => order.push("recorder-start"));
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+      drive: {
+        prepare: vi.fn(() => {
+          order.push("prepare");
+        }),
+        start: vi.fn(() => {
+          order.push("start");
+        }),
+        cleanup: vi.fn(() => {
+          order.push("cleanup");
+        }),
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    stopTake();
+    const blob = await promise;
+
+    expect(blob.capped).toBe(false);
+    expect(order).toEqual(["prepare", "recorder-start", "start", "cleanup"]);
+  });
+
+  it("flags stop-signal exports that reach the hard cap", async () => {
+    vi.useFakeTimers();
+    const onProgress = vi.fn();
+    const neverStop = new Promise<void>(() => undefined);
+
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal: neverStop,
+      maxDurationMs: 50,
+      mimeType: "video/webm",
+      onProgress,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(50);
+    const blob = await promise;
+
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.capped).toBe(true);
+    expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+  });
+
+  it("lets an active abort beat a same-tick stop signal", async () => {
+    vi.useFakeTimers();
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    stopTake();
+    expect(abortActiveExport("page hidden")).toBe(true);
+
+    await rejection;
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("keeps the recorder stop watchdog for stop-signal exports", async () => {
+    class StuckMediaRecorder extends FakeMediaRecorder {
+      stop() {
+        this.state = "inactive";
+      }
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = StuckMediaRecorder;
+
+    vi.useFakeTimers();
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/did not finish export/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    stopTake();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    await rejection;
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  it("keeps the zero-chunk guard for stop-signal exports", async () => {
+    class EmptyMediaRecorder extends FakeMediaRecorder {
+      stop() {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          this.ondataavailable?.({
+            data: new Blob([], { type: "video/webm" }),
+          } as BlobEvent);
+          this.onstop?.();
+        });
+      }
+    }
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = EmptyMediaRecorder;
+
+    vi.useFakeTimers();
+    let stopTake: () => void = () => undefined;
+    const stopSignal = new Promise<void>((resolve) => {
+      stopTake = resolve;
+    });
+    const promise = exportSong(makeCanvas(), makeAudioContext(), {
+      stopSignal,
+      maxDurationMs: 1000,
+      mimeType: "video/webm",
+    });
+    const rejection = expect(promise).rejects.toThrow(/without producing data/);
+
+    await vi.advanceTimersByTimeAsync(10);
+    stopTake();
+
+    await rejection;
+    expect(toneMocks.destinationDisconnect).toHaveBeenCalled();
     expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
 
