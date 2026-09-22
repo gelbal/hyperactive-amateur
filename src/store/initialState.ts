@@ -66,7 +66,6 @@ export function createInitialState(): AppState {
     ui: {
       selectedTrackId: null,
       showExportDialog: false,
-      recoveryWarnings: [],
     },
     media: {
       stream: null,

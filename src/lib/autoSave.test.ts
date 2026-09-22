@@ -79,7 +79,7 @@ describe("autoSave", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("saveNow skips the write while autosave is paused (degraded load) and resolves false", async () => {
+  it("saveNow resolves false before autosave has started", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject");
     useAppStore.getState().actions.setBpm(160);
 
@@ -95,7 +95,7 @@ describe("autoSave", () => {
     useAppStore.getState().actions.setBpm(161);
     await expect(saveNow()).resolves.toBe(false);
 
-    // RecoveryBanner acknowledgment re-enables saving via startAutoSave().
+    // Autosave starts once the load settles; the next immediate save persists.
     startAutoSave();
     await expect(saveNow()).resolves.toBe(true);
 

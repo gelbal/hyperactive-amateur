@@ -77,11 +77,11 @@ function scheduleSave(): void {
 }
 
 // Immediate save for durability boundaries (e.g. a freshly captured clip).
-// Respects the same allow-gate as debounced autosave: while autosave is
-// stopped or paused (degraded loads), the write is skipped so the repaired
-// state cannot overwrite the protected original. Resolves false for a skipped
-// save so callers do not treat it as persisted; the state stays in memory and
-// the next save after autosave resumes persists everything.
+// Respects the same gate as debounced autosave: before autosave has started
+// (the load has not settled, or it failed after its retries) the write is
+// skipped. Resolves false for a skipped save so callers do not treat it as
+// persisted; the state stays in memory and the next save after autosave
+// starts persists everything.
 export function saveNow(): Promise<boolean> {
   if (!unsubscribe) return Promise.resolve(false);
   clearPendingTimer();
@@ -109,8 +109,8 @@ export function startAutoSave(): void {
   });
 }
 
-// Destructive pause: drops any pending debounced write on purpose. Use when
-// saving could overwrite a protected original (degraded loads, tests).
+// Destructive stop: drops any pending debounced write on purpose. Use when
+// saving must not happen (tests, teardown without a flush).
 export function stopAutoSave(): void {
   clearPendingTimer();
   dirtyWhileRecording = false;

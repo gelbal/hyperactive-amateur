@@ -310,8 +310,8 @@ async function runFlow(
     };
     actions.setTrackClip(trackId, newClip);
     try {
-      // saveNow resolves false when the degraded-load autosave pause skipped
-      // the write — no persistence request should anchor to a skipped save.
+      // saveNow resolves false when autosave has not started (load pending
+      // or failed) — no persistence request should anchor to a skipped save.
       if (await saveNow()) requestPersistenceAfterClipSave();
     } catch {
       // saveNow logs autosave.error; durability failure is not a recording failure.

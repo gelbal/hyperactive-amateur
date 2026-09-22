@@ -566,10 +566,6 @@ describe("useAppStore", () => {
     expect(get().session.recordingStationDismissed).toBe(false);
   });
 
-  it("stores recovery warnings in the UI slice", () => {
-    get().actions.setRecoveryWarnings(["bpm clamped", "track reset"]);
-    expect(get().ui.recoveryWarnings).toEqual(["bpm clamped", "track reset"]);
-  });
 
   it("uses projectRevision to reject stale AI pattern applies", () => {
     const revision = get().session.projectRevision;

@@ -34,6 +34,11 @@ export const LOG_EVENTS = {
   AUDIO_ACTION_ERROR: "audio.action-error",
   RECORDING_INTERRUPTED: "recording.interrupted",
   MEDIA_ACQUIRE_FAILED: "media.acquire-failed",
+  RECOVERY_APPLIED: "recovery.applied",
+  RECOVERY_BACKUP_FAILED: "recovery.backup-failed",
+  RECOVERY_MIGRATION_FAILED: "recovery.migration-failed",
+  RECOVERY_QUARANTINED: "recovery.quarantined",
+  RECOVERY_LOAD_FAILED: "recovery.load-failed",
   VIDEO_DRAW_ERROR: "video.draw-error",
   AUTOSAVE_FLUSH: "autosave.flush",
 } as const;

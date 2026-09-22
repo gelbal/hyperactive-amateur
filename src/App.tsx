@@ -1,6 +1,7 @@
 // ABOUTME: Root React component for Hyperactive Amateur — header (title + controls), viewport, pads, grid.
 // ABOUTME: Owns global app effects: Tone.Transport bootstrap, rehydration, auto-save, keyboard hooks.
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { BpmDial } from "./components/BpmDial";
@@ -8,7 +9,6 @@ import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
-import { RecoveryBanner } from "./components/RecoveryBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
@@ -23,9 +23,13 @@ import { rehydrateFromStorage } from "./lib/rehydrate";
 import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, getStorageDurability } from "./lib/install";
+import { LOG_EVENTS, logger } from "./lib/logger";
+
+const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const clipCount = useAppStore(selectClipCount);
   const hasAnyClips = clipCount > 0;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
@@ -37,45 +41,29 @@ export function App() {
     const detachAudioRepair = initAudioRepair();
     const detachVisibility = installVisibilityListener();
     let cancelled = false;
-    let allowAutoSave = true;
-    let resumeAutoSaveUnsubscribe: (() => void) | null = null;
     void getStorageDurability().then((storageDurability) => {
       if (!cancelled) {
         useAppStore.getState().actions.setStorageDurability(storageDurability);
       }
     });
+    // Autosave starts after every load that resolves — repaired, migrated,
+    // quarantined, or clean. Persistence protects the original bytes with
+    // its own backup and quarantine records, so nothing waits on the user.
+    // Only a load that still fails after its bounded retries keeps autosave
+    // off: a transient read failure followed by a successful write would
+    // otherwise replace a good project with an empty one.
     rehydrateFromStorage()
-      .then((result) => {
-        allowAutoSave = !result.degraded;
-        if (cancelled || !result.degraded || !result.ok) return;
-        // A degraded-but-hydrated load keeps autosave paused so the repaired
-        // state cannot overwrite the protected original. Dismissing the
-        // recovery notice is the user's acknowledgment — the explicit
-        // recovery action that re-enables saving.
-        resumeAutoSaveUnsubscribe = useAppStore.subscribe((state, prev) => {
-          if (
-            prev.ui.recoveryWarnings.length > 0 &&
-            state.ui.recoveryWarnings.length === 0
-          ) {
-            resumeAutoSaveUnsubscribe?.();
-            resumeAutoSaveUnsubscribe = null;
-            startAutoSave();
-          }
-        });
+      .then(() => {
+        if (!cancelled) startAutoSave();
       })
-      .catch(() => {
-        allowAutoSave = false;
-        useAppStore
-          .getState()
-          .actions.setRecoveryWarnings([
-            "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
-          ]);
+      .catch((err: unknown) => {
+        logger.error(LOG_EVENTS.RECOVERY_LOAD_FAILED, {
+          message: err instanceof Error ? err.message : String(err),
+        });
+        if (!cancelled) setLoadFailed(true);
       })
       .finally(() => {
-        if (!cancelled) {
-          setHydrating(false);
-          if (allowAutoSave) startAutoSave();
-        }
+        if (!cancelled) setHydrating(false);
       });
     return () => {
       cancelled = true;
@@ -83,7 +71,6 @@ export function App() {
       detachAudioLifecycle();
       detachAudioRepair();
       detachVisibility();
-      resumeAutoSaveUnsubscribe?.();
       shutdownAutoSave();
     };
   }, []);
@@ -154,7 +141,7 @@ export function App() {
           <div className="text-zinc-500 text-sm">Loading project…</div>
         ) : (
           <>
-            <RecoveryBanner />
+            {loadFailed && <LoadFailedNotice />}
             <Viewport />
             {hasAnyClips ? (
               <PadGrid />
@@ -169,5 +156,28 @@ export function App() {
       </main>
       {hasAnyClips && <StepGrid />}
     </div>
+  );
+}
+
+// The one message the app keeps: without it the user would record a whole
+// session into nothing. It names the consequence and the next action.
+function LoadFailedNotice() {
+  return (
+    <section
+      aria-label="Saved project could not be opened"
+      className="w-full max-w-3xl border border-amber-500/40 bg-amber-950/30 px-3 py-3 text-amber-100 sm:px-4"
+    >
+      <div className="flex items-center gap-3">
+        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" aria-hidden />
+        <p className="min-w-0 flex-1 text-sm">{LOAD_FAILED_COPY}</p>
+        <button
+          type="button"
+          onClick={() => location.reload()}
+          className="h-8 shrink-0 whitespace-nowrap rounded border border-amber-400/30 px-3 text-sm text-amber-100 hover:bg-amber-900/50"
+        >
+          Reload
+        </button>
+      </div>
+    </section>
   );
 }

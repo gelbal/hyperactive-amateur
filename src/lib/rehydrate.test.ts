@@ -1,5 +1,5 @@
 // ABOUTME: rehydrate tests — saved snapshot is restored into the store, blob decode happens.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "fake-indexeddb/auto";
 import * as idbKeyval from "idb-keyval";
 import { del, get, keys, set } from "idb-keyval";
@@ -25,6 +25,7 @@ vi.mock("idb-keyval", async (importOriginal) => {
   const actual = await importOriginal<typeof import("idb-keyval")>();
   return {
     ...actual,
+    get: vi.fn(actual.get),
     set: vi.fn(actual.set),
   };
 });
@@ -48,7 +49,24 @@ import {
 } from "./__fixtures__/persistedProjects";
 import { useAppStore } from "../store/useAppStore";
 import { applyClassifiedTag } from "./applyClassifiedTag";
+import { saveNow, startAutoSave, stopAutoSave } from "./autoSave";
+import { clearLogs, getLogs, LOG_EVENTS } from "./logger";
 import type { Clip } from "../types";
+
+function loggedEvents(event: string): unknown[] {
+  return getLogs()
+    .filter((entry) => entry.event === event)
+    .map((entry) => entry.payload);
+}
+
+// Recovery notes go to the log ring buffer, never to the store or the screen.
+function expectAppliedWarnings(warnings: string[]): void {
+  expect(loggedEvents(LOG_EVENTS.RECOVERY_APPLIED)).toEqual([{ warnings }]);
+}
+
+function metaReads(): number {
+  return vi.mocked(idbKeyval.get).mock.calls.filter(([key]) => key === PROJECT_KEY).length;
+}
 
 async function persistedBlob(bytes: number[], type: string): Promise<Blob> {
   return new Response(new Uint8Array(bytes), {
@@ -170,13 +188,21 @@ async function legacyMonolithWithDroppedClip(
 
 describe("rehydrateFromStorage", () => {
   beforeEach(async () => {
+    stopAutoSave();
     useAppStore.getState().actions.reset();
     await clearProject();
     const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    vi.mocked(idbKeyval.get).mockImplementation(actual.get);
+    vi.mocked(idbKeyval.get).mockClear();
     vi.mocked(idbKeyval.set).mockImplementation(actual.set);
     vi.mocked(idbKeyval.set).mockClear();
     audioMocks.decodeAudioData.mockReset();
     audioMocks.decodeAudioData.mockResolvedValue(fakeAudioBuffer);
+    clearLogs();
+  });
+
+  afterEach(() => {
+    stopAutoSave();
   });
 
   it("returns a structured miss when nothing has been saved", async () => {
@@ -277,7 +303,7 @@ describe("rehydrateFromStorage", () => {
       `Schema version 1 was migrated to ${PERSISTED_SCHEMA_VERSION}.`,
     );
     expect(result.warnings.length).toBeGreaterThan(0);
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
+    expectAppliedWarnings(result.warnings);
 
     const project = useAppStore.getState().project;
     expect(project.bpm).toBe(180);
@@ -360,21 +386,117 @@ describe("rehydrateFromStorage", () => {
     useAppStore.getState().actions.reset();
     vi.mocked(idbKeyval.set).mockClear();
 
-    const result = await rehydrateFromStorage();
+    vi.mocked(idbKeyval.get).mockClear();
+
+    const result = await rehydrateFromStorage({ retryDelaysMs: [0, 0] });
 
     expect(result.ok).toBe(false);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("Autosave was paused"))).toBe(
-      true,
-    );
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
     expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
+    expect(loggedEvents(LOG_EVENTS.RECOVERY_QUARANTINED)).toHaveLength(1);
+    // An unreadable record is not retried: the quarantine already moved it.
+    expect(metaReads()).toBe(1);
     // The last good backup is preserved, the invalid metadata is set aside
     // under the quarantine key, and no legacy-migration write happens.
     expect(await get(PROJECT_BACKUP_KEY)).toEqual(backupBefore);
     expect(await get(PROJECT_KEY)).toBeUndefined();
     expect(await get("ha:meta-quarantine")).toEqual(invalidMeta);
     expect(await storedBlobKeys()).toEqual(blobsBefore);
+
+    // The app starts empty with saving on; GC stays held by the quarantine.
+    startAutoSave();
+    useAppStore.getState().actions.setBpm(120);
+    await expect(saveNow()).resolves.toBe(true);
+    expect((await loadProject())?.bpm).toBe(120);
+    expect(await storedBlobKeys()).toEqual(blobsBefore);
+  });
+
+  it("rejects the load when the quarantine record cannot be written", async () => {
+    const invalidMeta = { schemaVersion: 2, tracks: "corrupted" };
+    await set(PROJECT_KEY, invalidMeta);
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
+      if (key === "ha:meta-quarantine") throw new Error("quota exceeded");
+      return actual.set(key, value);
+    });
+
+    await expect(rehydrateFromStorage({ retryDelaysMs: [0, 0] })).rejects.toThrow("quota exceeded");
+
+    expect(await get(PROJECT_KEY)).toEqual(invalidMeta);
+    expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
+  });
+
+  it("retries a rejected loadProject before hydrating", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    let failures = 0;
+    vi.mocked(idbKeyval.get).mockImplementation(async (key) => {
+      if (key === PROJECT_KEY && failures < 2) {
+        failures += 1;
+        throw new Error("UnknownError: Connection to Indexed Database server lost");
+      }
+      return actual.get(key);
+    });
+    vi.mocked(idbKeyval.get).mockClear();
+    vi.mocked(idbKeyval.set).mockClear();
+
+    const result = await rehydrateFromStorage({ retryDelaysMs: [0, 0] });
+
+    expect(result.ok).toBe(true);
+    expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
+    expect(metaReads()).toBe(3);
+    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+  });
+
+  it("rejects after three failed attempts without writing", async () => {
+    vi.mocked(idbKeyval.get).mockImplementation(async (key) => {
+      if (key === PROJECT_KEY) throw new Error("UnknownError: Connection to Indexed Database server lost");
+      return undefined;
+    });
+
+    await expect(rehydrateFromStorage({ retryDelaysMs: [0, 0] })).rejects.toThrow(
+      "Connection to Indexed Database server lost",
+    );
+
+    expect(metaReads()).toBe(3);
+    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+  });
+
+  it("gives up on an attempt that never settles and retries", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
+    let hung = false;
+    vi.mocked(idbKeyval.get).mockImplementation((key) => {
+      if (key === PROJECT_KEY && !hung) {
+        hung = true;
+        return new Promise(() => undefined);
+      }
+      return actual.get(key);
+    });
+    vi.mocked(idbKeyval.get).mockClear();
+
+    const result = await rehydrateFromStorage({ retryDelaysMs: [0, 0], attemptTimeoutMs: 20 });
+
+    expect(result.ok).toBe(true);
+    expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
+    expect(metaReads()).toBe(2);
+  });
+
+  it("persists a clip recorded after a degraded load with saveNow", async () => {
+    await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip([7, 8, 9]));
+
+    const result = await rehydrateFromStorage();
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+
+    startAutoSave();
+    useAppStore.getState().actions.setTrackClip(2, await makeClip());
+    await expect(saveNow()).resolves.toBe(true);
+    expect((await loadProject())?.tracks[2].clipBlob).not.toBeNull();
   });
 
   it("migration GC keeps blob records that only the pre-repair backup references", async () => {
@@ -420,7 +542,7 @@ describe("rehydrateFromStorage", () => {
     );
   });
 
-  it("keeps legacy keys and pauses hydration when a backup blob write fails", async () => {
+  it("hydrates from memory when the backup's blob writes fail, and migrates once writes succeed", async () => {
     await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip([7, 8, 9]));
     const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
     vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
@@ -432,19 +554,28 @@ describe("rehydrateFromStorage", () => {
 
     const result = await rehydrateFromStorage();
 
-    expect(result.ok).toBe(false);
+    // The project is usable in memory; nothing on disk was touched, because
+    // both the backup and the migration write blob records before metadata.
+    expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("autosave was paused"))).toBe(true);
-    expect(useAppStore.getState().project.bpm).toBe(90);
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
-    // Quota failure while persisting backup media must leave the legacy
-    // monolith untouched — no metadata, no backup, no partial deletion.
+    expect(useAppStore.getState().project.bpm).toBe(104);
+    expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
+    expect(loggedEvents(LOG_EVENTS.RECOVERY_BACKUP_FAILED)).toHaveLength(1);
+    expect(loggedEvents(LOG_EVENTS.RECOVERY_MIGRATION_FAILED)).toHaveLength(1);
     expect(await get(LEGACY_PROJECT_KEY)).toMatchObject({ schemaVersion: 1 });
     expect(await get(PROJECT_KEY)).toBeUndefined();
     expect(await get(PROJECT_BACKUP_KEY)).toBeUndefined();
+
+    // Once writes succeed, the next save lands schema 2 beside the monolith
+    // and the following clean load removes the redundant monolith.
+    vi.mocked(idbKeyval.set).mockImplementation(actual.set);
+    await saveProject(useAppStore.getState());
+    expect((await storedMeta()).tracks[0].clipBlobRef).toMatch(/^ha:blob:[a-f0-9]{16}$/);
+    await loadProject();
+    expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
   });
 
-  it("keeps legacy keys and pauses hydration when the schema-2 metadata write fails", async () => {
+  it("hydrates and keeps the legacy keys when the schema-2 metadata write fails", async () => {
     await set(LEGACY_PROJECT_KEY, await validV1MonolithProject());
     const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
     vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
@@ -454,15 +585,13 @@ describe("rehydrateFromStorage", () => {
 
     const result = await rehydrateFromStorage();
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("could not be migrated"))).toBe(
-      true,
-    );
-    expect(useAppStore.getState().project.bpm).toBe(90);
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
+    expect(useAppStore.getState().project.bpm).toBe(104);
+    expect(loggedEvents(LOG_EVENTS.RECOVERY_MIGRATION_FAILED)).toHaveLength(1);
     expect(await get(LEGACY_PROJECT_KEY)).toMatchObject({ schemaVersion: 1 });
     expect(await get(PROJECT_KEY)).toBeUndefined();
+    expect(await get(PROJECT_BACKUP_KEY)).toBeTruthy();
   });
 
   it("does not rewrite a clean schema-2 record during rehydrate", async () => {
@@ -477,7 +606,7 @@ describe("rehydrateFromStorage", () => {
     expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
   });
 
-  it("does not hydrate or risk autosave overwrite when degraded recovery backup fails", async () => {
+  it("hydrates and migrates when the recovery backup write fails", async () => {
     const saveRecoveryBackupSpy = vi
       .spyOn(persistence, "saveRecoveryBackup")
       .mockRejectedValueOnce(new Error("quota exceeded"));
@@ -497,12 +626,16 @@ describe("rehydrateFromStorage", () => {
 
     const result = await rehydrateFromStorage();
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
-    expect(result.warnings.some((warning) => warning.includes("autosave was paused"))).toBe(true);
-    expect(useAppStore.getState().project.bpm).toBe(90);
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
-    expect((await loadProject())?.stepCount).toBe(15);
+    expect(useAppStore.getState().project.bpm).toBe(123);
+    expect(useAppStore.getState().project.stepCount).toBe(16);
+    expect(loggedEvents(LOG_EVENTS.RECOVERY_BACKUP_FAILED)).toHaveLength(1);
+    // Migration still ran: schema 2 is on disk with the normalised value.
+    const loaded = await loadProject();
+    expect(loaded?.storageFormat).toBe("schema2");
+    expect(loaded?.stepCount).toBe(16);
+    expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
 
     saveRecoveryBackupSpy.mockRestore();
   });
