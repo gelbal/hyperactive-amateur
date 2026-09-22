@@ -5,6 +5,7 @@ import {
   registerStreamLifecycle,
   releaseMediaStream,
 } from "./streamLifecycle";
+import { noteMicAcquireSettled, noteMicAcquireStarted } from "./audioLifecycle";
 
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
@@ -49,6 +50,10 @@ export async function requestMedia(): Promise<void> {
     .actions.setMedia({ stream: null, status: "requesting", error: null });
 
   inFlight = (async () => {
+    // The audio session must already be capture-compatible when getUserMedia
+    // is called (WebKit rejects audio capture under the "playback" type), so
+    // the acquire is declared before the call and settled after the probe.
+    noteMicAcquireStarted();
     try {
       const stream = await getUserMediaWithDeviceFallback();
       // Permission confirmed. Release the tracks immediately — the recording
@@ -63,6 +68,7 @@ export async function requestMedia(): Promise<void> {
         .getState()
         .actions.setMedia({ stream: null, status: "denied", error: message });
     } finally {
+      noteMicAcquireSettled();
       inFlight = null;
     }
   })();
@@ -115,6 +121,11 @@ async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStre
 export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
+  // Declared before getUserMedia and settled only after the stream is
+  // registered as held, so the session type goes straight from
+  // "play-and-record" (pending) to "play-and-record" (held) with no
+  // intermediate write.
+  noteMicAcquireStarted();
   try {
     const stream = await getUserMediaWithDeviceFallback(token);
     if (token !== acquireGeneration) {
@@ -138,6 +149,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
     throw err;
   } finally {
     if (activeAcquireToken === token) activeAcquireToken = null;
+    noteMicAcquireSettled();
   }
 }
 

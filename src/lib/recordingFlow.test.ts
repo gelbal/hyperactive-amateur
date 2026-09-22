@@ -105,6 +105,7 @@ import {
 } from "./recordingFlow";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
 import { clearLogs } from "./logger";
@@ -245,8 +246,11 @@ function makeAbortableRecordClip() {
 }
 
 describe("recordingFlow", () => {
+  let audioSession: ReturnType<typeof installNavigatorAudioSession>;
+
   beforeEach(() => {
     __resetAudioLifecycleForTesting();
+    audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     audioMocks.context.state = "running";
@@ -271,7 +275,25 @@ describe("recordingFlow", () => {
   });
 
   afterEach(() => {
+    audioSession.uninstall();
     vi.useRealTimers();
+  });
+
+  it("declares capture intent before unlocking audio so the session type never passes through playback", async () => {
+    vi.useFakeTimers();
+    const typesAtAcquire: string[] = [];
+    mediaMocks.acquireRecordingStream.mockImplementation(async () => {
+      typesAtAcquire.push(navigator.audioSession?.type ?? "missing");
+      return makeStream();
+    });
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(typesAtAcquire).toEqual(["play-and-record"]);
+    expect(audioSession.types).toEqual(["play-and-record", "playback"]);
   });
 
   it("refuses to start recording while export is active", async () => {

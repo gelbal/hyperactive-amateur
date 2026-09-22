@@ -6,6 +6,8 @@ import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
+  noteMicAcquireStarted: vi.fn(),
+  noteMicAcquireSettled: vi.fn(),
 }));
 const toneMocks = vi.hoisted(() => ({
   rawContext: { state: "suspended" as AudioContextState },
@@ -20,6 +22,8 @@ vi.mock("tone", () => ({
 vi.mock("./audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
+  noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
+  noteMicAcquireSettled: audioLifecycleMocks.noteMicAcquireSettled,
 }));
 
 import * as Tone from "tone";

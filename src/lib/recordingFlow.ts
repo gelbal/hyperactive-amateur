@@ -3,7 +3,12 @@
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
-import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
+import {
+  AudioUnavailableError,
+  ensureAudioRunning,
+  noteMicAcquireSettled,
+  noteMicAcquireStarted,
+} from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -258,6 +263,10 @@ async function runFlow(
   const externalStream = options.stream ?? null;
   let stream: MediaStream | null = null;
 
+  // A flow that will acquire its own stream declares capture intent before
+  // the audio unlock, so the session type never passes through "playback"
+  // on the way to getUserMedia. A station-supplied stream is already held.
+  if (!externalStream) noteMicAcquireStarted();
   try {
     try {
       await ensureAudioRunning();
@@ -354,6 +363,7 @@ async function runFlow(
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    if (!externalStream) noteMicAcquireSettled();
     actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }

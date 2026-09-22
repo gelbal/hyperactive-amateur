@@ -3,13 +3,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   requestMedia,
   acquireRecordingStream,
+  acquirePreviewStream,
   releaseRecordingStream,
+  releasePreviewStream,
   invalidatePendingAcquire,
   isAcquireInFlight,
   buildConstraints,
   __resetMediaForTesting,
 } from "./media";
 import { useAppStore } from "../store/useAppStore";
+import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 
 function makeFakeStream() {
   // Tracks need addEventListener / removeEventListener for streamLifecycle's
@@ -53,8 +57,12 @@ describe("media", () => {
   let originalMediaDevices: MediaDevices | undefined;
   let originalPermissions: Permissions | undefined;
 
+  let audioSession: ReturnType<typeof installNavigatorAudioSession>;
+
   beforeEach(() => {
     __resetMediaForTesting();
+    __resetAudioLifecycleForTesting();
+    audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
@@ -62,6 +70,7 @@ describe("media", () => {
   });
 
   afterEach(() => {
+    audioSession.uninstall();
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: originalMediaDevices,
@@ -70,6 +79,58 @@ describe("media", () => {
       configurable: true,
       value: originalPermissions,
     });
+  });
+
+  it("writes play-and-record before every getUserMedia call, for the probe and both acquires", async () => {
+    const typesAtCall: string[] = [];
+    stubGetUserMedia(async () => {
+      typesAtCall.push(navigator.audioSession?.type ?? "missing");
+      return makeFakeStream();
+    });
+
+    await requestMedia();
+    const held = await acquireRecordingStream();
+    releaseRecordingStream(held);
+    const preview = await acquirePreviewStream();
+    releasePreviewStream(preview);
+
+    expect(typesAtCall).toEqual(["play-and-record", "play-and-record", "play-and-record"]);
+    // The probe settles to the platform default; each held stream keeps
+    // play-and-record until it is released, then settles again.
+    expect(audioSession.types).toEqual([
+      "play-and-record",
+      "auto",
+      "play-and-record",
+      "auto",
+      "play-and-record",
+      "auto",
+    ]);
+  });
+
+  it("settles the session bracket when the acquire is rejected with WebKit's category error", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      );
+    });
+
+    await expect(acquireRecordingStream()).rejects.toMatchObject({ name: "InvalidStateError" });
+
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("settles the session bracket for a stale acquire that resolves after invalidation", async () => {
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquisition = acquireRecordingStream();
+    expect(audioSession.types).toEqual(["play-and-record"]);
+    invalidatePendingAcquire();
+    pending.resolve(makeFakeStream());
+
+    await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
   });
 
   it("requestMedia confirms then releases (granted, no stream held), and surfaces denied with error on rejection", async () => {

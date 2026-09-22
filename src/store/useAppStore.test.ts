@@ -5,11 +5,15 @@ import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
+  noteMicAcquireStarted: vi.fn(),
+  noteMicAcquireSettled: vi.fn(),
 }));
 
 vi.mock("../lib/audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
+  noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
+  noteMicAcquireSettled: audioLifecycleMocks.noteMicAcquireSettled,
 }));
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
