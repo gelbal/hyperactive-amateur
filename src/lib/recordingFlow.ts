@@ -3,12 +3,7 @@
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
-import {
-  AudioUnavailableError,
-  ensureAudioRunning,
-  noteMicAcquireSettled,
-  noteMicAcquireStarted,
-} from "./audioLifecycle";
+import { AudioUnavailableError, ensureAudioRunning, noteMicAcquireStarted } from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
@@ -16,6 +11,7 @@ import {
   ACQUIRE_FAILED_COPY,
   CAMERA_DENIED_COPY,
   acquireRecordingStream,
+  isPermissionDenial,
   releaseRecordingStream,
   requestMedia,
 } from "./media";
@@ -243,7 +239,7 @@ async function runFlow(
   // A flow that will acquire its own stream declares capture intent before
   // the audio unlock, so the session type never passes through "playback"
   // on the way to getUserMedia. A station-supplied stream is already held.
-  if (!externalStream) noteMicAcquireStarted();
+  const releaseCaptureIntent = externalStream ? null : noteMicAcquireStarted();
   try {
     try {
       await ensureAudioRunning();
@@ -267,15 +263,13 @@ async function runFlow(
           throw makeAbortError("Aborted during media acquisition");
         }
         // Permission may have been revoked since the last grant — re-probe so
-        // the viewport gate can take over. With the station dismissed the gate
-        // is not on screen, so the row's line must carry the right next
-        // action: the settings for a denial, a retry for anything else.
-        await requestMedia();
-        options.onError?.(
-          useAppStore.getState().media.status === "denied"
-            ? CAMERA_DENIED_COPY
-            : ACQUIRE_FAILED_COPY,
-        );
+        // the viewport gate can take over, without waiting on it: a pending
+        // probe must never hold the flow (and its Cancel) open. With the
+        // station dismissed the gate is not on screen, so the row's line
+        // carries the right next action from the failure itself: the
+        // settings for a denial, a retry for anything else.
+        void requestMedia();
+        options.onError?.(isPermissionDenial(e) ? CAMERA_DENIED_COPY : ACQUIRE_FAILED_COPY);
         return false;
       }
     }
@@ -349,7 +343,7 @@ async function runFlow(
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
-    if (!externalStream) noteMicAcquireSettled();
+    releaseCaptureIntent?.();
     actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }

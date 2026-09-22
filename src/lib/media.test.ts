@@ -124,6 +124,23 @@ describe("media", () => {
     expect(audioSession.types).toEqual(["play-and-record", "auto"]);
   });
 
+  it("releases the session claim the moment a pending acquire is invalidated", async () => {
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquisition = acquireRecordingStream();
+    expect(audioSession.types).toEqual(["play-and-record"]);
+
+    // Playback started and the station unmounted: the claim goes with it
+    // now, not when the native call eventually settles.
+    invalidatePendingAcquire();
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+
+    pending.resolve(makeFakeStream());
+    await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
   it("settles the session bracket for a stale acquire that resolves after invalidation", async () => {
     const pending = deferred<MediaStream>();
     stubGetUserMedia(() => pending.promise);

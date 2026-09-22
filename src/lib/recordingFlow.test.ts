@@ -51,6 +51,11 @@ vi.mock("tone", () => ({
 vi.mock("./media", () => ({
   ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   CAMERA_DENIED_COPY: "Camera blocked — allow camera and microphone access in your browser, then reload.",
+  isPermissionDenial: (err: unknown) => {
+    const name =
+      typeof err === "object" && err !== null && "name" in err ? String((err as { name: unknown }).name) : "";
+    return name === "NotAllowedError" || name === "SecurityError";
+  },
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
   invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
@@ -319,18 +324,29 @@ describe("recordingFlow", () => {
     expect(useAppStore.getState().recording.state).toBe("idle");
   });
 
-  it("reports the denied line on the row when the probe after a failed acquire lands in denied", async () => {
+  it("reports the denied line on the row when the acquire itself was a permission denial", async () => {
     const onError = vi.fn();
     mediaMocks.acquireRecordingStream.mockRejectedValue(
       new DOMException("Permission denied", "NotAllowedError"),
     );
-    mediaMocks.requestMedia.mockImplementation(async () => {
-      useAppStore.getState().actions.setMedia({ stream: null, status: "denied", error: "denied" });
-    });
 
     await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
 
+    expect(mediaMocks.requestMedia).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(CAMERA_DENIED_COPY);
+  });
+
+  it("never waits on the re-probe: a pending probe cannot hold the flow open", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException("AudioSession category is not compatible with audio capture.", "InvalidStateError"),
+    );
+    mediaMocks.requestMedia.mockReturnValue(new Promise(() => undefined));
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
   });
 
   it("refuses to start recording while export is active", async () => {

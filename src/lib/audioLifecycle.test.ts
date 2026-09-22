@@ -44,7 +44,6 @@ import {
   ensureAudioRunning,
   initAudioLifecycle,
   markSilentSwitchHintDismissed,
-  noteMicAcquireSettled,
   noteMicAcquireStarted,
   noteMicHeld,
   noteMicReleased,
@@ -232,11 +231,11 @@ describe("ensureAudioRunning", () => {
     audioSession = installNavigatorAudioSession();
     audioContextStub.setState("running");
 
-    noteMicAcquireStarted();
+    const release = noteMicAcquireStarted();
     await ensureAudioRunning();
     expect(audioSession.types).toEqual(["play-and-record"]);
 
-    noteMicAcquireSettled();
+    release();
 
     expect(audioSession.types).toEqual(["play-and-record", "playback"]);
   });
@@ -244,19 +243,32 @@ describe("ensureAudioRunning", () => {
   it("returns to auto when an acquire settles without a hold before any audible action", () => {
     audioSession = installNavigatorAudioSession();
 
-    noteMicAcquireStarted();
-    noteMicAcquireSettled();
+    const release = noteMicAcquireStarted();
+    release();
 
     expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("releases a claim at most once, so a late settle after invalidation cannot go negative", () => {
+    audioSession = installNavigatorAudioSession();
+
+    const release = noteMicAcquireStarted();
+    release();
+    release();
+    noteMicAcquireStarted();
+
+    // A negative counter would leave the third claim below zero and skip
+    // this write.
+    expect(audioSession.types).toEqual(["play-and-record", "auto", "play-and-record"]);
   });
 
   it("skips duplicate writes of the same session type", async () => {
     audioSession = installNavigatorAudioSession();
     audioContextStub.setState("running");
 
-    noteMicAcquireStarted();
+    const release = noteMicAcquireStarted();
     noteMicHeld();
-    noteMicAcquireSettled();
+    release();
     expect(audioSession.types).toEqual(["play-and-record"]);
 
     noteMicReleased();

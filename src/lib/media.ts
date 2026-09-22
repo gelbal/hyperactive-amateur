@@ -6,7 +6,7 @@ import {
   registerStreamLifecycle,
   releaseMediaStream,
 } from "./streamLifecycle";
-import { noteMicAcquireSettled, noteMicAcquireStarted } from "./audioLifecycle";
+import { noteMicAcquireStarted } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
 
 // One fixed line for a failed camera/mic acquire, shared by the permission
@@ -24,6 +24,9 @@ export const CAMERA_DENIED_COPY =
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
 let activeAcquireToken: number | null = null;
+// The audio-session claim of the acquire that is currently in flight, so an
+// invalidation can drop it before the native getUserMedia settles.
+let activeAcquireRelease: (() => void) | null = null;
 
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
@@ -62,7 +65,7 @@ function errorName(err: unknown): string {
 // Only an explicit denial is "denied" (the gate's settings copy). Everything
 // else — a busy camera, WebKit's audio-session rejection, an abort — lands
 // the user back in the state whose retry already exists.
-function isPermissionDenial(err: unknown): boolean {
+export function isPermissionDenial(err: unknown): boolean {
   const name = errorName(err);
   return name === "NotAllowedError" || name === "SecurityError";
 }
@@ -95,8 +98,8 @@ export async function requestMedia(): Promise<void> {
   inFlight = (async () => {
     // The audio session must already be capture-compatible when getUserMedia
     // is called (WebKit rejects audio capture under the "playback" type), so
-    // the acquire is declared before the call and settled after the probe.
-    noteMicAcquireStarted();
+    // the acquire is declared before the call and released after the probe.
+    const releaseClaim = noteMicAcquireStarted();
     try {
       const stream = await getUserMediaWithDeviceFallback();
       // Permission confirmed. Release the tracks immediately — the recording
@@ -120,7 +123,7 @@ export async function requestMedia(): Promise<void> {
         useAppStore.getState().actions.setMedia({ stream: null, status: "idle", error });
       }
     } finally {
-      noteMicAcquireSettled();
+      releaseClaim();
       inFlight = null;
     }
   })();
@@ -174,11 +177,12 @@ async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStre
 export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
-  // Declared before getUserMedia and settled only after the stream is
+  // Declared before getUserMedia and released only after the stream is
   // registered as held, so the session type goes straight from
   // "play-and-record" (pending) to "play-and-record" (held) with no
   // intermediate write.
-  noteMicAcquireStarted();
+  const releaseClaim = noteMicAcquireStarted();
+  activeAcquireRelease = releaseClaim;
   try {
     const stream = await getUserMediaWithDeviceFallback(token);
     if (token !== acquireGeneration) {
@@ -208,7 +212,8 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
     throw err;
   } finally {
     if (activeAcquireToken === token) activeAcquireToken = null;
-    noteMicAcquireSettled();
+    if (activeAcquireRelease === releaseClaim) activeAcquireRelease = null;
+    releaseClaim();
   }
 }
 
@@ -221,6 +226,10 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
 export function invalidatePendingAcquire(): void {
   acquireGeneration += 1;
   activeAcquireToken = null;
+  // The obsolete acquire's audio-session claim goes now — playback must not
+  // run under "play-and-record" while a stalled native call keeps it alive.
+  activeAcquireRelease?.();
+  activeAcquireRelease = null;
 }
 
 // Release a stream returned by acquireRecordingStream. Stops every track (so
@@ -272,4 +281,5 @@ export function __resetMediaForTesting(): void {
   inFlight = null;
   acquireGeneration = 0;
   activeAcquireToken = null;
+  activeAcquireRelease = null;
 }

@@ -6,8 +6,7 @@ import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
-  noteMicAcquireStarted: vi.fn(),
-  noteMicAcquireSettled: vi.fn(),
+  noteMicAcquireStarted: vi.fn(() => () => undefined),
 }));
 const toneMocks = vi.hoisted(() => ({
   rawContext: { state: "suspended" as AudioContextState },
@@ -23,7 +22,6 @@ vi.mock("./audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
   noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
-  noteMicAcquireSettled: audioLifecycleMocks.noteMicAcquireSettled,
 }));
 
 import * as Tone from "tone";
@@ -161,13 +159,16 @@ describe("streamLifecycle", () => {
       setTimeout(() => tracks[1].fireUnmute(), 450);
 
       const usable = waitForUsableTracks(stream);
+      let settled = false;
+      void usable.then(() => {
+        settled = true;
+      });
       await vi.advanceTimersByTimeAsync(449);
-      expect(await Promise.race([usable.then(() => "settled"), Promise.resolve("pending")])).toBe(
-        "pending",
-      );
+      expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(1);
       await expect(usable).resolves.toBe(true);
+      expect(settled).toBe(true);
       // The poll loop stops with the settle; no timer is left behind.
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -178,13 +179,16 @@ describe("streamLifecycle", () => {
       tracks[1].muted = true;
 
       const usable = waitForUsableTracks(stream);
+      let settled = false;
+      void usable.then(() => {
+        settled = true;
+      });
       await vi.advanceTimersByTimeAsync(1_999);
-      expect(await Promise.race([usable.then(() => "settled"), Promise.resolve("pending")])).toBe(
-        "pending",
-      );
+      expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(1);
       await expect(usable).resolves.toBe(false);
+      expect(settled).toBe(true);
     });
 
     it("rejects with AbortError when aborted during the grace period", async () => {

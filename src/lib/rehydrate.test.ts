@@ -173,12 +173,14 @@ async function legacyMonolithWithDroppedClip(
         tag: "kick",
       },
       {
-        // Invalid trim window — normalization drops this clip during repair.
+        // Non-positive duration — a shape no build writes; normalization
+        // drops this clip during repair, so the pre-repair backup is the
+        // only root for its bytes.
         ...emptyTrack(1),
         clipBlob: await persistedBlob(droppedBytes, "video/webm"),
-        trimStartMs: 600,
-        trimEndMs: 400,
-        durationMs: 1000,
+        trimStartMs: 0,
+        trimEndMs: 0,
+        durationMs: 0,
         tag: "snare",
       },
       ...Array.from({ length: 6 }, (_, id) => emptyTrack(id + 2)),
@@ -503,6 +505,47 @@ describe("rehydrateFromStorage", () => {
     expect(await get(PROJECT_KEY)).toEqual(newer);
     expect(await get("ha:meta-quarantine")).toBeUndefined();
     expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+  });
+
+  it("repairs an invalid trim window instead of dropping the clip", async () => {
+    await set(LEGACY_PROJECT_KEY, {
+      schemaVersion: 1,
+      bpm: 104,
+      swing: 0,
+      cutSubdivision: "8n",
+      sameTierHoldMs: 400,
+      subgenre: "trap",
+      vibe: "tight",
+      stepCount: 16,
+      tagReasoning: {},
+      tracks: [
+        {
+          id: 0,
+          clipBlob: await persistedBlob([7, 8, 9], "video/webm"),
+          audioBlob: null,
+          posterBlob: null,
+          trimStartMs: 600,
+          trimEndMs: 400,
+          durationMs: 1000,
+          tag: "kick",
+          steps: new Array(16).fill(false),
+          volume: 1,
+          muted: false,
+          showVideo: true,
+        },
+      ],
+      updatedAt: 1_000,
+    });
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toContain("Track 1 trim window was invalid and reset.");
+    const track = useAppStore.getState().project.tracks[0];
+    expect(track.clip).not.toBeNull();
+    expect(track.clip).toMatchObject({ trimStartMs: 0, trimEndMs: 1000, durationMs: 1000 });
+    // Trims are metadata over an immutable blob: the bytes stay referenced.
+    expect((await storedMeta()).tracks[0].clipBlobRef).toBe(await contentAddressedBlobKey([7, 8, 9]));
   });
 
   it("persists a clip recorded after a degraded load with saveNow", async () => {

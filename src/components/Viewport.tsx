@@ -7,11 +7,8 @@ import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/video
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
-import {
-  ensureAudioRunning,
-  noteMicAcquireSettled,
-  noteMicAcquireStarted,
-} from "../lib/audioLifecycle";
+import { ensureAudioRunning, noteMicAcquireStarted } from "../lib/audioLifecycle";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -281,7 +278,7 @@ function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) =
     // Declared before the unlock, exactly like a record flow, so the audio
     // session goes straight to "play-and-record" instead of being resumed
     // under "playback" and flipped a moment later by the camera acquire.
-    noteMicAcquireStarted();
+    const releaseClaim = noteMicAcquireStarted();
     try {
       try {
         await ensureAudioRunning();
@@ -289,9 +286,22 @@ function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) =
         setStillBlocked(true);
         return;
       }
-      await useAppStore.getState().actions.resumeMedia();
+      // The unlock awaited a user-visible moment; re-check the world before
+      // re-lighting the camera. A hide in between already suspended
+      // everything (a late acquire would outlive that suspension), playback
+      // or export must not run with the mic held, and a changed media state
+      // means someone else already dealt with it.
+      const state = useAppStore.getState();
+      if (
+        (typeof document !== "undefined" && document.hidden) ||
+        !canStartAudibleAction(state) ||
+        state.media.status !== "suspended"
+      ) {
+        return;
+      }
+      await state.actions.resumeMedia();
     } finally {
-      noteMicAcquireSettled();
+      releaseClaim();
       setPending(false);
       onPendingChange(false);
     }

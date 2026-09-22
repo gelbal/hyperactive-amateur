@@ -560,6 +560,14 @@ export async function loadProject(): Promise<PersistedProject | null> {
         `${PROJECT_KEY} was written by a newer build (schema ${metadata.schemaVersion}); this build reads schema ${PERSISTED_SCHEMA_VERSION}`,
       );
     }
+    // One quarantine slot: an unresolved record in it is never overwritten
+    // (a second one would take its metadata and, through GC, its bytes).
+    // Fail the load instead; the App keeps autosave off behind its one line.
+    if ((await get(PROJECT_QUARANTINE_KEY, store)) !== undefined) {
+      throw new Error(
+        `${PROJECT_KEY} is unreadable and the quarantine slot ${PROJECT_QUARANTINE_KEY} is already occupied`,
+      );
+    }
     // Set the unreadable record aside before failing: the app then starts
     // empty with autosave on, and nothing overwrites the original bytes. If
     // either write fails the error propagates as an ordinary load failure.

@@ -233,22 +233,17 @@ function normalizeClipFields(
 
   const startRaw = finiteNumber(raw.trimStartMs) ?? 0;
   const endRaw = finiteNumber(raw.trimEndMs) ?? durationMs;
-  const trimStartMs = Math.max(0, Math.min(durationMs, startRaw));
-  const trimEndMs = Math.max(0, Math.min(durationMs, endRaw));
+  let trimStartMs = Math.max(0, Math.min(durationMs, startRaw));
+  let trimEndMs = Math.max(0, Math.min(durationMs, endRaw));
   if (trimStartMs !== startRaw || trimEndMs !== endRaw) {
     warn(warnings, `Track ${trackId + 1} trim window was clamped.`);
   }
+  // Trims are metadata over an immutable blob: an inverted window is reset
+  // to the whole clip rather than costing the clip its bytes.
   if (trimEndMs <= trimStartMs) {
-    warn(warnings, `Track ${trackId + 1} trim window was invalid and its clip was dropped.`);
-    return {
-      clipBlob: null,
-      audioBlob: null,
-      posterBlob: null,
-      trimStartMs: 0,
-      trimEndMs: 0,
-      durationMs: 0,
-      audioStatus: "ok",
-    };
+    warn(warnings, `Track ${trackId + 1} trim window was invalid and reset.`);
+    trimStartMs = 0;
+    trimEndMs = durationMs;
   }
 
   return {
@@ -517,8 +512,10 @@ export async function rehydrateFromStorage(options: RehydrateOptions = {}): Prom
   }
   if (persisted.storageFormat === "legacy") {
     // migrateLegacyProject writes blob records, then ha:meta, then deletes
-    // the legacy keys, so any failure leaves the monolith intact; the
-    // in-memory project stays usable and the next save writes schema 2.
+    // the legacy keys, then collects orphans: a failure before the delete
+    // leaves the monolith intact, and a failure after it leaves only
+    // orphaned records. Either way the in-memory project stays usable and
+    // the next save writes schema 2.
     try {
       await migrateLegacyProject(normalized);
     } catch (err) {

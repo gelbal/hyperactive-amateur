@@ -25,8 +25,8 @@ vi.mock("../lib/videoEngine", () => videoEngineMocks);
 const requestMedia = vi.fn();
 const isAcquireInFlight = vi.fn(() => false);
 const ensureAudioRunning = vi.fn();
-const noteMicAcquireStarted = vi.fn();
-const noteMicAcquireSettled = vi.fn();
+const releaseAcquireClaim = vi.fn();
+const noteMicAcquireStarted = vi.fn(() => releaseAcquireClaim);
 vi.mock("../lib/media", () => ({
   ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   requestMedia: () => requestMedia(),
@@ -35,7 +35,6 @@ vi.mock("../lib/media", () => ({
 vi.mock("../lib/audioLifecycle", () => ({
   ensureAudioRunning: () => ensureAudioRunning(),
   noteMicAcquireStarted: () => noteMicAcquireStarted(),
-  noteMicAcquireSettled: () => noteMicAcquireSettled(),
 }));
 
 import { Viewport } from "./Viewport";
@@ -536,7 +535,7 @@ describe("Viewport", () => {
       .mockImplementation(() => new Promise<void>((resolve) => (settleResume = resolve)));
     resumeSpy.mockClear();
     noteMicAcquireStarted.mockClear();
-    noteMicAcquireSettled.mockClear();
+    releaseAcquireClaim.mockClear();
     ensureAudioRunning.mockClear();
     render(<Viewport />);
 
@@ -549,13 +548,60 @@ describe("Viewport", () => {
     expect(noteMicAcquireStarted.mock.invocationCallOrder[0]).toBeLessThan(
       ensureAudioRunning.mock.invocationCallOrder[0],
     );
-    expect(noteMicAcquireSettled).not.toHaveBeenCalled();
+    expect(releaseAcquireClaim).not.toHaveBeenCalled();
 
     await act(async () => {
       settleResume();
     });
-    await waitFor(() => expect(noteMicAcquireSettled).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("button", { name: "Interrupted — tap to resume" })).not.toBeInTheDocument();
+  });
+
+  it("merged pill: skips the reconnect when the page went hidden during the unlock", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    releaseAcquireClaim.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
+
+    // The hide already suspended everything; a late acquire must not re-light the camera.
+    expect(resumeSpy).not.toHaveBeenCalled();
+    Reflect.deleteProperty(document, "hidden");
+  });
+
+  it("merged pill: skips the reconnect when playback started during the unlock", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      useAppStore.getState().actions.setIsPlaying(true);
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    releaseAcquireClaim.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
+
+    // Playback owns the viewport now; the mic must not be held under it.
+    expect(resumeSpy).not.toHaveBeenCalled();
   });
 
   it("idle gate: shows the one fixed line after a non-denial probe failure", () => {

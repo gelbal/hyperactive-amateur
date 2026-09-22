@@ -81,14 +81,19 @@ export function noteMicReleased(): void {
 
 // Bracket every getUserMedia call (and a record flow that will make one) so
 // the type is capture-compatible before the call, not after it resolves.
-export function noteMicAcquireStarted(): void {
+// Returns the claim's own release, idempotent, so an acquire that is
+// invalidated (playback started, page hidden) can drop its claim at once
+// while the native call is still pending, and the late settle is a no-op.
+export function noteMicAcquireStarted(): () => void {
   pendingAcquires += 1;
   syncSessionType();
-}
-
-export function noteMicAcquireSettled(): void {
-  pendingAcquires = Math.max(0, pendingAcquires - 1);
-  syncSessionType();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    pendingAcquires = Math.max(0, pendingAcquires - 1);
+    syncSessionType();
+  };
 }
 
 async function waitForRunning(context: AudioContext): Promise<void> {

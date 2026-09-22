@@ -435,6 +435,18 @@ describe("persistence", () => {
     expect(await storedBlobKeys()).toEqual([keptRef]);
   });
 
+  it("refuses to overwrite an unresolved quarantine record with a second one", async () => {
+    const first = { schemaVersion: 2, tracks: "first" };
+    const second = { schemaVersion: 2, tracks: "second" };
+    await set(QUARANTINE_KEY, first);
+    await set(META_KEY, second);
+
+    await expect(loadProject()).rejects.toThrow(/quarantine/);
+
+    expect(await get(QUARANTINE_KEY)).toEqual(first);
+    expect(await get(META_KEY)).toEqual(second);
+  });
+
   it("leaves a record from a newer schema untouched and fails the load instead of quarantining it", async () => {
     const newer = { schemaVersion: 3, tracks: [] };
     await set(META_KEY, newer);
