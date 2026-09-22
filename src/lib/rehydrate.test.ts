@@ -369,11 +369,11 @@ describe("rehydrateFromStorage", () => {
     );
     expect(useAppStore.getState().ui.recoveryWarnings).toEqual(result.warnings);
     expect(useAppStore.getState().project.tracks[0].clip).toBeNull();
-    // The last good backup is preserved, the invalid metadata is left in
-    // place for recovery, and no legacy-migration write happens.
+    // The last good backup is preserved, the invalid metadata is set aside
+    // under the quarantine key, and no legacy-migration write happens.
     expect(await get(PROJECT_BACKUP_KEY)).toEqual(backupBefore);
-    expect(await get(PROJECT_KEY)).toEqual(invalidMeta);
-    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+    expect(await get(PROJECT_KEY)).toBeUndefined();
+    expect(await get("ha:meta-quarantine")).toEqual(invalidMeta);
     expect(await storedBlobKeys()).toEqual(blobsBefore);
   });
 

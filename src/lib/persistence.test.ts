@@ -25,6 +25,7 @@ vi.mock("idb-keyval", async (importOriginal) => {
 });
 
 const META_KEY = "ha:meta";
+const QUARANTINE_KEY = "ha:meta-quarantine";
 const BACKUP_KEY = "ha:meta-backup";
 const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
 const LEGACY_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
@@ -370,17 +371,35 @@ describe("persistence", () => {
     expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
   });
 
-  it("rejects an existing-but-invalid ha:meta instead of treating it as legacy", async () => {
+  it("quarantines an existing-but-invalid ha:meta instead of treating it as legacy", async () => {
     const invalidMeta = { schemaVersion: 2, tracks: "not-an-array" };
     await set(META_KEY, invalidMeta);
     await set(LEGACY_PROJECT_KEY, { schemaVersion: 1, tracks: [] });
 
     await expect(loadProject()).rejects.toMatchObject({ name: "InvalidMetadataError" });
 
-    // The invalid record is preserved for recovery, never rewritten, and the
-    // legacy record cannot be reached while ha:meta exists.
-    expect(await get(META_KEY)).toEqual(invalidMeta);
+    // The unreadable record is set aside under the quarantine key (never
+    // rewritten in place), so the app can start fresh and keep saving; the
+    // legacy record is untouched.
+    expect(await get(META_KEY)).toBeUndefined();
+    expect(await get(QUARANTINE_KEY)).toEqual(invalidMeta);
     expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
+  });
+
+  it("holds blob GC while a quarantine record exists", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(13));
+    await saveProject(useAppStore.getState());
+    const orphaned = await storedBlobKeys();
+    expect(orphaned.length).toBeGreaterThan(0);
+    await set(QUARANTINE_KEY, { schemaVersion: 3, tracks: [] });
+    useAppStore.getState().actions.clearTrackClip(0);
+
+    await saveProject(useAppStore.getState());
+    expect(await storedBlobKeys()).toEqual(orphaned);
+
+    await del(QUARANTINE_KEY);
+    await saveProject(useAppStore.getState());
+    expect(await storedBlobKeys()).toEqual([]);
   });
 
   it("omits transient playback and recording fields from persistence snapshots", () => {
@@ -402,6 +421,7 @@ describe("persistence", () => {
     await saveProject(useAppStore.getState());
     await saveRecoveryBackup((await loadProject())!);
     await set(LEGACY_PROJECT_KEY, { schemaVersion: 1 });
+    await set(QUARANTINE_KEY, { schemaVersion: 3, tracks: [] });
 
     await clearProject();
 
@@ -409,6 +429,7 @@ describe("persistence", () => {
     expect(await get(META_KEY)).toBeUndefined();
     expect(await loadRecoveryBackup()).toBeNull();
     expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
+    expect(await get(QUARANTINE_KEY)).toBeUndefined();
     expect(await storedBlobKeys()).toEqual([]);
   });
 });

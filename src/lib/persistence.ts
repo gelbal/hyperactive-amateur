@@ -6,6 +6,9 @@ import type { AppState, CutSubdivision, Subgenre, Tag, Vibe } from "../types";
 export const PERSISTED_SCHEMA_VERSION = 2;
 export const PROJECT_KEY = "ha:meta";
 export const PROJECT_BACKUP_KEY = "ha:meta-backup";
+// An unreadable ha:meta is moved here (never rewritten in place) so the app
+// can start fresh and keep saving; blob GC is held while the record exists.
+export const PROJECT_QUARANTINE_KEY = "ha:meta-quarantine";
 export const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
 export const LEGACY_PROJECT_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
 
@@ -350,6 +353,9 @@ function collectBackupBlobRefs(backup: unknown, refs: Set<string>): void {
 }
 
 async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promise<void> {
+  // A quarantined record may reference blobs in a shape this build cannot
+  // parse; hold GC entirely while it exists rather than guess at its refs.
+  if ((await get(PROJECT_QUARANTINE_KEY)) !== undefined) return;
   // The recovery backup is a GC root too: after a repair drops media from the
   // live metadata, the backup's references may be the only preserved copy.
   const rootedBlobKeys = new Set(referencedBlobKeys);
@@ -525,8 +531,13 @@ export async function loadProject(): Promise<PersistedProject | null> {
       if (!resolved.missingBlobs) await deleteLingeringLegacyRecords();
       return resolved;
     }
+    // Set the unreadable record aside before failing: the app then starts
+    // empty with autosave on, and nothing overwrites the original bytes. If
+    // either write fails the error propagates as an ordinary load failure.
+    await set(PROJECT_QUARANTINE_KEY, metadata);
+    await del(PROJECT_KEY);
     throw new InvalidMetadataError(
-      `${PROJECT_KEY} exists but is not valid schema-${PERSISTED_SCHEMA_VERSION} metadata`,
+      `${PROJECT_KEY} was not valid schema-${PERSISTED_SCHEMA_VERSION} metadata and was moved to ${PROJECT_QUARANTINE_KEY}`,
     );
   }
 
@@ -561,6 +572,7 @@ export async function clearProject(): Promise<void> {
   await Promise.all([
     del(PROJECT_KEY),
     del(PROJECT_BACKUP_KEY),
+    del(PROJECT_QUARANTINE_KEY),
     del(LEGACY_PROJECT_KEY),
     del(LEGACY_PROJECT_BACKUP_KEY),
   ]);
