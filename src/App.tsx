@@ -9,7 +9,6 @@ import { SuggestButton } from "./components/SuggestButton";
 import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { RecoveryBanner } from "./components/RecoveryBanner";
-import { StorageDurabilityChip } from "./components/StorageDurabilityChip";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
@@ -156,7 +155,6 @@ export function App() {
         ) : (
           <>
             <RecoveryBanner />
-            <StorageDurabilityChip />
             <Viewport />
             {hasAnyClips ? (
               <PadGrid />

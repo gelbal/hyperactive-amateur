@@ -39,7 +39,6 @@ vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
 vi.mock("./components/FlowSelector", () => ({ FlowSelector: () => null }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
 vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => null }));
-vi.mock("./components/StorageDurabilityChip", () => ({ StorageDurabilityChip: () => null }));
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
@@ -80,6 +79,26 @@ describe("App autosave gating", () => {
       "pl-[env(safe-area-inset-left)]",
       "pr-[env(safe-area-inset-right)]",
     );
+  });
+
+  it("renders no storage durability notice even with clips in best-effort storage", async () => {
+    useAppStore.getState().actions.setStorageDurability("best-effort");
+    useAppStore.getState().actions.setTrackClip(0, {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/clip-0",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob: null,
+      posterUrl: null,
+    });
+
+    await renderApp();
+
+    expect(screen.queryByLabelText("Storage durability notice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Protect project" })).not.toBeInTheDocument();
   });
 
   it("starts autosave after a clean load", async () => {
