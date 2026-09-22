@@ -10,6 +10,7 @@ import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
+import { throwIfFlowAborted, waitMs } from "./async";
 import {
   interruptActiveRecording,
   registerRecordingInterruptHandler,
@@ -26,6 +27,8 @@ export type { RecordingInterruptHandler };
 const lifecycleHandles = new WeakMap<MediaStream, StreamLifecycleHandle>();
 const pendingMuteSuspensions = new WeakMap<MediaStream, ReturnType<typeof setTimeout>>();
 const TRACK_MUTE_SUSPEND_DELAY_MS = 250;
+const TRACK_WARMUP_TIMEOUT_MS = 2_000;
+const TRACK_WARMUP_POLL_MS = 100;
 
 function detachLifecycle(stream: MediaStream): void {
   const handle = lifecycleHandles.get(stream);
@@ -69,8 +72,80 @@ function hasUsableTrack(tracks: MediaStreamTrack[]): boolean {
   return tracks.some((track) => track.readyState === "live" && !track.muted);
 }
 
+function hasLiveTrack(tracks: MediaStreamTrack[]): boolean {
+  return tracks.some((track) => track.readyState === "live");
+}
+
 export function allTracksUsable(stream: MediaStream): boolean {
   return hasUsableTrack(stream.getAudioTracks()) && hasUsableTrack(stream.getVideoTracks());
+}
+
+// Fresh phone tracks can sit muted for a few hundred milliseconds after
+// getUserMedia resolves. Wait (bounded) for both kinds to become usable
+// instead of failing the record press; resolves false when a required track
+// is missing, ended, or still muted at the timeout. Rejects with AbortError
+// when the flow is cancelled during the grace period.
+export async function waitForUsableTracks(
+  stream: MediaStream,
+  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<boolean> {
+  const { timeoutMs = TRACK_WARMUP_TIMEOUT_MS, signal } = options;
+  if (signal) throwIfFlowAborted(signal, "Aborted before track warmup");
+  if (allTracksUsable(stream)) return true;
+
+  const audioTracks = stream.getAudioTracks();
+  const videoTracks = stream.getVideoTracks();
+  if (!hasLiveTrack(audioTracks) || !hasLiveTrack(videoTracks)) return false;
+
+  const tracks = stream.getTracks();
+  return new Promise<boolean>((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      for (const track of tracks) {
+        track.removeEventListener("unmute", check);
+        track.removeEventListener("ended", check);
+      }
+    };
+    const settle = (usable: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(usable);
+    };
+    const rejectWait = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    function check(): void {
+      if (allTracksUsable(stream)) {
+        settle(true);
+        return;
+      }
+      if (!hasLiveTrack(stream.getAudioTracks()) || !hasLiveTrack(stream.getVideoTracks())) {
+        settle(false);
+      }
+    }
+
+    for (const track of tracks) {
+      track.addEventListener("unmute", check);
+      track.addEventListener("ended", check);
+    }
+    check();
+
+    void (async () => {
+      let remainingMs = Math.max(0, timeoutMs);
+      while (!settled && remainingMs > 0) {
+        const delayMs = Math.min(TRACK_WARMUP_POLL_MS, remainingMs);
+        await waitMs(delayMs, signal);
+        remainingMs -= delayMs;
+        check();
+      }
+      if (!settled) settle(false);
+    })().catch(rejectWait);
+  });
 }
 
 function scheduleMutedSuspension(stream: MediaStream): void {

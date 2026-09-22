@@ -35,6 +35,7 @@ import {
   registerStreamLifecycle,
   releaseMediaStream,
   suspendMediaStream,
+  waitForUsableTracks,
 } from "./streamLifecycle";
 import { acquireRecordingStream, __resetMediaForTesting } from "./media";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
@@ -133,6 +134,61 @@ describe("streamLifecycle", () => {
       suspendMediaStream(stream);
 
       expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("waitForUsableTracks", () => {
+    it("waits through cold-track mute until unmute at 400ms", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+      setTimeout(() => tracks[1].fireUnmute(), 400);
+
+      const usable = waitForUsableTracks(stream);
+      await vi.advanceTimersByTimeAsync(399);
+      expect(await Promise.race([usable.then(() => "settled"), Promise.resolve("pending")])).toBe(
+        "pending",
+      );
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(usable).resolves.toBe(true);
+    });
+
+    it("returns false when a live track never unmutes before timeout", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+
+      const usable = waitForUsableTracks(stream);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(await Promise.race([usable.then(() => "settled"), Promise.resolve("pending")])).toBe(
+        "pending",
+      );
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(usable).resolves.toBe(false);
+    });
+
+    it("rejects with AbortError when aborted during the grace period", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+      const controller = new AbortController();
+
+      const usable = waitForUsableTracks(stream, { signal: controller.signal });
+      controller.abort("user");
+
+      await expect(usable).rejects.toMatchObject({ name: "AbortError" });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("returns immediately when audio and video tracks are already usable", async () => {
+      vi.useFakeTimers();
+      const { stream } = makeStream();
+
+      await expect(waitForUsableTracks(stream)).resolves.toBe(true);
+
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 

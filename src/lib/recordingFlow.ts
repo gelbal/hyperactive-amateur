@@ -19,7 +19,12 @@ import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
-import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
+import {
+  allTracksUsable,
+  registerRecordingInterruptHandler,
+  waitForUsableTracks,
+} from "./streamLifecycle";
+import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import { saveNow } from "./autoSave";
 import { requestPersistence } from "./install";
 import type { Clip, Tag } from "../types";
@@ -128,30 +133,6 @@ registerRecordingInterruptHandler({
   interrupt: (reason) => cancelCurrentRecording(reason),
 });
 
-function waitMs(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(makeAbortError("Aborted before wait started"));
-      return;
-    }
-    const delayMs = Math.max(0, ms);
-    if (delayMs === 0) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, delayMs);
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-      reject(makeAbortError("Aborted during wait"));
-    };
-    signal.addEventListener("abort", onAbort);
-  });
-}
-
 async function waitUntilAudioTime(
   deadlineSeconds: number,
   audioContext: Pick<BaseAudioContext, "currentTime">,
@@ -162,16 +143,6 @@ async function waitUntilAudioTime(
     const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
     if (remainingMs <= 0) return;
     await waitMs(remainingMs, signal);
-  }
-}
-
-function makeAbortError(message: string): DOMException {
-  return new DOMException(message, "AbortError");
-}
-
-function throwIfFlowAborted(signal: AbortSignal, message: string): void {
-  if (signal.aborted) {
-    throw makeAbortError(message);
   }
 }
 
@@ -299,7 +270,10 @@ async function runFlow(
     if (!stream) return false;
     throwIfFlowAborted(signal, "Aborted before countdown");
 
-    if (!allTracksUsable(stream)) {
+    // Already-usable tracks take the synchronous path; a cold track (muted
+    // for a few hundred ms after acquisition on phones) gets a bounded grace.
+    const tracksUsable = allTracksUsable(stream) || (await waitForUsableTracks(stream, { signal }));
+    if (!tracksUsable) {
       actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
       options.onError?.(RECORDING_INTERRUPTED_COPY);
       return false;

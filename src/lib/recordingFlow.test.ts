@@ -146,16 +146,17 @@ async function observeResolution(
   return result;
 }
 
+// EventTarget-based so the warm-up grace can listen for unmute/ended.
 function makeTrack(
   kind: "audio" | "video",
   overrides: Partial<Pick<MediaStreamTrack, "muted" | "readyState">> = {},
 ): MediaStreamTrack {
-  return {
+  return Object.assign(new EventTarget(), {
     kind,
     muted: false,
     readyState: "live",
     ...overrides,
-  } as MediaStreamTrack;
+  }) as unknown as MediaStreamTrack;
 }
 
 class LifecycleTrack extends EventTarget {
@@ -505,6 +506,29 @@ describe("recordingFlow", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+  });
+
+  it("records after a cold audio track unmutes within the warm-up grace", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const audioTrack = makeTrack("audio", { muted: true });
+    mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream([audioTrack, makeTrack("video")]));
+    setTimeout(() => {
+      (audioTrack as { muted: boolean }).muted = false;
+      audioTrack.dispatchEvent(new Event("unmute"));
+    }, 400);
+
+    const promise = recordIntoTrack(1, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+
+    await abortPendingFlow(promise);
   });
 
   it.each([
