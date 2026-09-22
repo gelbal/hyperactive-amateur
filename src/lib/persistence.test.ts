@@ -386,12 +386,12 @@ describe("persistence", () => {
     expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
   });
 
-  it("holds blob GC while a quarantine record exists", async () => {
+  it("holds blob GC while a quarantine record has no readable track list", async () => {
     useAppStore.getState().actions.setTrackClip(0, clip(13));
     await saveProject(useAppStore.getState());
     const orphaned = await storedBlobKeys();
     expect(orphaned.length).toBeGreaterThan(0);
-    await set(QUARANTINE_KEY, { schemaVersion: 3, tracks: [] });
+    await set(QUARANTINE_KEY, { schemaVersion: 2, tracks: "not-an-array" });
     useAppStore.getState().actions.clearTrackClip(0);
 
     await saveProject(useAppStore.getState());
@@ -400,6 +400,32 @@ describe("persistence", () => {
     await del(QUARANTINE_KEY);
     await saveProject(useAppStore.getState());
     expect(await storedBlobKeys()).toEqual([]);
+  });
+
+  it("roots the blob refs of a quarantine record that has a track list, and collects the rest", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(14));
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    const keptRef = meta.tracks[0].clipBlobRef as string;
+    const allRefs = await storedBlobKeys();
+    expect(allRefs.length).toBeGreaterThan(1);
+    // A future-schema record still names its media by ref.
+    await set(QUARANTINE_KEY, { schemaVersion: 2, tracks: [{ id: 0, clipBlobRef: keptRef }] });
+    useAppStore.getState().actions.clearTrackClip(0);
+
+    await saveProject(useAppStore.getState());
+
+    expect(await storedBlobKeys()).toEqual([keptRef]);
+  });
+
+  it("leaves a record from a newer schema untouched and fails the load instead of quarantining it", async () => {
+    const newer = { schemaVersion: 3, tracks: [] };
+    await set(META_KEY, newer);
+
+    await expect(loadProject()).rejects.toThrow(/newer/);
+
+    expect(await get(META_KEY)).toEqual(newer);
+    expect(await get(QUARANTINE_KEY)).toBeUndefined();
   });
 
   it("omits transient playback and recording fields from persistence snapshots", () => {

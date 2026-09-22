@@ -353,13 +353,18 @@ function collectBackupBlobRefs(backup: unknown, refs: Set<string>): void {
 }
 
 async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promise<void> {
-  // A quarantined record may reference blobs in a shape this build cannot
-  // parse; hold GC entirely while it exists rather than guess at its refs.
-  if ((await get(PROJECT_QUARANTINE_KEY)) !== undefined) return;
   // The recovery backup is a GC root too: after a repair drops media from the
   // live metadata, the backup's references may be the only preserved copy.
   const rootedBlobKeys = new Set(referencedBlobKeys);
   collectBackupBlobRefs(await get(PROJECT_BACKUP_KEY), rootedBlobKeys);
+  // So is a quarantined record: its refs are rooted when it still names its
+  // tracks by ref; a record with no readable track list holds GC entirely,
+  // because nothing can tell which blobs it meant.
+  const quarantined = await get(PROJECT_QUARANTINE_KEY);
+  if (quarantined !== undefined) {
+    if (!isRecord(quarantined) || !Array.isArray(quarantined.tracks)) return;
+    collectBackupBlobRefs(quarantined, rootedBlobKeys);
+  }
   const allKeys = await keys();
   await Promise.all(
     allKeys
@@ -530,6 +535,17 @@ export async function loadProject(): Promise<PersistedProject | null> {
       const resolved = await resolveMetadataRecord(metadata);
       if (!resolved.missingBlobs) await deleteLingeringLegacyRecords();
       return resolved;
+    }
+    // A record from a newer build is not corrupt; it must stay exactly where
+    // it is (an older cached shell can open a newer project). Fail the load
+    // as an ordinary error so the App keeps autosave off behind its one line.
+    if (
+      typeof metadata.schemaVersion === "number" &&
+      metadata.schemaVersion > PERSISTED_SCHEMA_VERSION
+    ) {
+      throw new Error(
+        `${PROJECT_KEY} was written by a newer build (schema ${metadata.schemaVersion}); this build reads schema ${PERSISTED_SCHEMA_VERSION}`,
+      );
     }
     // Set the unreadable record aside before failing: the app then starts
     // empty with autosave on, and nothing overwrites the original bytes. If

@@ -464,26 +464,17 @@ describe("rehydrateFromStorage", () => {
     expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
   });
 
-  it("gives up on an attempt that never settles and retries", async () => {
-    useAppStore.getState().actions.setTrackClip(0, await makeClip());
-    await saveProject(useAppStore.getState());
-    useAppStore.getState().actions.reset();
-    const actual = await vi.importActual<typeof import("idb-keyval")>("idb-keyval");
-    let hung = false;
-    vi.mocked(idbKeyval.get).mockImplementation((key) => {
-      if (key === PROJECT_KEY && !hung) {
-        hung = true;
-        return new Promise(() => undefined);
-      }
-      return actual.get(key);
-    });
+  it("rejects a record from a newer schema without retrying, quarantining, or writing", async () => {
+    const newer = { schemaVersion: 3, tracks: [] };
+    await set(PROJECT_KEY, newer);
     vi.mocked(idbKeyval.get).mockClear();
+    vi.mocked(idbKeyval.set).mockClear();
 
-    const result = await rehydrateFromStorage({ retryDelaysMs: [0, 0], attemptTimeoutMs: 20 });
+    await expect(rehydrateFromStorage({ retryDelaysMs: [0, 0] })).rejects.toThrow(/newer/);
 
-    expect(result.ok).toBe(true);
-    expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
-    expect(metaReads()).toBe(2);
+    expect(await get(PROJECT_KEY)).toEqual(newer);
+    expect(await get("ha:meta-quarantine")).toBeUndefined();
+    expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
   });
 
   it("persists a clip recorded after a degraded load with saveNow", async () => {

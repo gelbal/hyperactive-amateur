@@ -35,17 +35,16 @@ export interface RehydrateOptions {
   // Waits before the second and third load attempts; the array length sets
   // the number of retries.
   retryDelaysMs?: number[];
-  // Upper bound on one loadProject attempt; a hung IndexedDB open counts as
-  // a failed attempt.
-  attemptTimeoutMs?: number;
 }
 
 // iOS 17.4+ can reject an IndexedDB open with "Connection to Indexed
 // Database server lost" (WebKit 273827) and recover on a later attempt.
-// Three bounded attempts behind the loading state, then the App shows its
-// single failure line with autosave off.
+// Three attempts behind the loading state, then the App shows its single
+// failure line with autosave off. Attempts are retried on rejection only:
+// there is no per-attempt timeout, because an abandoned attempt keeps
+// reading and would contend with the next one (a slow but healthy load of
+// eight clips must never end with autosave off).
 const DEFAULT_RETRY_DELAYS_MS = [300, 900];
-const DEFAULT_ATTEMPT_TIMEOUT_MS = 1_500;
 
 const TRACK_COUNT = 8;
 const CUT_SUBDIVISIONS: CutSubdivision[] = ["16n", "8n", "4n", "2n", "1m"];
@@ -468,18 +467,6 @@ async function ensureRecoveryBackup(persisted: PersistedProject): Promise<void> 
   }
 }
 
-async function withAttemptTimeout<T>(attempt: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("loadProject attempt timed out")), timeoutMs);
-  });
-  try {
-    return await Promise.race([attempt, timeout]);
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-  }
-}
-
 // Retries transient load failures only. InvalidMetadataError is final: the
 // record has already been moved to quarantine, so a second attempt would
 // load the legacy record or nothing and hide the quarantine.
@@ -487,10 +474,9 @@ async function loadProjectWithRetry(
   options: RehydrateOptions,
 ): Promise<Awaited<ReturnType<typeof loadProject>>> {
   const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-  const timeoutMs = options.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await withAttemptTimeout(loadProject(), timeoutMs);
+      return await loadProject();
     } catch (err) {
       if (err instanceof InvalidMetadataError) throw err;
       if (attempt >= delays.length) throw err;
