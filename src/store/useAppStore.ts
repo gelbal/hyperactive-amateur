@@ -544,7 +544,8 @@ export const useAppStore = create<AppStore>((set) => ({
     // hoists the static binding and we only invoke acquireRecordingStream
     // lazily inside the action body — by which time both modules are loaded.
     // On success acquireRecordingStream flips status to "granted"; on failure
-    // it flips to "denied" and we let the gate take over.
+    // it leaves the slice where the retry lives ("suspended" keeps this pill;
+    // only an explicit permission denial hands over to the gate).
     resumeMedia: async () => {
       if (useAppStore.getState().recording.state !== "idle") return;
       if (isAcquireInFlight()) return;

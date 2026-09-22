@@ -8,6 +8,11 @@ import {
 import { noteMicAcquireSettled, noteMicAcquireStarted } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
 
+// One fixed line for a failed camera/mic acquire, shared by the permission
+// gate, the record row, and the station: the viewport state change carries
+// the detail (gate or reconnect pill); no engine text reaches the screen.
+export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";
+
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
 let activeAcquireToken: number | null = null;
@@ -100,10 +105,11 @@ export async function requestMedia(): Promise<void> {
           .getState()
           .actions.setMedia({ stream: null, status: "denied", error: message });
       } else {
-        // Not a denial: back to the gate's idle button, which is the retry.
+        // Not a denial: back to the gate's idle button (the retry), with the
+        // one fixed line so the tap is not a silent no-op.
         useAppStore
           .getState()
-          .actions.setMedia({ stream: null, status: "idle", error: null });
+          .actions.setMedia({ stream: null, status: "idle", error: ACQUIRE_FAILED_COPY });
       }
     } finally {
       noteMicAcquireSettled();
@@ -152,10 +158,11 @@ async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStre
 }
 
 // Acquire a fresh MediaStream for either preview or capture (same constraints).
-// On failure, flip the media slice to 'denied' so the viewport gate re-opens —
-// requestMedia is callable again because we no longer short-circuit on
-// status === 'granted'. If the failure looks like a stale deviceId, clear the
-// preference and retry once with the browser default.
+// On failure the slice lands where the retry already lives: "denied" (the
+// gate's settings copy) only for an explicit permission denial, otherwise
+// "suspended" for a previously granted user (the reconnect pill). If the
+// failure looks like a stale deviceId, clear the preference and retry once
+// with the browser default.
 export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;

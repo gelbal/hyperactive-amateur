@@ -138,20 +138,23 @@ describe("streamLifecycle", () => {
   });
 
   describe("waitForUsableTracks", () => {
-    it("waits through cold-track mute until unmute at 400ms", async () => {
+    it("waits through cold-track mute until unmute at 450ms", async () => {
       vi.useFakeTimers();
       const { stream, tracks } = makeStream();
       tracks[1].muted = true;
-      setTimeout(() => tracks[1].fireUnmute(), 400);
+      // Mid-poll on purpose: the settle must cancel the in-flight wait.
+      setTimeout(() => tracks[1].fireUnmute(), 450);
 
       const usable = waitForUsableTracks(stream);
-      await vi.advanceTimersByTimeAsync(399);
+      await vi.advanceTimersByTimeAsync(449);
       expect(await Promise.race([usable.then(() => "settled"), Promise.resolve("pending")])).toBe(
         "pending",
       );
 
       await vi.advanceTimersByTimeAsync(1);
       await expect(usable).resolves.toBe(true);
+      // The poll loop stops with the settle; no timer is left behind.
+      expect(vi.getTimerCount()).toBe(0);
     });
 
     it("returns false when a live track never unmutes before timeout", async () => {

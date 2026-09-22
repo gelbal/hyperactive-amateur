@@ -7,7 +7,11 @@ import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/video
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
-import { ensureAudioRunning } from "../lib/audioLifecycle";
+import {
+  ensureAudioRunning,
+  noteMicAcquireSettled,
+  noteMicAcquireStarted,
+} from "../lib/audioLifecycle";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -31,7 +35,12 @@ export function Viewport() {
   );
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
+  const mediaError = useAppStore((s) => s.media.error);
   const audioState = useAppStore((s) => s.playback.audioState);
+  // The merged pill stays mounted while its tap is in flight, even after the
+  // audio half has already flipped to running, so the label and disabled
+  // state do not change under the user's finger.
+  const [resumeBothPending, setResumeBothPending] = useState(false);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
@@ -159,12 +168,12 @@ export function Viewport() {
           aria-label="hard-cut video viewport"
           className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
-        {showGate && <PermissionGate status={mediaStatus} />}
+        {showGate && <PermissionGate status={mediaStatus} error={mediaError} />}
         {showStation && <RecordingStation />}
-        {(showAudioResumePill || showReconnectPill) && (
+        {(showAudioResumePill || showReconnectPill || resumeBothPending) && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
-            {showAudioResumePill && showReconnectPill ? (
-              <ResumePill />
+            {(showAudioResumePill && showReconnectPill) || resumeBothPending ? (
+              <ResumePill onPendingChange={setResumeBothPending} />
             ) : (
               <>
                 {showAudioResumePill && <AudioResumePill />}
@@ -259,7 +268,7 @@ function AudioResumePill() {
 // re-acquires the camera. A failed unlock keeps the existing still-blocked
 // line and skips the reconnect — recording needs both, and the next tap
 // retries both.
-function ResumePill() {
+function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) => void }) {
   const recordingState = useAppStore((s) => s.recording.state);
   const [pending, setPending] = useState(false);
   const [stillBlocked, setStillBlocked] = useState(false);
@@ -267,7 +276,12 @@ function ResumePill() {
 
   const resume = async () => {
     setPending(true);
+    onPendingChange(true);
     setStillBlocked(false);
+    // Declared before the unlock, exactly like a record flow, so the audio
+    // session goes straight to "play-and-record" instead of being resumed
+    // under "playback" and flipped a moment later by the camera acquire.
+    noteMicAcquireStarted();
     try {
       try {
         await ensureAudioRunning();
@@ -277,7 +291,9 @@ function ResumePill() {
       }
       await useAppStore.getState().actions.resumeMedia();
     } finally {
+      noteMicAcquireSettled();
       setPending(false);
+      onPendingChange(false);
     }
   };
 
@@ -317,12 +333,15 @@ interface PermissionGateProps {
   // Accepts the full MediaStatus union; "granted" is unreachable here because
   // the parent only renders this gate when status !== "granted".
   status: MediaStatus;
+  // Only ever the fixed acquire line (set by media.ts for a non-denial probe
+  // failure); the engine's own message never reaches this prop for "idle".
+  error: string | null;
 }
 
 // "denied" is reserved for an explicit permission denial (media.ts), so the
-// settings line is always the right advice here; engine error text stays in
+// settings line is always the right advice there; engine error text stays in
 // the log, never on screen.
-function PermissionGate({ status }: PermissionGateProps) {
+function PermissionGate({ status, error }: PermissionGateProps) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center px-10">
       {status === "denied" ? (
@@ -349,6 +368,11 @@ function PermissionGate({ status }: PermissionGateProps) {
           >
             {status === "requesting" ? "Requesting…" : "Enable camera & mic"}
           </button>
+          {status === "idle" && error && (
+            <p role="alert" className="text-xs text-red-400 max-w-[18rem]">
+              {error}
+            </p>
+          )}
         </>
       )}
     </div>

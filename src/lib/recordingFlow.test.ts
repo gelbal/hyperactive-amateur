@@ -49,6 +49,7 @@ vi.mock("tone", () => ({
 }));
 
 vi.mock("./media", () => ({
+  ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
   invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
@@ -98,12 +99,12 @@ vi.mock("./install", () => ({
 }));
 
 import {
-  ACQUIRE_FAILED_COPY,
   COUNTDOWN_MS,
   __resetPersistenceRequestForTesting,
   cancelCurrentRecording,
   recordIntoTrack,
 } from "./recordingFlow";
+import { ACQUIRE_FAILED_COPY } from "./media";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
@@ -311,6 +312,7 @@ describe("recordingFlow", () => {
 
     expect(mediaMocks.requestMedia).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
+    expect(ACQUIRE_FAILED_COPY).toBe("Camera unavailable — try again.");
     expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
     expect(onError).not.toHaveBeenCalledWith(expect.stringMatching(/AudioSession/));
     expect(useAppStore.getState().recording.state).toBe("idle");

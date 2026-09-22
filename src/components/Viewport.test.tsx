@@ -25,12 +25,17 @@ vi.mock("../lib/videoEngine", () => videoEngineMocks);
 const requestMedia = vi.fn();
 const isAcquireInFlight = vi.fn(() => false);
 const ensureAudioRunning = vi.fn();
+const noteMicAcquireStarted = vi.fn();
+const noteMicAcquireSettled = vi.fn();
 vi.mock("../lib/media", () => ({
+  ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   requestMedia: () => requestMedia(),
   isAcquireInFlight: () => isAcquireInFlight(),
 }));
 vi.mock("../lib/audioLifecycle", () => ({
   ensureAudioRunning: () => ensureAudioRunning(),
+  noteMicAcquireStarted: () => noteMicAcquireStarted(),
+  noteMicAcquireSettled: () => noteMicAcquireSettled(),
 }));
 
 import { Viewport } from "./Viewport";
@@ -514,6 +519,57 @@ describe("Viewport", () => {
     expect(ensureAudioRunning.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSpy.mock.invocationCallOrder[0],
     );
+  });
+
+  it("merged pill: declares the acquire before the unlock and stays mounted until the tap settles", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    // The real unlock flips audioState to running before the camera is back.
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    let settleResume!: () => void;
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockImplementation(() => new Promise<void>((resolve) => (settleResume = resolve)));
+    resumeSpy.mockClear();
+    noteMicAcquireStarted.mockClear();
+    noteMicAcquireSettled.mockClear();
+    ensureAudioRunning.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(resumeSpy).toHaveBeenCalledTimes(1));
+
+    // Still the merged pill (disabled), not the reconnect pill, while pending.
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /tap to reconnect/i })).not.toBeInTheDocument();
+    expect(noteMicAcquireStarted.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureAudioRunning.mock.invocationCallOrder[0],
+    );
+    expect(noteMicAcquireSettled).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settleResume();
+    });
+    await waitFor(() => expect(noteMicAcquireSettled).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Interrupted — tap to resume" })).not.toBeInTheDocument();
+  });
+
+  it("idle gate: shows the one fixed line after a non-denial probe failure", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "idle",
+        error: "Camera unavailable — try again.",
+      });
+    });
+    render(<Viewport />);
+
+    expect(screen.getByRole("button", { name: /enable camera & mic/i })).toBeInTheDocument();
+    expect(screen.getByText("Camera unavailable — try again.")).toBeInTheDocument();
   });
 
   it("merged pill: a failed unlock shows the still-blocked line and skips the reconnect", async () => {

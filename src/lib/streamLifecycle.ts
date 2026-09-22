@@ -10,7 +10,7 @@ import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
-import { throwIfFlowAborted, waitMs } from "./async";
+import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import {
   interruptActiveRecording,
   registerRecordingInterruptHandler,
@@ -100,8 +100,16 @@ export async function waitForUsableTracks(
   const tracks = stream.getTracks();
   return new Promise<boolean>((resolve, reject) => {
     let settled = false;
+    // The poll's own signal: an early settle (or the flow's abort) cancels
+    // the in-flight wait so no timer outlives the promise.
+    const poll = new AbortController();
+    const onFlowAbort = () => {
+      rejectWait(makeAbortError("Aborted during track warmup"));
+    };
 
     const cleanup = () => {
+      poll.abort();
+      signal?.removeEventListener("abort", onFlowAbort);
       for (const track of tracks) {
         track.removeEventListener("unmute", check);
         track.removeEventListener("ended", check);
@@ -119,6 +127,7 @@ export async function waitForUsableTracks(
       cleanup();
       reject(error);
     };
+    signal?.addEventListener("abort", onFlowAbort, { once: true });
     function check(): void {
       if (allTracksUsable(stream)) {
         settle(true);
@@ -139,12 +148,16 @@ export async function waitForUsableTracks(
       let remainingMs = Math.max(0, timeoutMs);
       while (!settled && remainingMs > 0) {
         const delayMs = Math.min(TRACK_WARMUP_POLL_MS, remainingMs);
-        await waitMs(delayMs, signal);
+        try {
+          await waitMs(delayMs, poll.signal);
+        } catch {
+          return; // settled or aborted while waiting
+        }
         remainingMs -= delayMs;
         check();
       }
       if (!settled) settle(false);
-    })().catch(rejectWait);
+    })();
   });
 }
 

@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, SkipForward, Check, Settings2, SwitchCamera } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
-import { ACQUIRE_FAILED_COPY, recordIntoTrack } from "../lib/recordingFlow";
+import { recordIntoTrack } from "../lib/recordingFlow";
 import {
+  ACQUIRE_FAILED_COPY,
   acquirePreviewStream,
   enumerateMediaDevices,
   invalidatePendingAcquire,

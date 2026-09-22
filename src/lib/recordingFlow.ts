@@ -12,7 +12,12 @@ import {
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
-import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
+import {
+  ACQUIRE_FAILED_COPY,
+  acquireRecordingStream,
+  releaseRecordingStream,
+  requestMedia,
+} from "./media";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
@@ -32,9 +37,6 @@ import type { Clip, Tag } from "../types";
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — try again.";
-// One fixed line for a failed camera/mic acquire: the viewport state change
-// carries the detail (gate or reconnect pill); no engine text reaches the row.
-export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";
 const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
 export type RecordingCancelReason = "user" | "interrupted";

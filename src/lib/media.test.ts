@@ -1,6 +1,7 @@
 // ABOUTME: media tests — permission flow + on-demand stream acquire/release.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  ACQUIRE_FAILED_COPY,
   requestMedia,
   acquireRecordingStream,
   acquirePreviewStream,
@@ -167,7 +168,8 @@ describe("media", () => {
     await requestMedia();
 
     expect(useAppStore.getState().media.status).toBe("idle");
-    expect(useAppStore.getState().media.error).toBeNull();
+    // One fixed line under the gate button; never the engine's message.
+    expect(useAppStore.getState().media.error).toBe(ACQUIRE_FAILED_COPY);
     const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
     expect(entry?.payload).toMatchObject({ site: "probe", name: "NotReadableError" });
   });
