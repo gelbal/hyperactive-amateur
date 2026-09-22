@@ -712,6 +712,17 @@ describe("rehydrateFromStorage", () => {
       0: "good before corruption",
     });
     expect(await loadRecoveryBackup()).not.toBeNull();
+    expect(loggedEvents(LOG_EVENTS.AUDIO_DECODE_FAILED)).toEqual([
+      {
+        phase: "load",
+        trackId: 0,
+        hasSidecar: false,
+        blobType: "video/webm",
+        blobSize: 1,
+        name: "Error",
+        message: "decode failed",
+      },
+    ]);
 
     useAppStore.getState().actions.toggleStep(0, 3);
     await saveProject(useAppStore.getState());

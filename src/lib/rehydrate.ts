@@ -388,6 +388,27 @@ async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(buffer.slice(0));
 }
 
+// Why a clip landed in repair state is the one fact a device run cannot
+// reconstruct later: record the container, the sidecar's presence, and the
+// decoder's own error at the moment the decode fails.
+export function logDecodeFailure(
+  phase: "load" | "repair",
+  trackId: number,
+  clipBlob: Blob,
+  audioBlob: Blob | null,
+  err: unknown,
+): void {
+  logger.warn(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+    phase,
+    trackId,
+    hasSidecar: audioBlob !== null,
+    blobType: clipBlob.type,
+    blobSize: clipBlob.size,
+    name: err instanceof Error ? err.name : "",
+    message: err instanceof Error ? err.message : String(err),
+  });
+}
+
 export async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise<AudioBuffer> {
   if (audioBlob) {
     try {
@@ -541,7 +562,8 @@ export async function rehydrateFromStorage(options: RehydrateOptions = {}): Prom
               // Keep the decoded buffer; the sidecar stays absent.
             }
           }
-        } catch {
+        } catch (err) {
+          logDecodeFailure("load", pt.id, pt.clipBlob, pt.audioBlob ?? null, err);
           // A clip already persisted as unavailable warns at the original
           // failure, not on every later load — TrackInfo carries the hint.
           if (!wasUnavailable) warnAudioUnavailable(warnings, pt.id);
