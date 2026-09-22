@@ -48,8 +48,8 @@ export function Viewport() {
   // During playback the viewport belongs to the hard-cut video: the station
   // and gate overlays stand down until stop (recording can't run while
   // playing anyway). Unmounting the station also releases its preview stream,
-  // so playback never runs with the mic held (on iOS a held mic keeps the
-  // audio session in play-and-record, which routes output to the earpiece).
+  // so playback never runs with the mic held and the audio session can sit
+  // in "playback" (audible with the ringer switch on) while the beat plays.
   const showStation =
     mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed && !isPlaying;
   // "suspended" is "was granted, currently disconnected" — the gate must NOT
@@ -163,8 +163,14 @@ export function Viewport() {
         {showStation && <RecordingStation />}
         {(showAudioResumePill || showReconnectPill) && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
-            {showAudioResumePill && <AudioResumePill />}
-            {showReconnectPill && <ReconnectPill />}
+            {showAudioResumePill && showReconnectPill ? (
+              <ResumePill />
+            ) : (
+              <>
+                {showAudioResumePill && <AudioResumePill />}
+                {showReconnectPill && <ReconnectPill />}
+              </>
+            )}
           </div>
         )}
         {mediaStatus === "granted" && !hasClips && stationDismissed && !isPlaying && (
@@ -238,6 +244,52 @@ function AudioResumePill() {
         className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90"
       >
         Audio interrupted — tap to resume.
+      </button>
+      {stillBlocked && (
+        <div className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs text-orange-200">
+          Still blocked — try the volume keys or reopen the app.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// After a background/return both the AudioContext and the camera need the
+// user back: one tap unlocks audio (which needs user activation) and then
+// re-acquires the camera. A failed unlock keeps the existing still-blocked
+// line and skips the reconnect — recording needs both, and the next tap
+// retries both.
+function ResumePill() {
+  const recordingState = useAppStore((s) => s.recording.state);
+  const [pending, setPending] = useState(false);
+  const [stillBlocked, setStillBlocked] = useState(false);
+  const disabled = pending || recordingState !== "idle" || isAcquireInFlight();
+
+  const resume = async () => {
+    setPending(true);
+    setStillBlocked(false);
+    try {
+      try {
+        await ensureAudioRunning();
+      } catch {
+        setStillBlocked(true);
+        return;
+      }
+      await useAppStore.getState().actions.resumeMedia();
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => void resume()}
+        className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-zinc-950/80"
+      >
+        Interrupted — tap to resume
       </button>
       {stillBlocked && (
         <div className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs text-orange-200">

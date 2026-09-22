@@ -31,7 +31,7 @@ import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
-const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — try again.";
 // One fixed line for a failed camera/mic acquire: the viewport state change
 // carries the detail (gate or reconnect pill); no engine text reaches the row.
 export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";

@@ -475,7 +475,7 @@ describe("Viewport", () => {
     spy.mockRestore();
   });
 
-  it('resume-required: audio pill shows exactly "Audio interrupted — tap to resume." and stacks with reconnect pill', () => {
+  it("resume-required + suspended: one merged pill replaces the audio and reconnect pills", () => {
     render(<Viewport />);
     expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
     cleanup();
@@ -490,8 +490,51 @@ describe("Viewport", () => {
     });
     render(<Viewport />);
 
-    expect(screen.getByRole("button", { name: "Audio interrupted — tap to resume." })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /tap to reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it("merged pill: one tap unlocks audio and then reconnects the camera", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    ensureAudioRunning.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+
+    await waitFor(() => expect(resumeSpy).toHaveBeenCalledTimes(1));
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(ensureAudioRunning.mock.invocationCallOrder[0]).toBeLessThan(
+      resumeSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("merged pill: a failed unlock shows the still-blocked line and skips the reconnect", async () => {
+    ensureAudioRunning.mockRejectedValueOnce(new Error("still blocked"));
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    // spyOn returns the spy an earlier test installed; clear its calls.
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+
+    expect(await screen.findByText("Still blocked — try the volume keys or reopen the app.")).toBeInTheDocument();
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(resumeSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeInTheDocument();
   });
 
   it("resume-required: tapping the audio pill resumes audio and hides it", async () => {

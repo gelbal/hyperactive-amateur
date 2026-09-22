@@ -347,7 +347,7 @@ describe("recordingFlow", () => {
 
     expect(toneMocks.start).toHaveBeenCalledTimes(1);
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
+    expect(onError).toHaveBeenCalledWith("Couldn't start audio — try again.");
     expect(useAppStore.getState().recording.state).toBe("idle");
   });
 
