@@ -11,8 +11,17 @@ const RUNNING_WAIT_TIMEOUT_MS = 500;
 const RUNNING_POLL_MS = 100;
 const EXPORT_AUDIO_INTERRUPTED_REASON =
   "Audio was interrupted — rendering stopped. Tap Render to try again.";
-let hasStartedAudibleAction = false;
+// The audio session type is derived from three facts and written from one
+// place. WebKit rejects every audio getUserMedia while the page's type is
+// "playback" (MediaDevices.cpp: InvalidStateError "AudioSession category is
+// not compatible with audio capture."), so the type must already be
+// "play-and-record" before a capture call — hence acquires are counted, not
+// just held streams. "playback" keeps Web Audio audible with the ringer
+// switch on; "auto" is the platform default when nothing is claimed.
 let micHeld = false;
+let pendingAcquires = 0;
+let playbackDeclared = false;
+let lastSessionType: AudioSessionLike["type"] | null = null;
 let silentSwitchHintReady = false;
 let silentSwitchHintDismissed = false;
 
@@ -32,10 +41,21 @@ function isDocumentHidden(): boolean {
   return document.visibilityState === "hidden" || document.hidden;
 }
 
-function setSessionType(type: AudioSessionLike["type"]): void {
+function desiredSessionType(): AudioSessionLike["type"] {
+  if (micHeld || pendingAcquires > 0) return "play-and-record";
+  if (playbackDeclared) return "playback";
+  return "auto";
+}
+
+// Writes the derived type only when it changed; a null last write counts as
+// the platform default ("auto"), so nothing is written until a claim exists.
+function syncSessionType(): void {
   if (typeof navigator === "undefined" || !navigator.audioSession) return;
+  const type = desiredSessionType();
+  if (type === (lastSessionType ?? "auto")) return;
   try {
     navigator.audioSession.type = type;
+    lastSessionType = type;
   } catch (err) {
     logger.error(LOG_EVENTS.AUDIO_SESSION_ERROR, { message: errMessage(err), type });
   }
@@ -51,12 +71,24 @@ function canOfferSilentSwitchHint(): boolean {
 
 export function noteMicHeld(): void {
   micHeld = true;
-  setSessionType("play-and-record");
+  syncSessionType();
 }
 
 export function noteMicReleased(): void {
   micHeld = false;
-  if (hasStartedAudibleAction) setSessionType("playback");
+  syncSessionType();
+}
+
+// Bracket every getUserMedia call (and a record flow that will make one) so
+// the type is capture-compatible before the call, not after it resolves.
+export function noteMicAcquireStarted(): void {
+  pendingAcquires += 1;
+  syncSessionType();
+}
+
+export function noteMicAcquireSettled(): void {
+  pendingAcquires = Math.max(0, pendingAcquires - 1);
+  syncSessionType();
 }
 
 async function waitForRunning(context: AudioContext): Promise<void> {
@@ -104,13 +136,15 @@ async function waitForRunning(context: AudioContext): Promise<void> {
 
 export async function ensureAudioRunning(): Promise<void> {
   try {
-    if (!micHeld) setSessionType("playback");
+    // Declared before the unlock so the first write keeps today's timing;
+    // a held or pending capture keeps "play-and-record" regardless.
+    playbackDeclared = true;
+    syncSessionType();
     await Tone.start();
     const context = getAudioContext();
     if (context.state !== "running") {
       await waitForRunning(context);
     }
-    hasStartedAudibleAction = true;
     if (canOfferSilentSwitchHint() && !silentSwitchHintDismissed) {
       silentSwitchHintReady = true;
     }
@@ -165,8 +199,10 @@ export function markSilentSwitchHintDismissed(): void {
 }
 
 export function __resetAudioLifecycleForTesting(): void {
-  hasStartedAudibleAction = false;
   micHeld = false;
+  pendingAcquires = 0;
+  playbackDeclared = false;
+  lastSessionType = null;
   silentSwitchHintReady = false;
   silentSwitchHintDismissed = false;
 }
