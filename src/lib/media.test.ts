@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   ACQUIRE_FAILED_COPY,
+  NO_DEVICE_COPY,
   requestMedia,
   acquireRecordingStream,
   acquirePreviewStream,
@@ -172,6 +173,17 @@ describe("media", () => {
     expect(useAppStore.getState().media.error).toBe(ACQUIRE_FAILED_COPY);
     const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
     expect(entry?.payload).toMatchObject({ site: "probe", name: "NotReadableError" });
+  });
+
+  it("names the missing device when the probe finds no camera or microphone", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException("Requested device not found", "NotFoundError");
+    });
+
+    await requestMedia();
+
+    expect(useAppStore.getState().media.status).toBe("idle");
+    expect(useAppStore.getState().media.error).toBe(NO_DEVICE_COPY);
   });
 
   it("requestMedia confirms then releases (granted, no stream held), and surfaces denied with error on rejection", async () => {

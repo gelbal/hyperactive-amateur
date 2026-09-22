@@ -2,6 +2,7 @@
 // ABOUTME: Streams are held only while the RecordingStation is mounted (preview + record reuse the same stream); otherwise the camera light stays off.
 import { useAppStore } from "../store/useAppStore";
 import {
+  markSuspendedWithoutStream,
   registerStreamLifecycle,
   releaseMediaStream,
 } from "./streamLifecycle";
@@ -12,6 +13,13 @@ import { LOG_EVENTS, logger } from "./logger";
 // gate, the record row, and the station: the viewport state change carries
 // the detail (gate or reconnect pill); no engine text reaches the screen.
 export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";
+// When no camera or microphone exists at all, "try again" is the wrong next
+// action; say what is missing instead.
+export const NO_DEVICE_COPY = "No camera or microphone found.";
+// The row's line when the permission probe lands in "denied" while the gate
+// is not on screen (station dismissed): the settings, not another tap.
+export const CAMERA_DENIED_COPY =
+  "Camera blocked — allow camera and microphone access in your browser, then reload.";
 
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
@@ -105,11 +113,11 @@ export async function requestMedia(): Promise<void> {
           .getState()
           .actions.setMedia({ stream: null, status: "denied", error: message });
       } else {
-        // Not a denial: back to the gate's idle button (the retry), with the
-        // one fixed line so the tap is not a silent no-op.
-        useAppStore
-          .getState()
-          .actions.setMedia({ stream: null, status: "idle", error: ACQUIRE_FAILED_COPY });
+        // Not a denial: back to the gate's idle button (the retry), with one
+        // fixed line so the tap is not a silent no-op. A missing device gets
+        // its own line because retrying cannot help.
+        const error = isStaleDeviceError(err) ? NO_DEVICE_COPY : ACQUIRE_FAILED_COPY;
+        useAppStore.getState().actions.setMedia({ stream: null, status: "idle", error });
       }
     } finally {
       noteMicAcquireSettled();
@@ -194,7 +202,7 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
       } else if (state.media.status === "granted") {
         // A granted user keeps the reconnect pill as the retry; nothing
         // was revoked, so the permission gate must not reappear.
-        state.actions.setMedia({ stream: null, status: "suspended", error: null });
+        markSuspendedWithoutStream();
       }
     }
     throw err;

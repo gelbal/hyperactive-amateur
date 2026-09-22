@@ -30,6 +30,7 @@ import * as Tone from "tone";
 import {
   attachStreamEndedListeners,
   installVisibilityListener,
+  markSuspendedWithoutStream,
   onMediaRecorderError,
   registerRecordingInterruptHandler,
   registerStreamLifecycle,
@@ -134,6 +135,20 @@ describe("streamLifecycle", () => {
       suspendMediaStream(stream);
 
       expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("markSuspendedWithoutStream", () => {
+    it("moves a granted user to suspended with no stream and no error", () => {
+      useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+
+      markSuspendedWithoutStream();
+
+      expect(useAppStore.getState().media).toMatchObject({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
     });
   });
 

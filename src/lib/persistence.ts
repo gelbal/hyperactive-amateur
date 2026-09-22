@@ -1,6 +1,6 @@
 // ABOUTME: persistence — save and rehydrate project state through a split IndexedDB layout.
 // ABOUTME: Blob bytes are content-addressed; metadata stores only references and trim numbers.
-import { del, get, keys, set } from "idb-keyval";
+import { createStore, del, get, keys, set, type UseStore } from "idb-keyval";
 import type { AppState, CutSubdivision, Subgenre, Tag, Vibe } from "../types";
 
 export const PERSISTED_SCHEMA_VERSION = 2;
@@ -13,6 +13,19 @@ export const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
 export const LEGACY_PROJECT_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
 
 const BLOB_KEY_PREFIX = "ha:blob:";
+
+// idb-keyval's default database and store names, kept so existing projects
+// stay readable. The store is created here rather than left to idb-keyval's
+// module singleton because idb-keyval caches a *rejected* open forever; a
+// load retry after WebKit's "Connection to Indexed Database server lost"
+// needs a fresh open, which resetPersistenceStore() provides.
+const DB_NAME = "keyval-store";
+const STORE_NAME = "keyval";
+let store: UseStore = createStore(DB_NAME, STORE_NAME);
+
+export function resetPersistenceStore(): void {
+  store = createStore(DB_NAME, STORE_NAME);
+}
 
 type BlobField = "clipBlob" | "audioBlob" | "posterBlob";
 type PersistedStorageFormat = "schema2" | "legacy";
@@ -213,8 +226,8 @@ async function blobReference(
   }
   const key = await blobKey(blob);
   referencedBlobKeys.add(key);
-  if (writeMissingBlob && (await get(key)) === undefined) {
-    await set(key, await storableBlob(blob));
+  if (writeMissingBlob && (await get(key, store)) === undefined) {
+    await set(key, await storableBlob(blob), store);
   }
   nextTrackCache[field] = { blob, ref: key };
   return key;
@@ -356,16 +369,16 @@ async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promi
   // The recovery backup is a GC root too: after a repair drops media from the
   // live metadata, the backup's references may be the only preserved copy.
   const rootedBlobKeys = new Set(referencedBlobKeys);
-  collectBackupBlobRefs(await get(PROJECT_BACKUP_KEY), rootedBlobKeys);
+  collectBackupBlobRefs(await get(PROJECT_BACKUP_KEY, store), rootedBlobKeys);
   // So is a quarantined record: its refs are rooted when it still names its
   // tracks by ref; a record with no readable track list holds GC entirely,
   // because nothing can tell which blobs it meant.
-  const quarantined = await get(PROJECT_QUARANTINE_KEY);
+  const quarantined = await get(PROJECT_QUARANTINE_KEY, store);
   if (quarantined !== undefined) {
     if (!isRecord(quarantined) || !Array.isArray(quarantined.tracks)) return;
     collectBackupBlobRefs(quarantined, rootedBlobKeys);
   }
-  const allKeys = await keys();
+  const allKeys = await keys(store);
   await Promise.all(
     allKeys
       .filter(
@@ -374,7 +387,7 @@ async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promi
           key.startsWith(BLOB_KEY_PREFIX) &&
           !rootedBlobKeys.has(key),
       )
-      .map((key) => del(key)),
+      .map((key) => del(key, store)),
   );
 }
 
@@ -384,20 +397,20 @@ export async function saveProject(state: AppState): Promise<void> {
     persisted,
     true,
   );
-  await set(PROJECT_KEY, metadata);
+  await set(PROJECT_KEY, metadata, store);
   commitBlobReferenceCache(blobReferences);
   await deleteOrphanedBlobRecords(referencedBlobKeys);
 }
 
 export async function migrateLegacyProject(project: PersistedProject): Promise<void> {
   const { metadata, referencedBlobKeys, blobReferences } = await buildMetadataRecord(project, true);
-  await set(PROJECT_KEY, metadata);
+  await set(PROJECT_KEY, metadata, store);
   commitBlobReferenceCache(blobReferences);
   const legacyKeys = new Set<string>([LEGACY_PROJECT_KEY, LEGACY_PROJECT_BACKUP_KEY]);
   if (project.legacyKey && project.legacyKey !== PROJECT_KEY) {
     legacyKeys.add(project.legacyKey);
   }
-  await Promise.all(Array.from(legacyKeys, (key) => del(key)));
+  await Promise.all(Array.from(legacyKeys, (key) => del(key, store)));
   await deleteOrphanedBlobRecords(referencedBlobKeys);
 }
 
@@ -416,7 +429,7 @@ async function resolveBlobReference(
   missingBlobs: MissingBlobReference[],
 ): Promise<Blob | null> {
   if (!ref) return null;
-  const value = await get(ref);
+  const value = await get(ref, store);
   if (isBlob(value)) return value;
   missingBlobs.push({ trackId, field, ref });
   return null;
@@ -523,13 +536,13 @@ function isSchema2Metadata(value: unknown): value is PersistedProjectV2 {
 async function deleteLingeringLegacyRecords(): Promise<void> {
   await Promise.all(
     [LEGACY_PROJECT_KEY, LEGACY_PROJECT_BACKUP_KEY].map(async (key) => {
-      if ((await get(key)) !== undefined) await del(key);
+      if ((await get(key, store)) !== undefined) await del(key, store);
     }),
   );
 }
 
 export async function loadProject(): Promise<PersistedProject | null> {
-  const metadata = await get(PROJECT_KEY);
+  const metadata = await get(PROJECT_KEY, store);
   if (isRecord(metadata)) {
     if (isSchema2Metadata(metadata)) {
       const resolved = await resolveMetadataRecord(metadata);
@@ -550,14 +563,14 @@ export async function loadProject(): Promise<PersistedProject | null> {
     // Set the unreadable record aside before failing: the app then starts
     // empty with autosave on, and nothing overwrites the original bytes. If
     // either write fails the error propagates as an ordinary load failure.
-    await set(PROJECT_QUARANTINE_KEY, metadata);
-    await del(PROJECT_KEY);
+    await set(PROJECT_QUARANTINE_KEY, metadata, store);
+    await del(PROJECT_KEY, store);
     throw new InvalidMetadataError(
       `${PROJECT_KEY} was not valid schema-${PERSISTED_SCHEMA_VERSION} metadata and was moved to ${PROJECT_QUARANTINE_KEY}`,
     );
   }
 
-  const legacy = await get(LEGACY_PROJECT_KEY);
+  const legacy = await get(LEGACY_PROJECT_KEY, store);
   if (isRecord(legacy)) {
     return tagLegacyProject(legacy, LEGACY_PROJECT_KEY);
   }
@@ -574,28 +587,28 @@ export async function saveRecoveryBackup(project: PersistedProject): Promise<voi
   // and nothing extra is written. If a blob write fails (quota), the error
   // propagates before any backup or migration write happens.
   const { metadata } = await buildMetadataRecord(project, true);
-  await set(PROJECT_BACKUP_KEY, metadata);
+  await set(PROJECT_BACKUP_KEY, metadata, store);
 }
 
 // No app code path restores from the backup yet — it is write-only insurance
 // (and a GC root for protected bytes) pending the export/import roadmap item.
 export async function loadRecoveryBackup(): Promise<unknown | null> {
-  return (await get(PROJECT_BACKUP_KEY)) ?? null;
+  return (await get(PROJECT_BACKUP_KEY, store)) ?? null;
 }
 
 export async function clearProject(): Promise<void> {
   blobReferenceCache.clear();
   await Promise.all([
-    del(PROJECT_KEY),
-    del(PROJECT_BACKUP_KEY),
-    del(PROJECT_QUARANTINE_KEY),
-    del(LEGACY_PROJECT_KEY),
-    del(LEGACY_PROJECT_BACKUP_KEY),
+    del(PROJECT_KEY, store),
+    del(PROJECT_BACKUP_KEY, store),
+    del(PROJECT_QUARANTINE_KEY, store),
+    del(LEGACY_PROJECT_KEY, store),
+    del(LEGACY_PROJECT_BACKUP_KEY, store),
   ]);
-  const allKeys = await keys();
+  const allKeys = await keys(store);
   await Promise.all(
     allKeys
       .filter((key): key is string => typeof key === "string" && key.startsWith(BLOB_KEY_PREFIX))
-      .map((key) => del(key)),
+      .map((key) => del(key, store)),
   );
 }

@@ -1,5 +1,5 @@
 // ABOUTME: streamLifecycle — single owner of every transition INTO "suspended".
-// ABOUTME: Three event sources route through here: track.onended, visibilitychange, MediaRecorder.onerror.
+// ABOUTME: Four sources route through here: track.onended, visibilitychange, MediaRecorder.onerror, and a failed re-acquire.
 import { useAppStore } from "../store/useAppStore";
 // media.ts ↔ streamLifecycle.ts is a circular import (media registers its
 // streams here); ESM hoists the function binding and invalidatePendingAcquire
@@ -222,6 +222,13 @@ export function releaseMediaStream(stream: MediaStream): void {
     noteMicReleased();
     state.actions.setMedia({ stream: null, status: "granted", error: null });
   }
+}
+
+// A granted user whose re-acquire failed for a reason other than denial:
+// nothing is held, so there is no stream to stop; the reconnect pill becomes
+// the retry. Kept here so this module stays the one writer of "suspended".
+export function markSuspendedWithoutStream(): void {
+  useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
 }
 
 export function suspendMediaStream(stream: MediaStream): void {

@@ -1,6 +1,6 @@
 // ABOUTME: App tests — autosave starts after every load that resolves; a rejected load shows one line.
 // ABOUTME: The shell keeps safe-area padding; no storage or recovery banners render.
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rehydrateMocks = vi.hoisted(() => ({
@@ -101,6 +101,18 @@ describe("App autosave gating", () => {
 
     expect(screen.queryByLabelText("Storage durability notice")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Protect project" })).not.toBeInTheDocument();
+  });
+
+  it("renders the on-device log panel only behind the halogs URL flag", async () => {
+    await renderApp();
+    expect(screen.queryByLabelText("Diagnostic log")).not.toBeInTheDocument();
+    cleanup();
+
+    vi.stubGlobal("location", { ...window.location, search: "?halogs=1" });
+    await renderApp();
+
+    expect(screen.getByLabelText("Diagnostic log")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("starts autosave after a clean load", async () => {

@@ -50,6 +50,7 @@ vi.mock("tone", () => ({
 
 vi.mock("./media", () => ({
   ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
+  CAMERA_DENIED_COPY: "Camera blocked — allow camera and microphone access in your browser, then reload.",
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
   invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
@@ -104,7 +105,7 @@ import {
   cancelCurrentRecording,
   recordIntoTrack,
 } from "./recordingFlow";
-import { ACQUIRE_FAILED_COPY } from "./media";
+import { ACQUIRE_FAILED_COPY, CAMERA_DENIED_COPY } from "./media";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
@@ -316,6 +317,20 @@ describe("recordingFlow", () => {
     expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
     expect(onError).not.toHaveBeenCalledWith(expect.stringMatching(/AudioSession/));
     expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
+  it("reports the denied line on the row when the probe after a failed acquire lands in denied", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+    mediaMocks.requestMedia.mockImplementation(async () => {
+      useAppStore.getState().actions.setMedia({ stream: null, status: "denied", error: "denied" });
+    });
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(onError).toHaveBeenCalledWith(CAMERA_DENIED_COPY);
   });
 
   it("refuses to start recording while export is active", async () => {

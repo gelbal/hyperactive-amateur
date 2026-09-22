@@ -23,9 +23,19 @@ import { rehydrateFromStorage } from "./lib/rehydrate";
 import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, getStorageDurability } from "./lib/install";
-import { LOG_EVENTS, logger } from "./lib/logger";
+import { getLogs, LOG_EVENTS, logger, type LogEntry } from "./lib/logger";
 
 const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
+const LOG_PANEL_FLAG = "halogs";
+
+function logPanelRequested(): boolean {
+  if (typeof location === "undefined") return false;
+  try {
+    return new URLSearchParams(location.search).has(LOG_PANEL_FLAG);
+  } catch {
+    return false;
+  }
+}
 
 export function App() {
   const [hydrating, setHydrating] = useState(true);
@@ -155,7 +165,38 @@ export function App() {
         )}
       </main>
       {hasAnyClips && <StepGrid />}
+      {logPanelRequested() && <LogPanel />}
     </div>
+  );
+}
+
+// Opt-in diagnostics for a phone without an inspector (Firefox and Brave on
+// iOS): open the app with ?halogs=1 and the log ring buffer renders here, so
+// a screenshot carries media.acquire-failed / audio.decode-failed and the
+// audio-session state read at failure time.
+function LogPanel() {
+  const [entries, setEntries] = useState<LogEntry[]>(() => getLogs());
+  useEffect(() => {
+    const timer = window.setInterval(() => setEntries(getLogs()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <section
+      aria-label="Diagnostic log"
+      className="mx-3 my-6 max-w-3xl rounded border border-zinc-800 bg-zinc-900 p-3 text-[11px] text-zinc-300 sm:mx-auto"
+    >
+      <pre className="whitespace-pre-wrap break-words font-mono">
+        {entries.length === 0
+          ? "(no log entries yet)"
+          : entries
+              .map(
+                (entry) =>
+                  `${new Date(entry.ts).toISOString().slice(11, 23)} ${entry.level} ${entry.event}` +
+                  (entry.payload === undefined ? "" : ` ${JSON.stringify(entry.payload)}`),
+              )
+              .join("\n")}
+      </pre>
+    </section>
   );
 }
 

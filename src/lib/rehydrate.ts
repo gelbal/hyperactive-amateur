@@ -5,6 +5,7 @@ import {
   loadProject,
   migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
+  resetPersistenceStore,
   saveProject,
   saveRecoveryBackup,
   type PersistedProject,
@@ -481,6 +482,8 @@ async function loadProjectWithRetry(
       if (err instanceof InvalidMetadataError) throw err;
       if (attempt >= delays.length) throw err;
       await waitMs(delays[attempt]);
+      // A rejected open is cached by idb-keyval; the retry needs a fresh one.
+      resetPersistenceStore();
     }
   }
 }

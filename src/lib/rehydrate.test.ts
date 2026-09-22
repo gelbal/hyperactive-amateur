@@ -39,6 +39,7 @@ import {
   clearProject,
   loadProject,
   loadRecoveryBackup,
+  resetPersistenceStore,
   saveProject,
 } from "./persistence";
 import * as persistence from "./persistence";
@@ -448,6 +449,33 @@ describe("rehydrateFromStorage", () => {
     expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
     expect(metaReads()).toBe(3);
     expect(vi.mocked(idbKeyval.set)).not.toHaveBeenCalled();
+  });
+
+  it("recovers from a failed IndexedDB open on the next attempt", async () => {
+    useAppStore.getState().actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+    useAppStore.getState().actions.reset();
+    resetPersistenceStore();
+    const openSpy = vi.spyOn(indexedDB, "open").mockImplementationOnce(() => {
+      const request = {
+        onupgradeneeded: null as null | (() => void),
+        onsuccess: null as null | (() => void),
+        onerror: null as null | (() => void),
+        onabort: null as null | (() => void),
+        oncomplete: null as null | (() => void),
+        result: undefined,
+        error: new DOMException("Connection to Indexed Database server lost", "UnknownError"),
+      };
+      setTimeout(() => request.onerror?.(), 0);
+      return request as unknown as IDBOpenDBRequest;
+    });
+
+    const result = await rehydrateFromStorage({ retryDelaysMs: [0, 0] });
+
+    expect(result.ok).toBe(true);
+    expect(useAppStore.getState().project.tracks[0].clip).not.toBeNull();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
   });
 
   it("rejects after three failed attempts without writing", async () => {

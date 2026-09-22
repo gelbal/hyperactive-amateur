@@ -9,10 +9,27 @@ import {
   clearProject,
   loadProject,
   loadRecoveryBackup,
+  resetPersistenceStore,
   saveProject,
   saveRecoveryBackup,
   snapshot,
 } from "./persistence";
+
+// An IDBOpenDBRequest stand-in that fails asynchronously, the way WebKit's
+// "Connection to Indexed Database server lost" surfaces (WebKit 273827).
+function failingOpenRequest(): IDBOpenDBRequest {
+  const request = {
+    onupgradeneeded: null as null | (() => void),
+    onsuccess: null as null | (() => void),
+    onerror: null as null | (() => void),
+    onabort: null as null | (() => void),
+    oncomplete: null as null | (() => void),
+    result: undefined,
+    error: new DOMException("Connection to Indexed Database server lost", "UnknownError"),
+  };
+  setTimeout(() => request.onerror?.(), 0);
+  return request as unknown as IDBOpenDBRequest;
+}
 import { useAppStore } from "../store/useAppStore";
 import { validV1MonolithProject } from "./__fixtures__/persistedProjects";
 
@@ -426,6 +443,24 @@ describe("persistence", () => {
 
     expect(await get(META_KEY)).toEqual(newer);
     expect(await get(QUARANTINE_KEY)).toBeUndefined();
+  });
+
+  it("reopens the database after a failed open once the store is reset", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(15));
+    await saveProject(useAppStore.getState());
+    resetPersistenceStore();
+    const openSpy = vi.spyOn(indexedDB, "open").mockImplementationOnce(() => failingOpenRequest());
+
+    await expect(loadProject()).rejects.toMatchObject({ name: "UnknownError" });
+    // idb-keyval caches the rejected open: without a reset every later call
+    // fails the same way.
+    await expect(loadProject()).rejects.toMatchObject({ name: "UnknownError" });
+
+    resetPersistenceStore();
+
+    expect((await loadProject())?.tracks[0].clipBlob).not.toBeNull();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
   });
 
   it("omits transient playback and recording fields from persistence snapshots", () => {

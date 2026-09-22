@@ -14,6 +14,7 @@ import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
 import {
   ACQUIRE_FAILED_COPY,
+  CAMERA_DENIED_COPY,
   acquireRecordingStream,
   releaseRecordingStream,
   requestMedia,
@@ -265,10 +266,16 @@ async function runFlow(
         if (signal.aborted) {
           throw makeAbortError("Aborted during media acquisition");
         }
-        // Permission may have been revoked since the last grant — surface the
-        // viewport gate so the user can re-allow.
-        void requestMedia();
-        options.onError?.(ACQUIRE_FAILED_COPY);
+        // Permission may have been revoked since the last grant — re-probe so
+        // the viewport gate can take over. With the station dismissed the gate
+        // is not on screen, so the row's line must carry the right next
+        // action: the settings for a denial, a retry for anything else.
+        await requestMedia();
+        options.onError?.(
+          useAppStore.getState().media.status === "denied"
+            ? CAMERA_DENIED_COPY
+            : ACQUIRE_FAILED_COPY,
+        );
         return false;
       }
     }
