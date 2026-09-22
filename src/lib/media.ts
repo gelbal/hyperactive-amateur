@@ -6,6 +6,7 @@ import {
   releaseMediaStream,
 } from "./streamLifecycle";
 import { noteMicAcquireSettled, noteMicAcquireStarted } from "./audioLifecycle";
+import { LOG_EVENTS, logger } from "./logger";
 
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
@@ -37,6 +38,35 @@ export function buildConstraints(): MediaStreamConstraints {
   return { video, audio };
 }
 
+function errorName(err: unknown): string {
+  if (err instanceof Error) return err.name;
+  if (typeof err === "object" && err !== null && "name" in err) {
+    return String((err as { name: unknown }).name);
+  }
+  return "";
+}
+
+// Only an explicit denial is "denied" (the gate's settings copy). Everything
+// else — a busy camera, WebKit's audio-session rejection, an abort — lands
+// the user back in the state whose retry already exists.
+function isPermissionDenial(err: unknown): boolean {
+  const name = errorName(err);
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
+// The audio-session state is read at failure time so a device log answers
+// "was the type capture-compatible when getUserMedia was called?" directly.
+function logAcquireFailure(site: "probe" | "acquire", err: unknown): void {
+  logger.warn(LOG_EVENTS.MEDIA_ACQUIRE_FAILED, {
+    site,
+    name: errorName(err),
+    message: err instanceof Error ? err.message : String(err),
+    hasAudioSession: typeof navigator !== "undefined" && "audioSession" in navigator,
+    audioSessionType:
+      typeof navigator !== "undefined" ? (navigator.audioSession?.type ?? null) : null,
+  });
+}
+
 // Confirms permission to use the camera + mic. Acquires a stream just long
 // enough to trigger the browser's permission prompt (if needed), then releases
 // the tracks immediately so the camera light goes back off. The viewport gate
@@ -63,10 +93,18 @@ export async function requestMedia(): Promise<void> {
         .getState()
         .actions.setMedia({ stream: null, status: "granted", error: null });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      useAppStore
-        .getState()
-        .actions.setMedia({ stream: null, status: "denied", error: message });
+      logAcquireFailure("probe", err);
+      if (isPermissionDenial(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        useAppStore
+          .getState()
+          .actions.setMedia({ stream: null, status: "denied", error: message });
+      } else {
+        // Not a denial: back to the gate's idle button, which is the retry.
+        useAppStore
+          .getState()
+          .actions.setMedia({ stream: null, status: "idle", error: null });
+      }
     } finally {
       noteMicAcquireSettled();
       inFlight = null;
@@ -141,10 +179,16 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
     return stream;
   } catch (err) {
     if (token === acquireGeneration) {
-      const message = err instanceof Error ? err.message : String(err);
-      useAppStore
-        .getState()
-        .actions.setMedia({ stream: null, status: "denied", error: message });
+      logAcquireFailure("acquire", err);
+      const state = useAppStore.getState();
+      if (isPermissionDenial(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        state.actions.setMedia({ stream: null, status: "denied", error: message });
+      } else if (state.media.status === "granted") {
+        // A granted user keeps the reconnect pill as the retry; nothing
+        // was revoked, so the permission gate must not reappear.
+        state.actions.setMedia({ stream: null, status: "suspended", error: null });
+      }
     }
     throw err;
   } finally {

@@ -32,6 +32,9 @@ import type { Clip, Tag } from "../types";
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+// One fixed line for a failed camera/mic acquire: the viewport state change
+// carries the detail (gate or reconnect pill); no engine text reaches the row.
+export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";
 const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
 export type RecordingCancelReason = "user" | "interrupted";
@@ -263,7 +266,7 @@ async function runFlow(
         // Permission may have been revoked since the last grant — surface the
         // viewport gate so the user can re-allow.
         void requestMedia();
-        options.onError?.(e instanceof Error ? e.message : String(e));
+        options.onError?.(ACQUIRE_FAILED_COPY);
         return false;
       }
     }

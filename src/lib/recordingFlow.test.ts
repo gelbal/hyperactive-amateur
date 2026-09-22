@@ -98,6 +98,7 @@ vi.mock("./install", () => ({
 }));
 
 import {
+  ACQUIRE_FAILED_COPY,
   COUNTDOWN_MS,
   __resetPersistenceRequestForTesting,
   cancelCurrentRecording,
@@ -295,6 +296,24 @@ describe("recordingFlow", () => {
     await expect(promise).resolves.toBe(true);
     expect(typesAtAcquire).toEqual(["play-and-record"]);
     expect(audioSession.types).toEqual(["play-and-record", "playback"]);
+  });
+
+  it("reports a fixed line and reopens the gate when acquisition fails outside cancellation", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      ),
+    );
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(mediaMocks.requestMedia).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
+    expect(onError).not.toHaveBeenCalledWith(expect.stringMatching(/AudioSession/));
+    expect(useAppStore.getState().recording.state).toBe("idle");
   });
 
   it("refuses to start recording while export is active", async () => {

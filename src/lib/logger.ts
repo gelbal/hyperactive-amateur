@@ -33,6 +33,7 @@ export const LOG_EVENTS = {
   AUDIO_RESUME_REQUIRED: "audio.resume-required",
   AUDIO_ACTION_ERROR: "audio.action-error",
   RECORDING_INTERRUPTED: "recording.interrupted",
+  MEDIA_ACQUIRE_FAILED: "media.acquire-failed",
   VIDEO_DRAW_ERROR: "video.draw-error",
   AUTOSAVE_FLUSH: "autosave.flush",
 } as const;

@@ -263,6 +263,7 @@ describe("Viewport", () => {
     });
     render(<Viewport />);
     expect(screen.getByText(/blocked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/user blocked it/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
     cleanup();
 

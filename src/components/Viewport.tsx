@@ -31,7 +31,6 @@ export function Viewport() {
   );
   const stationDismissed = useAppStore((s) => s.session.recordingStationDismissed);
   const mediaStatus = useAppStore((s) => s.media.status);
-  const mediaError = useAppStore((s) => s.media.error);
   const audioState = useAppStore((s) => s.playback.audioState);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
@@ -160,9 +159,7 @@ export function Viewport() {
           aria-label="hard-cut video viewport"
           className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
-        {showGate && (
-          <PermissionGate status={mediaStatus} error={mediaError} />
-        )}
+        {showGate && <PermissionGate status={mediaStatus} />}
         {showStation && <RecordingStation />}
         {(showAudioResumePill || showReconnectPill) && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
@@ -268,18 +265,18 @@ interface PermissionGateProps {
   // Accepts the full MediaStatus union; "granted" is unreachable here because
   // the parent only renders this gate when status !== "granted".
   status: MediaStatus;
-  error: string | null;
 }
 
-function PermissionGate({ status, error }: PermissionGateProps) {
+// "denied" is reserved for an explicit permission denial (media.ts), so the
+// settings line is always the right advice here; engine error text stays in
+// the log, never on screen.
+function PermissionGate({ status }: PermissionGateProps) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center px-10">
       {status === "denied" ? (
         <>
           <Video size={32} className="text-red-400" aria-hidden />
-          <div className="text-sm text-red-300 max-w-[20rem]">
-            Camera blocked: {error ?? "permission denied"}.
-          </div>
+          <div className="text-sm text-red-300 max-w-[20rem]">Camera blocked.</div>
           <p className="text-xs text-zinc-500 max-w-[20rem]">
             Allow camera and microphone access in your browser, then reload.
           </p>

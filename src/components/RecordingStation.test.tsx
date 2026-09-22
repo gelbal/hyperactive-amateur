@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const recordIntoTrack = vi.fn();
 vi.mock("../lib/recordingFlow", () => ({
+  ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   recordIntoTrack: (...args: unknown[]) => recordIntoTrack(...args),
 }));
 

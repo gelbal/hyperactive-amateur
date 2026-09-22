@@ -14,6 +14,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
+import { clearLogs, getLogs, LOG_EVENTS } from "./logger";
 
 function makeFakeStream() {
   // Tracks need addEventListener / removeEventListener for streamLifecycle's
@@ -62,6 +63,7 @@ describe("media", () => {
   beforeEach(() => {
     __resetMediaForTesting();
     __resetAudioLifecycleForTesting();
+    clearLogs();
     audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
@@ -131,6 +133,43 @@ describe("media", () => {
 
     await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
     expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("lands a post-grant acquire failure that is not a permission denial in suspended, and logs it", async () => {
+    useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+    stubGetUserMedia(async () => {
+      throw new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      );
+    });
+
+    await expect(acquireRecordingStream()).rejects.toMatchObject({ name: "InvalidStateError" });
+
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    expect(useAppStore.getState().media.error).toBeNull();
+    const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
+    expect(entry?.payload).toMatchObject({
+      site: "acquire",
+      name: "InvalidStateError",
+      // jsdom prefixes DOMException messages with the name; browsers do not.
+      message: expect.stringContaining("AudioSession category is not compatible with audio capture."),
+      hasAudioSession: true,
+      audioSessionType: "play-and-record",
+    });
+  });
+
+  it("leaves the gate idle when the permission probe fails for a reason other than denial", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException("Could not start video source", "NotReadableError");
+    });
+
+    await requestMedia();
+
+    expect(useAppStore.getState().media.status).toBe("idle");
+    expect(useAppStore.getState().media.error).toBeNull();
+    const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
+    expect(entry?.payload).toMatchObject({ site: "probe", name: "NotReadableError" });
   });
 
   it("requestMedia confirms then releases (granted, no stream held), and surfaces denied with error on rejection", async () => {

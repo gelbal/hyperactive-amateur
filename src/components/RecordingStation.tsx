@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, SkipForward, Check, Settings2, SwitchCamera } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
-import { recordIntoTrack } from "../lib/recordingFlow";
+import { ACQUIRE_FAILED_COPY, recordIntoTrack } from "../lib/recordingFlow";
 import {
   acquirePreviewStream,
   enumerateMediaDevices,
@@ -68,8 +68,8 @@ export function RecordingStation() {
         setError(null);
         // Labels are only populated after permission is granted; refresh now.
         void refreshDevices();
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } catch {
+        if (!cancelled) setError(ACQUIRE_FAILED_COPY);
       }
     })();
     return () => {
