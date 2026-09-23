@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import geminiRoute, {
   __resetGeminiProxyForTesting,
   __setGeminiRateLimitStoreForTesting,
+  MemoryRateLimitStore,
   GEMINI_TOKEN_HEADER,
   handleGeminiRequest,
   handleGeminiTokenRequest,
@@ -544,6 +545,35 @@ describe("handleGeminiRequest", () => {
     expect(await responseJson(second)).toMatchObject({ error: "rate-limit-exceeded" });
     expect(second.headers.get("retry-after")).toMatch(/^\d+$/);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("prunes expired identities from the memory limiter instead of growing forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryRateLimitStore();
+      for (let i = 0; i < MemoryRateLimitStore.PRUNE_ABOVE; i++) {
+        await store.increment(`identity-${i}`, 60);
+      }
+      expect(store.size).toBe(MemoryRateLimitStore.PRUNE_ABOVE);
+
+      vi.advanceTimersByTime(61_000);
+      await store.increment("fresh", 60);
+
+      expect(store.size).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds the memory limiter to a maximum number of identities", async () => {
+    const store = new MemoryRateLimitStore();
+    for (let i = 0; i < MemoryRateLimitStore.MAX_KEYS + 10; i++) {
+      await store.increment(`identity-${i}`, 600);
+    }
+    expect(store.size).toBe(MemoryRateLimitStore.MAX_KEYS);
+    // The newest identity survives; the oldest were evicted.
+    const latest = await store.increment(`identity-${MemoryRateLimitStore.MAX_KEYS + 9}`, 600);
+    expect(latest.count).toBe(2);
   });
 
   it("uses the Vercel client IP header instead of caller-supplied X-Forwarded-For in production", async () => {

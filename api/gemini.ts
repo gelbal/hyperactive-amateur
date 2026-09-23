@@ -501,19 +501,47 @@ function validateSignedRequestToken(request: Request): { ok: true } | ReturnType
   return { ok: true };
 }
 
-class MemoryRateLimitStore implements GeminiRateLimitStore {
+export class MemoryRateLimitStore implements GeminiRateLimitStore {
+  // Expired entries are only replaced when their key returns, so a warm
+  // instance seeing many one-off identities (the limiter runs before token
+  // validation) would otherwise grow without bound. Sweep past this size,
+  // and never keep more than MAX_KEYS (oldest first, Map insertion order).
+  static readonly PRUNE_ABOVE = 256;
+  static readonly MAX_KEYS = 4096;
+
   private hits = new Map<string, { count: number; resetAt: number }>();
+
+  get size(): number {
+    return this.hits.size;
+  }
 
   async increment(key: string, windowSeconds: number): Promise<RateLimitResult> {
     const now = Date.now();
+    if (this.hits.size >= MemoryRateLimitStore.PRUNE_ABOVE) this.prune(now);
     const existing = this.hits.get(key);
     if (!existing || existing.resetAt <= now) {
       const resetAt = now + windowSeconds * 1000;
+      this.hits.delete(key);
       this.hits.set(key, { count: 1, resetAt });
+      this.evictOldest();
       return { count: 1, resetAt };
     }
     existing.count += 1;
     return { count: existing.count, resetAt: existing.resetAt };
+  }
+
+  private prune(now: number): void {
+    for (const [key, entry] of this.hits) {
+      if (entry.resetAt <= now) this.hits.delete(key);
+    }
+  }
+
+  private evictOldest(): void {
+    while (this.hits.size > MemoryRateLimitStore.MAX_KEYS) {
+      const oldest = this.hits.keys().next().value;
+      if (oldest === undefined) return;
+      this.hits.delete(oldest);
+    }
   }
 }
 
