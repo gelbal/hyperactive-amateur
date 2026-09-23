@@ -234,6 +234,14 @@ export function trigger(trackId: number, when: number, displayStartTime = when):
   };
   if (playing) {
     pendingTriggers.push(event);
+    // The boundary repeat is queued further ahead than the step repeat, so
+    // at the same transport time the boundary decides before the step's
+    // trigger arrives. A hit landing exactly on a boundary that is already
+    // staged is folded into that decision; otherwise it showed one cut late
+    // or fell off the next window's strict start.
+    if (pendingCommit && isSameBoundary(pendingCommit.boundaryTime, when)) {
+      onCutBoundary(pendingCommit.boundaryTime);
+    }
   } else {
     currentlyDisplayed = event;
   }
@@ -405,10 +413,23 @@ function clearExpiredLastDrawnFrame(
   const expiresAt = lastDrawn.startTime + lastDrawn.trimDurationMs / 1000;
   if (audioTime < expiresAt) return false;
 
+  if (holdsFrameAtTrimEnd()) {
+    pauseTrack(lastDrawn.trackId);
+    return false;
+  }
   clearCanvas(ctx, width, height);
   pauseTrack(lastDrawn.trackId);
   lastDrawn = null;
   return true;
+}
+
+// While the transport runs, a clip whose sound has ended stays on screen
+// until the next cut: the sound is over but the cut is not, and a held frame
+// reads as a hard cut where black read as a dropout (the owner saw 0.4–1.5 s
+// of black per bar at 100–120 BPM). Stopped, a pad preview still clears at
+// its trim end so the idle poster takes over.
+function holdsFrameAtTrimEnd(): boolean {
+  return useAppStore.getState().playback.isPlaying;
 }
 
 // True while the render canvas holds a drawn frame: `lastDrawn` is set only
@@ -444,6 +465,10 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   const trimDurationMs = trim.endMs - trim.startMs;
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
+    if (lastDrawn && trimDurationMs > 0 && holdsFrameAtTrimEnd()) {
+      video.pause();
+      return;
+    }
     clearCanvas(ctx, w, h);
     video.pause();
     lastDrawn = null;
