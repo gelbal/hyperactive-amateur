@@ -57,6 +57,10 @@ export interface GeminiRateLimitStore {
 
 let testRateLimitStore: GeminiRateLimitStore | null | undefined;
 let devMemoryStore: GeminiRateLimitStore | null = null;
+// Per-instance counts used only while a configured durable limiter is failing.
+let degradedMemoryStore: GeminiRateLimitStore | null = null;
+// A limiter backend that hangs must not take the whole function down with it.
+const RATE_LIMIT_BACKEND_TIMEOUT_MS = 3_000;
 
 function jsonResponse(body: unknown, status: number, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -531,8 +535,11 @@ class UpstashRateLimitStore implements GeminiRateLimitStore {
         ["INCR", redisKey],
         ["EXPIRE", redisKey, String(windowSeconds + 30)],
       ]),
+      signal: AbortSignal.timeout(RATE_LIMIT_BACKEND_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error("rate limit backend rejected request");
+    // The status is the diagnostic: 401 means rotated credentials, 404 a
+    // deleted store, 5xx an outage. The bearer token never enters a message.
+    if (!res.ok) throw new Error(`rate limit backend rejected request (HTTP ${res.status})`);
     const payload = (await res.json()) as Array<{ result?: unknown; error?: string }>;
     const count = Number(payload[0]?.result);
     if (!Number.isInteger(count) || count < 1 || payload.some((item) => item.error)) {
@@ -572,6 +579,22 @@ function configuredRateLimitStore(): GeminiRateLimitStore | null {
   return devMemoryStore;
 }
 
+// A configured durable limiter that fails at request time (rotated
+// credentials, a deleted store, a REST outage) degrades to per-instance
+// counting instead of taking every AI feature down: the request is still
+// capped within this instance, the cause is logged for the deploy to be
+// repaired, and the other checks (origin, Fetch Metadata, signed token,
+// body validation) stay in force. Only a *missing* limiter stays fail-closed;
+// that is a deploy-contract violation, not an outage.
+function degradedRateLimitStore(): GeminiRateLimitStore {
+  if (!degradedMemoryStore) degradedMemoryStore = new MemoryRateLimitStore();
+  return degradedMemoryStore;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function enforceRateLimit(
   request: Request,
   scope = "generate",
@@ -581,11 +604,13 @@ async function enforceRateLimit(
 
   const max = getRateLimitMax();
   const windowSeconds = getRateLimitWindowSeconds();
+  const key = rateLimitKey(request, scope);
   let result: RateLimitResult;
   try {
-    result = await store.increment(rateLimitKey(request, scope), windowSeconds);
-  } catch {
-    return validationError("rate-limit-unavailable", 503);
+    result = await store.increment(key, windowSeconds);
+  } catch (err) {
+    console.warn(`[gemini-proxy] rate limiter unavailable, counting per instance: ${errorMessage(err)}`);
+    result = await degradedRateLimitStore().increment(key, windowSeconds);
   }
   if (result.count > max) {
     const headers: Record<string, string> = {};
@@ -719,6 +744,7 @@ export function __setGeminiRateLimitStoreForTesting(store: GeminiRateLimitStore 
 export function __resetGeminiProxyForTesting(): void {
   testRateLimitStore = undefined;
   devMemoryStore = null;
+  degradedMemoryStore = null;
 }
 
 // Vercel surfaces any uncaught throw from a route module as a plain-text
