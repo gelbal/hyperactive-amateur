@@ -1,4 +1,4 @@
-// ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8-track step grid.
+// ABOUTME: aiSuggest — call Gemini (GEMINI_MODEL) with a JSON-schema response to fill or vary the 8-track step grid.
 // ABOUTME: Uses thinkingLevel HIGH; retries once on transient HTTP errors (429/5xx); all calls go through the /api/gemini proxy.
 import type { Subgenre, Tag, Vibe } from "../types";
 import { GEMINI_MODEL } from "./aiModel";

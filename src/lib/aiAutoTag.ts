@@ -1,4 +1,4 @@
-// ABOUTME: aiAutoTag — classify a single recorded clip via Gemini 3.1 Flash Lite (default thinking level — batch path uses HIGH).
+// ABOUTME: aiAutoTag — classify a single recorded clip via Gemini (GEMINI_MODEL; default thinking level — batch path uses HIGH).
 // ABOUTME: Returns null on generic failures and an offline sentinel for transport loss; observability via logger.
 import { TAGS, type Tag } from "../types";
 import { GEMINI_MODEL } from "./aiModel";
