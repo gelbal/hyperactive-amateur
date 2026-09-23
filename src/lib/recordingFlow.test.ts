@@ -1063,7 +1063,7 @@ describe("recordingFlow", () => {
       expect(useAppStore.getState().recording.state).toBe("preparing");
 
       dispatchHidden();
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(2_000);
 
       await expect(promise).resolves.toBe(false);
       expect(useAppStore.getState().recording.state).toBe("idle");

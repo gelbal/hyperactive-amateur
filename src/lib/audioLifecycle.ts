@@ -8,6 +8,11 @@ import { LOG_EVENTS, logger } from "./logger";
 import { interruptActiveRecording } from "./recordingInterrupt";
 
 const RUNNING_WAIT_TIMEOUT_MS = 500;
+// The resume itself gets longer than the running wait: an iPhone right after
+// an app switch can take most of a second to settle, and a held claim no
+// longer greys anything out, so waiting costs nothing visible. A start still
+// pending at this point is the interruption case the cap exists for.
+const RESUME_TIMEOUT_MS = 2_000;
 const RUNNING_POLL_MS = 100;
 const EXPORT_AUDIO_INTERRUPTED_REASON =
   "Audio was interrupted — rendering stopped. Tap Render to try again.";
@@ -142,9 +147,9 @@ async function waitForRunning(context: AudioContext): Promise<void> {
 export async function ensureAudioRunning(): Promise<void> {
   // Tone.start() is AudioContext.resume(); on iOS a resume issued while the
   // context is interrupted can hold its promise until the interruption ends,
-  // which would hold the caller's audible claim with it. The same cap as the
-  // running wait bounds it, raced inline (every extra await here delays the
-  // record countdown by a microtask); the timer is cleared on every exit.
+  // which would hold the caller's audible claim with it. RESUME_TIMEOUT_MS
+  // bounds it, raced inline (every extra await here delays the record
+  // countdown by a microtask); the timer is cleared on every exit.
   let capTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     // Declared before the unlock so the first write keeps today's timing;
@@ -156,7 +161,7 @@ export async function ensureAudioRunning(): Promise<void> {
       new Promise<never>((_, reject) => {
         capTimer = setTimeout(
           () => reject(new AudioUnavailableError("AudioContext resume did not settle.")),
-          RUNNING_WAIT_TIMEOUT_MS,
+          RESUME_TIMEOUT_MS,
         );
       }),
     ]);
@@ -180,7 +185,15 @@ export async function ensureAudioRunning(): Promise<void> {
 export function initAudioLifecycle(): () => void {
   const context = getAudioContext();
   const onStateChange = () => {
-    if (context.state === "running") return;
+    if (context.state === "running") {
+      // A resume that settled after the unlock gave up, or an interruption
+      // ending on its own, leaves a stale pill; the context running is the
+      // truth the pill claims to lack.
+      if (useAppStore.getState().playback.audioState === "resume-required") {
+        useAppStore.getState().actions.setAudioState("running");
+      }
+      return;
+    }
 
     const recordingInterrupted = interruptActiveRecording("interrupted");
     const { playback } = useAppStore.getState();

@@ -121,6 +121,10 @@ describe("ensureAudioRunning", () => {
     const promise = ensureAudioRunning();
     const rejection = expect(promise).rejects.toBeInstanceOf(AudioUnavailableError);
 
+    // A resume that merely takes a moment (an iPhone right after an app
+    // switch) must not be failed: only a start that is still pending at 2 s.
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(500);
 
     await rejection;
@@ -441,7 +445,10 @@ describe("ensureAudioRunning", () => {
     });
   });
 
-  it("does not clear resume-required from a running statechange alone", () => {
+  it("clears a stale resume-required when the context reports running on its own", () => {
+    // A slow resume that settled after the unlock gave up, or an iOS
+    // interruption ending, leaves the pill up; the context running is the
+    // truth the pill claims to lack.
     useAppStore.getState().actions.setAudioState("resume-required");
     detachAudioLifecycle = initAudioLifecycle();
 
@@ -449,6 +456,6 @@ describe("ensureAudioRunning", () => {
 
     expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
     expect(exportSessionMocks.abortActiveExport).not.toHaveBeenCalled();
-    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(useAppStore.getState().playback.audioState).toBe("running");
   });
 });
