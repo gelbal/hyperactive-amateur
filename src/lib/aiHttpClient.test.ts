@@ -147,7 +147,7 @@ describe("createHttpGeminiClient", () => {
   it("maps permanent proxy configuration 503s to non-transient GeminiHttpError", async () => {
     fetchSpy
       .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(textResponse('{"error":"limiter-unconfigured"}', 503));
+      .mockResolvedValueOnce(textResponse('{"error":"origin-not-configured"}', 503));
     const client = createHttpGeminiClient();
 
     try {

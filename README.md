@@ -74,27 +74,18 @@ quiet.
 
 ### Production AI proxy settings
 
-Production deploys fail closed unless the Gemini proxy has both an
-allowed origin and a durable rate-limit backend. In Vercel, set:
+Production deploys fail closed unless the Gemini proxy has an allowed
+origin. In Vercel, set:
 
 ```
 GEMINI_API_KEY=...
 GEMINI_ALLOWED_ORIGINS=https://hyperactive-amateur.fgelbal.com
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
 ```
 
-Vercel KV's `KV_REST_API_URL` and `KV_REST_API_TOKEN` aliases work in
-place of the Upstash names, as does the `STORAGE_KV_REST_API_URL` and
-`STORAGE_KV_REST_API_TOKEN` pair that Vercel's Upstash Marketplace
-integration writes under the `STORAGE` prefix (the read-only token and
-the `rediss://` URLs it also writes are not used). The limiter URL must
-be HTTPS in production.
-If the configured backend fails at request time (rotated credentials, a
-deleted store, an outage), the proxy logs
-`[gemini-proxy] rate limiter unavailable` with the HTTP status and keeps
-serving with a per-instance in-memory limiter until the backend is
-repaired; only a missing backend fails closed.
+Rate limiting runs in memory, per function instance, in every
+environment; no database is involved. That caps bursts from one client
+but is not a global spend guard, so set a quota or budget on the Gemini
+key in Google AI Studio or Cloud Console.
 `GEMINI_RATE_LIMIT_MAX` and `GEMINI_RATE_LIMIT_WINDOW_SECONDS` are
 optional; they default to 60 requests per 10 minutes per route bucket
 and client identity. Production browser calls also fetch a short-lived
@@ -104,8 +95,7 @@ signed with `GEMINI_API_KEY`, or you can set
 and token spending also require browser Fetch Metadata for a same-origin
 request, so a browser page on another origin cannot mint tokens merely
 by setting an `Origin` value. Token issuance, invalid-token attempts,
-and Gemini spends are all rate-limited. The durable limiter remains the
-control for non-browser traffic. The proxy also accepts Vercel's
+and Gemini spends are all rate-limited. The proxy also accepts Vercel's
 `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL_BRANCH_URL`, and `VERCEL_URL`
 as allowed origins when the platform provides them, but custom domains
 should still be listed in `GEMINI_ALLOWED_ORIGINS`.
