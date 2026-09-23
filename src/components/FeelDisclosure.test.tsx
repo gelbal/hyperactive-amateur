@@ -61,6 +61,15 @@ describe("FeelDisclosure", () => {
     );
   });
 
+  it("keeps the phone button narrow: the cut · swing · hold summary shows only from lg", () => {
+    render(<FeelDisclosure />);
+
+    const button = screen.getByLabelText("Feel: cut rate, swing, hold, style, flow");
+    expect(button).toHaveTextContent("Feel");
+    const summary = screen.getByText(/1\/8 · 0% · 400ms/);
+    expect(summary).toHaveClass("hidden", "lg:inline");
+  });
+
   it("anchors the popover under the sticky header below lg (phones in both orientations) and under the button at lg", () => {
     render(<FeelDisclosure />);
     fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
