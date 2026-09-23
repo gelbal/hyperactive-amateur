@@ -52,8 +52,20 @@ let currentlyDisplayed: TriggerEvent | null = null;
 // Committed from the paint loop (see commitDueBoundary), never from Tone.Draw:
 // Draw silently expires callbacks that run late, and a dropped commit used to
 // leave the canvas stuck on a stale cut (or black once its trim ran out).
-let pendingCommit: { event: TriggerEvent | null; boundaryTime: number } | null = null;
+interface PendingCommit {
+  event: TriggerEvent | null;
+  boundaryTime: number;
+  // The window's hits and the clip the decision was made against, kept so a
+  // hit that lands exactly on the boundary after it was decided can be
+  // ranked with its siblings instead of ducked against the staged winner.
+  consumed: TriggerEvent[];
+  priorCurrent: TriggerEvent | null;
+}
+let pendingCommit: PendingCommit | null = null;
 let lastDrawn: TriggerEvent | null = null;
+// The expired frame whose element has already been paused once for the hold,
+// so the hold never pauses an element that is about to play the next cut.
+let heldFrame: TriggerEvent | null = null;
 let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
@@ -233,14 +245,15 @@ export function trigger(trackId: number, when: number, displayStartTime = when):
     trimDurationMs: trim.endMs - trim.startMs,
   };
   if (playing) {
-    pendingTriggers.push(event);
     // The boundary repeat is queued further ahead than the step repeat, so
     // at the same transport time the boundary decides before the step's
     // trigger arrives. A hit landing exactly on a boundary that is already
     // staged is folded into that decision; otherwise it showed one cut late
     // or fell off the next window's strict start.
     if (pendingCommit && isSameBoundary(pendingCommit.boundaryTime, when)) {
-      onCutBoundary(pendingCommit.boundaryTime);
+      foldIntoStagedBoundary(pendingCommit, event);
+    } else {
+      pendingTriggers.push(event);
     }
   } else {
     currentlyDisplayed = event;
@@ -361,8 +374,22 @@ function onCutBoundary(boundaryTime: number): void {
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const effectiveCurrent = pendingCommit ? pendingCommit.event : currentlyDisplayed;
   const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
-  pendingCommit = { event: next, boundaryTime };
+  pendingCommit = { event: next, boundaryTime, consumed: result.consumed, priorCurrent: effectiveCurrent };
   prepareUpcoming(boundaryTime, next, effectiveCurrent);
+}
+
+// Re-decide a staged boundary with one more hit in its window. The new hit is
+// ranked with the window's other hits (tag tier, then newest wins) against
+// the clip the boundary was originally decided against, not against the
+// staged winner — which is a sibling from the same window, not the clip on
+// screen.
+function foldIntoStagedBoundary(staged: PendingCommit, event: TriggerEvent): void {
+  const contexts = readTrackContexts();
+  const holdMs = useAppStore.getState().project.sameTierHoldMs;
+  const consumed = [...staged.consumed, event];
+  const next = pickWithDucking(consumed, staged.priorCurrent, staged.boundaryTime, holdMs, contexts);
+  pendingCommit = { event: next, boundaryTime: staged.boundaryTime, consumed, priorCurrent: staged.priorCurrent };
+  prepareUpcoming(staged.boundaryTime, next, staged.priorCurrent);
 }
 
 // Promote the staged boundary decision once the audible clock reaches its
@@ -414,7 +441,7 @@ function clearExpiredLastDrawnFrame(
   if (audioTime < expiresAt) return false;
 
   if (holdsFrameAtTrimEnd()) {
-    pauseTrack(lastDrawn.trackId);
+    holdFrame(lastDrawn);
     return false;
   }
   clearCanvas(ctx, width, height);
@@ -430,6 +457,15 @@ function clearExpiredLastDrawnFrame(
 // its trim end so the idle poster takes over.
 function holdsFrameAtTrimEnd(): boolean {
   return useAppStore.getState().playback.isPlaying;
+}
+
+// Pause the held frame's element once. Pausing on every paint would also
+// pause that element once the same track is cut in again and is still
+// seeking, freezing the new cut on its first frame.
+function holdFrame(frame: TriggerEvent): void {
+  if (heldFrame === frame) return;
+  heldFrame = frame;
+  pauseTrack(frame.trackId);
 }
 
 // True while the render canvas holds a drawn frame: `lastDrawn` is set only
@@ -466,7 +502,7 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
     if (lastDrawn && trimDurationMs > 0 && holdsFrameAtTrimEnd()) {
-      video.pause();
+      holdFrame(lastDrawn);
       return;
     }
     clearCanvas(ctx, w, h);
@@ -541,6 +577,7 @@ export function resetPlaybackState(): void {
   pendingCommit = null;
   currentlyDisplayed = null;
   lastDrawn = null;
+  heldFrame = null;
   clearPreparedState();
 }
 
@@ -617,6 +654,7 @@ export function __resetVideoEngineForTesting(): void {
   pendingCommit = null;
   currentlyDisplayed = null;
   lastDrawn = null;
+  heldFrame = null;
   clearPreparedState();
   drawErrorLogged = false;
   if (host) {
