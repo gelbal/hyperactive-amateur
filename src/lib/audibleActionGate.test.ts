@@ -4,6 +4,8 @@ import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
   claimPendingAudible,
+  invalidatePendingAudible,
+  isPendingAudibleCurrent,
 } from "./audibleActionGate";
 import type { AppState, PlaybackState, RecordingSlice } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -73,6 +75,18 @@ describe("canStartAudibleAction", () => {
     __resetPendingAudibleClaimForTesting();
 
     expect(claimPendingAudible()).toEqual(expect.any(Function));
+  });
+
+  it("a hide invalidates the pending claim; the next claim is current again", () => {
+    const release = claimPendingAudible();
+    expect(isPendingAudibleCurrent()).toBe(true);
+
+    invalidatePendingAudible();
+
+    expect(isPendingAudibleCurrent()).toBe(false);
+    release?.();
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(isPendingAudibleCurrent()).toBe(true);
   });
 
   it("claimPendingAudible returns null when another audible owner is active", () => {

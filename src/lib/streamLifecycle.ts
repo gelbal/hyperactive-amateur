@@ -7,7 +7,7 @@ import { useAppStore } from "../store/useAppStore";
 import { invalidatePendingAcquire } from "./media";
 import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
 import { stopPlayback } from "./audio";
-import { canStartAudibleAction } from "./audibleActionGate";
+import { canStartAudibleAction, invalidatePendingAudible } from "./audibleActionGate";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
@@ -271,8 +271,10 @@ export function installVisibilityListener(): () => void {
     }
     // Hidden/pagehide is a suspend decision even when no stream is held: a
     // reconnect-tap acquire still pending must not re-light camera/mic by
-    // resolving after the app went hidden.
+    // resolving after the app went hidden, and a pad or Play tap pending in
+    // its unlock must not start sound when that unlock settles on return.
     invalidatePendingAcquire();
+    invalidatePendingAudible();
     const state = useAppStore.getState();
     if (state.media.status === "granted" && state.media.stream) {
       transitionToSuspended(state.media.stream);

@@ -9,6 +9,12 @@ import { useAppStore } from "../store/useAppStore";
 // flag would paint every control disabled on the store write the unlock
 // makes and never repaint when the flag flips back without a store write.
 let pendingAudibleClaim = false;
+// Bumped by the stream lifecycle on every hide. A claim taken before a hide
+// is obsolete once the page is back: its unlock was frozen in the background
+// and may settle only on return, and a tap from before the app switch must
+// not start sound then.
+let hideEpoch = 0;
+let claimEpoch = 0;
 
 export function canStartAudibleAction(state: Pick<AppState, "playback" | "recording">): boolean {
   return (
@@ -26,6 +32,7 @@ export function claimPendingAudible(): (() => void) | null {
   if (pendingAudibleClaim || !canStartAudibleAction(useAppStore.getState())) return null;
 
   pendingAudibleClaim = true;
+  claimEpoch = hideEpoch;
   let released = false;
 
   return () => {
@@ -35,6 +42,16 @@ export function claimPendingAudible(): (() => void) | null {
   };
 }
 
+export function invalidatePendingAudible(): void {
+  hideEpoch += 1;
+}
+
+export function isPendingAudibleCurrent(): boolean {
+  return claimEpoch === hideEpoch;
+}
+
 export function __resetPendingAudibleClaimForTesting(): void {
   pendingAudibleClaim = false;
+  hideEpoch = 0;
+  claimEpoch = 0;
 }

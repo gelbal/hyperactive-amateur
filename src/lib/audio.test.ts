@@ -80,6 +80,7 @@ import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
   claimPendingAudible,
+  invalidatePendingAudible,
 } from "./audibleActionGate";
 
 function makeClip(): Clip {
@@ -279,6 +280,23 @@ describe("audio: per-step trigger logic", () => {
         Reflect.deleteProperty(document, "hidden");
       }
     }
+  });
+
+  it("does not start playback when the page hid and returned before the unlock settled", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = togglePlayback();
+    // The hidden handler invalidates the claim; the page is visible again by
+    // the time the frozen unlock resolves.
+    invalidatePendingAudible();
+    audioStarted.resolve();
+    await promise;
+
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("holds the audible gate while a pad trigger waits for audio unlock", async () => {
