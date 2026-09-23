@@ -238,7 +238,9 @@ describe("audio: per-step trigger logic", () => {
 
     useAppStore.getState().actions.setIsPlaying(false);
 
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    // The predicate no longer reads the claim flag; only a fresh claim
+    // proves the pending one was released.
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("releases the audible claim when the unlock never settles", async () => {
@@ -250,7 +252,7 @@ describe("audio: per-step trigger logic", () => {
     const rejection = expect(promise).rejects.toMatchObject({ name: "AudioUnavailableError" });
     expect(claimPendingAudible()).toBeNull();
 
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(2_000);
 
     await rejection;
     expect(transportMock.start).not.toHaveBeenCalled();
@@ -273,6 +275,7 @@ describe("audio: per-step trigger logic", () => {
 
       expect(transportMock.start).not.toHaveBeenCalled();
       expect(useAppStore.getState().playback.isPlaying).toBe(false);
+      expect(claimPendingAudible()).toEqual(expect.any(Function));
     } finally {
       if (hiddenDescriptor) {
         Object.defineProperty(document, "hidden", hiddenDescriptor);
@@ -314,7 +317,7 @@ describe("audio: per-step trigger logic", () => {
 
     expect(Tone.start).toHaveBeenCalledTimes(1);
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("ignores a second playback toggle while the first is starting", async () => {
@@ -335,7 +338,7 @@ describe("audio: per-step trigger logic", () => {
 
     useAppStore.getState().actions.setIsPlaying(false);
 
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("aborts playback start if recording becomes active during audio unlock", async () => {
@@ -356,7 +359,7 @@ describe("audio: per-step trigger logic", () => {
 
     useAppStore.getState().actions.setRecordingState("idle", null);
 
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("ignores manual playback controls while export owns the Transport", async () => {
