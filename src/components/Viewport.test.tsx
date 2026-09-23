@@ -17,6 +17,7 @@ vi.mock("tone", () => ({
 
 const videoEngineMocks = vi.hoisted(() => ({
   drawCurrentFrame: vi.fn(),
+  hasLiveFrame: vi.fn(() => false),
   initVideoEngine: vi.fn(),
   setActiveCanvas: vi.fn(),
 }));
@@ -64,6 +65,8 @@ describe("Viewport", () => {
     toneMocks.immediate.mockReturnValue(1);
     toneMocks.now.mockReturnValue(1.1);
     videoEngineMocks.drawCurrentFrame.mockReset();
+    videoEngineMocks.hasLiveFrame.mockReset();
+    videoEngineMocks.hasLiveFrame.mockReturnValue(false);
     videoEngineMocks.initVideoEngine.mockReset();
     videoEngineMocks.setActiveCanvas.mockReset();
     requestMedia.mockReset();
@@ -183,12 +186,15 @@ describe("Viewport", () => {
     expect(displayCanvas.height).toBe(390);
   });
 
-  it("blits the render canvas onto the display canvas each animation frame", () => {
+  it("blits the render canvas onto the display canvas while the engine holds a live frame", () => {
+    videoEngineMocks.hasLiveFrame.mockReturnValue(true);
     const renderContext = { canvas: null } as unknown as CanvasRenderingContext2D;
     const displayDrawImage = vi.fn();
+    const displayClearRect = vi.fn();
     const displayContext = {
       canvas: null,
       drawImage: displayDrawImage,
+      clearRect: displayClearRect,
     } as unknown as CanvasRenderingContext2D;
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     getContextSpy = vi
@@ -215,6 +221,101 @@ describe("Viewport", () => {
     expect(videoEngineMocks.drawCurrentFrame).toHaveBeenCalledWith(renderContext, 1);
     expect(displayDrawImage).toHaveBeenCalledTimes(1);
     expect(displayDrawImage.mock.calls[0]?.[0]).toBe(renderCanvas);
+    expect(displayClearRect).not.toHaveBeenCalled();
+  });
+
+  it("clears the display canvas instead of blitting black while the engine holds no frame", () => {
+    videoEngineMocks.hasLiveFrame.mockReturnValue(false);
+    const renderContext = { canvas: null } as unknown as CanvasRenderingContext2D;
+    const displayDrawImage = vi.fn();
+    const displayClearRect = vi.fn();
+    const displayContext = {
+      canvas: null,
+      drawImage: displayDrawImage,
+      clearRect: displayClearRect,
+    } as unknown as CanvasRenderingContext2D;
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementation(function (
+        this: HTMLCanvasElement,
+        contextId: string,
+      ) {
+        if (contextId === "2d" && this.classList.contains("ha-render-canvas")) {
+          return renderContext;
+        }
+        if (contextId === "2d" && this.classList.contains("ha-display-canvas")) {
+          return displayContext;
+        }
+        return originalGetContext.call(this, contextId);
+      } as typeof HTMLCanvasElement.prototype.getContext);
+
+    render(<Viewport />);
+    const displayCanvas = getDisplayCanvas();
+
+    rafCallback?.(123);
+
+    expect(displayDrawImage).not.toHaveBeenCalled();
+    expect(displayClearRect).toHaveBeenCalledWith(0, 0, displayCanvas.width, displayCanvas.height);
+    // A cleared canvas must show what sits beneath it, so no opaque background.
+    expect(displayCanvas.className.split(/\s+/)).not.toContain("bg-zinc-950");
+    expect(displayCanvas).toHaveClass("relative");
+  });
+
+  describe("idle poster", () => {
+    function setClip(trackId: number, posterUrl: string | null) {
+      useAppStore.getState().actions.setTrackClip(trackId, {
+        blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+        url: `blob:test/clip-${trackId}`,
+        audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+        audioStatus: "ok",
+        trimStartMs: 0,
+        trimEndMs: 800,
+        durationMs: 1000,
+        posterBlob: null,
+        posterUrl,
+      });
+    }
+
+    function getPoster() {
+      return document.querySelector(".ha-idle-poster") as HTMLImageElement | null;
+    }
+
+    it("shows the first clip poster behind the canvas while idle, and hides it during playback", () => {
+      act(() => {
+        setClip(0, null);
+        setClip(3, "blob:test/poster-3");
+        useAppStore.getState().actions.dismissRecordingStation();
+      });
+
+      render(<Viewport />);
+
+      const poster = getPoster();
+      expect(poster).not.toBeNull();
+      expect(poster?.getAttribute("src")).toBe("blob:test/poster-3");
+      expect(poster).toHaveAttribute("aria-hidden", "true");
+      // The poster precedes the display canvas so a live frame paints over it.
+      expect(poster?.compareDocumentPosition(getDisplayCanvas())).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+
+      act(() => useAppStore.getState().actions.setIsPlaying(true));
+      expect(getPoster()).toBeNull();
+
+      act(() => useAppStore.getState().actions.setIsPlaying(false));
+      expect(getPoster()).not.toBeNull();
+    });
+
+    it("renders no poster without clips or without a poster image", () => {
+      render(<Viewport />);
+      expect(getPoster()).toBeNull();
+
+      act(() => {
+        setClip(0, null);
+        useAppStore.getState().actions.dismissRecordingStation();
+      });
+      expect(getPoster()).toBeNull();
+    });
   });
 
   it("falls back to a 480 display canvas when ResizeObserver is absent", () => {

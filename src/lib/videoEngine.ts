@@ -411,6 +411,14 @@ function clearExpiredLastDrawnFrame(
   return true;
 }
 
+// True while the render canvas holds a drawn frame: `lastDrawn` is set only
+// when a frame is drawn and nulled on every clear, so the viewport can show
+// its poster exactly when the canvas is empty (including a seeking video,
+// which keeps its last frame up without repainting).
+export function hasLiveFrame(): boolean {
+  return lastDrawn !== null;
+}
+
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   commitDueBoundary(audioTime);
   const w = ctx.canvas.width;
