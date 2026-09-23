@@ -563,16 +563,24 @@ function normalizedLimiterUrl(value: string | undefined): string | null {
   }
 }
 
+// Accepted (url, token) env pairs; the first complete pair wins and a partial
+// pair is skipped rather than mixed with the next one. Upstash's own names,
+// Vercel KV's aliases, and the pair Vercel's Upstash Marketplace integration
+// writes under this project's chosen "STORAGE" prefix.
+const LIMITER_ENV_PAIRS = [
+  ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
+  ["KV_REST_API_URL", "KV_REST_API_TOKEN"],
+  ["STORAGE_KV_REST_API_URL", "STORAGE_KV_REST_API_TOKEN"],
+] as const;
+
 function configuredRateLimitStore(): GeminiRateLimitStore | null {
   if (testRateLimitStore !== undefined) return testRateLimitStore;
 
-  const upstashUrl = normalizedLimiterUrl(readEnv("UPSTASH_REDIS_REST_URL"));
-  const upstashToken = readEnv("UPSTASH_REDIS_REST_TOKEN");
-  if (upstashUrl && upstashToken) return new UpstashRateLimitStore(upstashUrl, upstashToken);
-
-  const kvUrl = normalizedLimiterUrl(readEnv("KV_REST_API_URL"));
-  const kvToken = readEnv("KV_REST_API_TOKEN");
-  if (kvUrl && kvToken) return new UpstashRateLimitStore(kvUrl, kvToken);
+  for (const [urlName, tokenName] of LIMITER_ENV_PAIRS) {
+    const url = normalizedLimiterUrl(readEnv(urlName));
+    const token = readEnv(tokenName);
+    if (url && token) return new UpstashRateLimitStore(url, token);
+  }
 
   if (isProduction()) return null;
   if (!devMemoryStore) devMemoryStore = new MemoryRateLimitStore();

@@ -622,6 +622,35 @@ describe("handleGeminiRequest", () => {
     });
   });
 
+  it("accepts the STORAGE-prefixed pair the Upstash Marketplace integration writes", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("STORAGE_KV_REST_API_URL", "https://beloved-turkey.example");
+    vi.stubEnv("STORAGE_KV_REST_API_TOKEN", "storage-token");
+    __resetGeminiProxyForTesting();
+    fetchSpy.mockReset();
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "{}" }] } }],
+        }),
+      );
+
+    const res = await handleGeminiRequest(
+      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.12" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
+    expect(pipelineUrl).toBe("https://beloved-turkey.example/pipeline");
+    expect(pipelineInit.headers).toMatchObject({
+      authorization: "Bearer storage-token",
+      "content-type": "application/json",
+    });
+  });
+
   it("does not mix a partial Upstash pair with KV credentials", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example/");
