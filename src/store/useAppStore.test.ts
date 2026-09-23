@@ -637,3 +637,11 @@ describe("useAppStore", () => {
     });
   });
 });
+
+describe("initial project", () => {
+  it("starts new projects on the Varied flow", () => {
+    useAppStore.getState().actions.reset();
+
+    expect(useAppStore.getState().project.vibe).toBe("varied");
+  });
+});

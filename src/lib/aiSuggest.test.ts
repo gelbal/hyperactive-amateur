@@ -38,7 +38,7 @@ describe("suggestPattern", () => {
     clearLogs();
   });
 
-  it("happy path: sends gemini-3.1-flash-lite + thinkingLevel HIGH and returns the validated grid (tight vibe = no extra prompt)", async () => {
+  it("happy path: sends gemini-3.5-flash-lite + thinkingLevel HIGH and returns the validated grid (tight vibe = no extra prompt)", async () => {
     type Captured = {
       model: string;
       config: { systemInstruction: string; thinkingConfig?: { thinkingLevel?: unknown } };
@@ -57,7 +57,7 @@ describe("suggestPattern", () => {
       client,
     );
     expect(grid).toEqual(pattern8x16());
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     expect(captured.config.systemInstruction).toMatch(/hip-hop beat producer/);
     expect(captured.config.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
     // Tight is the baseline — no vibe-specific tail injected.
@@ -214,6 +214,40 @@ describe("varyPattern", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("busier and fill drop the Varied flow hint that would contradict them; the others keep it", async () => {
+    const captures = new Map<string, string>();
+    for (const variation of ["busier", "fill", "strip", "halftime", "break"] as const) {
+      const client: GeminiPatternClient = {
+        models: {
+          generateContent: vi.fn(async (params: object) => {
+            captures.set(
+              variation,
+              (params as { config: { systemInstruction: string } }).config.systemInstruction,
+            );
+            return { text: JSON.stringify({ tracks: pattern8x16() }) };
+          }),
+        },
+      };
+      await varyPattern(
+        {
+          bpm: 90,
+          subgenre: "boom-bap",
+          vibe: "varied",
+          stepCount: 16,
+          tracks: [],
+          currentPattern: pattern8x16(),
+          variation,
+        },
+        client,
+      );
+    }
+    expect(captures.get("busier")).not.toMatch(/VIBE: varied/);
+    expect(captures.get("fill")).not.toMatch(/VIBE: varied/);
+    expect(captures.get("strip")).toMatch(/VIBE: varied/);
+    expect(captures.get("halftime")).toMatch(/VIBE: varied/);
+    expect(captures.get("break")).toMatch(/VIBE: varied/);
   });
 
   it("each variation sends a distinct system prompt; break specifically asks for a final-quarter drop", async () => {

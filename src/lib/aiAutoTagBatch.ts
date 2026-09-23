@@ -1,6 +1,7 @@
 // ABOUTME: aiAutoTagBatch — classify multiple recorded clips holistically in a single Gemini call.
 // ABOUTME: Returns null on any failure so callers (retagAll) can fall back to per-clip auto-tag.
 import { TAGS, type Tag } from "../types";
+import { GEMINI_MODEL } from "./aiModel";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
 import { SchemaType, ThinkingLevel } from "./aiSchemaConstants";
@@ -14,7 +15,7 @@ import {
   TAG_DEFINITIONS_BLOCK,
 } from "./aiClient";
 
-export const BATCH_TAG_MODEL = "gemini-3.1-flash-lite";
+export const BATCH_TAG_MODEL = GEMINI_MODEL;
 
 // Soft cap on the total base64-encoded inline payload. Keep this below the
 // proxy's 4 MB body cap so JSON-schema overhead and prompts still fit.

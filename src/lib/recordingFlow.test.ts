@@ -135,7 +135,7 @@ function makeDeferred<T = void>(): {
   return { promise, resolve, reject };
 }
 
-async function flushMicrotasks(times = 3): Promise<void> {
+async function flushMicrotasks(times = 5): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await Promise.resolve();
   }
@@ -1037,6 +1037,38 @@ describe("recordingFlow", () => {
       expect(useAppStore.getState().recording.state).toBe("idle");
       expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
       expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+      detach();
+      cancelCurrentRecording();
+      await promise.catch(() => false);
+    }
+  });
+
+  it("returns to idle with the pinned copy when the page hides while audio startup never settles", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    toneMocks.start.mockReturnValue(new Promise<void>(() => undefined));
+    const detach = installVisibilityListener();
+
+    const promise = recordIntoTrack(0, { onError });
+    try {
+      await flushMicrotasks();
+      expect(useAppStore.getState().recording.state).toBe("preparing");
+
+      dispatchHidden();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(promise).resolves.toBe(false);
+      expect(useAppStore.getState().recording.state).toBe("idle");
+      expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+      expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
       expect(onError).not.toHaveBeenCalled();
     } finally {
       if (hiddenDescriptor) {

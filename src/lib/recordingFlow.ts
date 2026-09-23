@@ -244,6 +244,9 @@ async function runFlow(
     try {
       await ensureAudioRunning();
     } catch (e) {
+      // A hide during the unlock aborts the flow; report the abort, not the
+      // audio failure the bounded unlock surfaces on its way out.
+      throwIfFlowAborted(signal, "Aborted during audio unlock");
       if (e instanceof AudioUnavailableError) {
         options.onError?.(AUDIO_UNAVAILABLE_COPY);
         return false;

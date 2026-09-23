@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
-import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/videoEngine";
+import { drawCurrentFrame, initVideoEngine, setActiveCanvas, hasLiveFrame } from "../lib/videoEngine";
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
 import { ensureAudioRunning, noteMicAcquireStarted } from "../lib/audioLifecycle";
-import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { canStartAudibleAction, hasCurrentAudibleClaim } from "../lib/audibleActionGate";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -39,6 +39,11 @@ export function Viewport() {
   // state do not change under the user's finger.
   const [resumeBothPending, setResumeBothPending] = useState(false);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
+  // The first clip with a poster stands in for the hero while nothing plays
+  // (triggerSeq is a per-track counter, so there is no "most recent" clip).
+  const posterUrl = useAppStore(
+    (s) => s.project.tracks.find((t) => t.clip?.posterUrl)?.clip?.posterUrl ?? null,
+  );
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
   // The overlays (gate, station, record-prompt, countdown) stay visible in
@@ -69,6 +74,9 @@ export function Viewport() {
     !stationDismissed &&
     !isPlaying;
   const showReconnectPill = mediaStatus === "suspended";
+  // The viewport is the hero: while idle with clips it shows a poster, not
+  // a black square. Playback (export drives playback too) unmounts it.
+  const showPoster = hasClips && !isPlaying && !showGate && !showStation;
   const showAudioResumePill = audioState === "resume-required";
   const showRecordMore = !isFullscreen && emptyTrackCount > 0 && stationDismissed;
   const showFullscreenToggle = fullscreenSupported && (mediaStatus === "granted" || hasClips);
@@ -116,13 +124,19 @@ export function Viewport() {
       const audioTime = Tone.immediate();
       drawCurrentFrame(renderCtx, audioTime);
       if (displayCanvas && displayCtx) {
-        displayCtx.drawImage(
-          renderCanvas,
-          0,
-          0,
-          displayCanvas.width,
-          displayCanvas.height,
-        );
+        // An empty render canvas is cleared through, not blitted as black,
+        // so the idle poster beneath the display canvas shows.
+        if (hasLiveFrame()) {
+          displayCtx.drawImage(
+            renderCanvas,
+            0,
+            0,
+            displayCanvas.width,
+            displayCanvas.height,
+          );
+        } else {
+          displayCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+        }
       }
       rafId = requestAnimationFrame(draw);
     };
@@ -158,12 +172,24 @@ export function Viewport() {
             pointerEvents: "none",
           }}
         />
+        {showPoster && posterUrl && (
+          // Dimmed first-clip poster behind the display canvas: a live frame
+          // paints over it, a cleared canvas reveals it. Both elements are
+          // positioned, so DOM order decides which is on top.
+          <img
+            src={posterUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="ha-idle-poster absolute inset-0 w-full h-full object-cover rounded opacity-40 pointer-events-none"
+          />
+        )}
         <canvas
           ref={displayCanvasRef}
           width={displayCanvasSize}
           height={displayCanvasSize}
           aria-label="hard-cut video viewport"
-          className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
+          className="ha-canvas ha-display-canvas relative block w-full h-full rounded shadow-lg"
         />
         {showGate && <PermissionGate status={mediaStatus} error={mediaError} />}
         {showStation && <RecordingStation />}
@@ -295,6 +321,7 @@ function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) =
       if (
         (typeof document !== "undefined" && document.hidden) ||
         !canStartAudibleAction(state) ||
+        hasCurrentAudibleClaim() ||
         state.media.status !== "suspended"
       ) {
         return;

@@ -10,6 +10,7 @@ vi.mock("tone", () => toneHarness.createToneModule());
 
 import {
   drawCurrentFrame,
+  hasLiveFrame,
   initVideoEngine,
   resetPlaybackState,
   setClipForTrack,
@@ -588,6 +589,27 @@ describe("videoEngine integration", () => {
 
     expect(ctx.fillRect).not.toHaveBeenCalled();
     expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("reports a live frame only while the last drawn frame is still up", () => {
+    expect(hasLiveFrame()).toBe(false);
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+
+    trigger(0, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.1);
+    expect(hasLiveFrame()).toBe(true);
+
+    // The trimmed clip runs 200 ms; past it the frame is cleared.
+    drawCurrentFrame(makeCanvasContext(), 1.25);
+    expect(hasLiveFrame()).toBe(false);
+
+    trigger(0, 2.0);
+    drawCurrentFrame(makeCanvasContext(), 2.1);
+    expect(hasLiveFrame()).toBe(true);
+    __resetVideoEngineForTesting();
+    expect(hasLiveFrame()).toBe(false);
   });
 
   it("clears an undrawable replacement once the last drawn frame expires", () => {

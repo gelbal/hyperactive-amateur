@@ -55,7 +55,14 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+/* iOS zooms the page on focus of any control under 16px; a zoomed page
+ * re-places the anchored popovers against a different viewport. The select
+ * rule stays first in this block: the CSS pin test anchors on it. */
 @media (pointer: coarse) {
+  select {
+    font-size: 16px;
+  }
+
   input[type="range"] {
     height: 2rem;
   }

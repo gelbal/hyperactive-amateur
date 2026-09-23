@@ -7,7 +7,6 @@ import { PlayButton } from "./components/PlayButton";
 import { BpmDial } from "./components/BpmDial";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
-import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
@@ -91,59 +90,51 @@ export function App() {
     <div className="min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
-        <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:gap-10 sm:px-6 sm:py-4">
-          <div>
-            <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
-              Hyperactive
-              <br />
-              Amateur
-            </h1>
-            <p className="mt-1 text-xs text-zinc-500">
-              <a
-                href="https://fgelbal.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-zinc-300 transition-colors"
-              >
-                Fırat Gelbal
-              </a>
-              <span aria-hidden> · </span>
-              <a
-                href="https://github.com/gelbal/hyperactive-amateur"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View source on GitHub"
-                className="hover:text-zinc-300 transition-colors"
-              >
-                source
-              </a>
-            </p>
-          </div>
-          <div className="flex flex-col items-start sm:items-end gap-3 w-full sm:w-auto">
-            <div className="flex flex-wrap items-center gap-4">
-              <PlayButton />
-              <span className="text-[10px] text-zinc-500 -ml-2">space</span>
-              <BpmDial />
-              {hasAnyClips && (
-                <>
-                  <span className="h-6 w-px bg-zinc-800" aria-hidden />
-                  <ExportButton />
-                </>
-              )}
+        <div className="flex flex-col gap-3 px-3 py-3 sm:px-6 sm:py-4">
+          {/* Title row: the transport sits beside the title on every width,
+              so a phone spends one row on it instead of two. */}
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              {/* 5xl only from lg: a phone in landscape is wider than sm and
+                  must keep the phone-sized header. */}
+              <h1 className="text-2xl min-[360px]:text-3xl lg:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
+                Hyperactive
+                <br />
+                Amateur
+              </h1>
+              <p className="mt-1 text-xs text-zinc-500">
+                <a
+                  href="https://fgelbal.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-zinc-300 transition-colors"
+                >
+                  Fırat Gelbal
+                </a>
+                <span aria-hidden> · </span>
+                <a
+                  href="https://github.com/gelbal/hyperactive-amateur"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="View source on GitHub"
+                  className="hover:text-zinc-300 transition-colors"
+                >
+                  source
+                </a>
+              </p>
             </div>
-            {hasAnyClips && (
-              <div className="flex flex-wrap items-center gap-2">
-                <FeelDisclosure />
-                {hasAiUnlock && (
-                  <>
-                    <span className="h-6 w-px bg-zinc-800" aria-hidden />
-                    <SuggestButton />
-                    <FlowSelector />
-                  </>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3 shrink-0">
+              <PlayButton />
+              <BpmDial />
+            </div>
           </div>
+          {hasAnyClips && (
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <ExportButton />
+              <FeelDisclosure />
+              {hasAiUnlock && <SuggestButton />}
+            </div>
+          )}
         </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">

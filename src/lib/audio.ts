@@ -2,7 +2,7 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { claimPendingAudible } from "./audibleActionGate";
+import { claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
@@ -170,9 +170,14 @@ function syncPlayers(tracks: Track[]): void {
   }
 }
 
+// Re-checked after the unlock's await: a tap that was pending when the page
+// went hidden must not start sound in the background once audio resumes, nor
+// on return when the frozen unlock settles only then.
 function canStartAfterPendingAudible(): boolean {
   const { playback, recording } = useAppStore.getState();
   return (
+    isPendingAudibleCurrent() &&
+    !(typeof document !== "undefined" && document.hidden) &&
     !playback.isPlaying &&
     !playback.isExporting &&
     recording.state === "idle"

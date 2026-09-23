@@ -35,6 +35,21 @@ describe("tailwind pointer-coarse variants", () => {
     expect(css).toMatch(/any-pointer-coarse\\:pointer-events-auto/);
   }, 20_000);
 
+  it("emits the Feel panel cap and 16px selects for coarse pointers", async () => {
+    const css = await builtCss();
+    // The Feel panel's max-height resolves against the sticky header (its
+    // containing block below sm); the env() term is the notch padding above
+    // the header at scroll 0 in the home-screen app.
+    expect(css).toContain(
+      "max-height: calc(100dvh - 100% - 1rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
+    );
+    // iOS zooms the page on focus of any control under 16px, which would
+    // re-place the anchored popovers against a different viewport. The rule
+    // must be the first inside the app's own coarse-pointer block, so the
+    // pattern is anchored to the block's opening brace.
+    expect(css).toMatch(/@media \(pointer: coarse\)\s*{\s*select\s*{\s*font-size:\s*16px;/);
+  }, 20_000);
+
   it("emits 24px range thumbs for coarse pointers", async () => {
     const css = await builtCss();
     expect(css).toMatch(

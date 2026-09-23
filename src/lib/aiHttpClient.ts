@@ -59,7 +59,6 @@ function mapErrorStatus(status: number, body: string): Error {
 
 function isPermanentProxyConfigError(body: string): boolean {
   return (
-    body.includes("limiter-unconfigured") ||
     body.includes("origin-not-configured") ||
     body.includes("token-secret-unconfigured")
   );

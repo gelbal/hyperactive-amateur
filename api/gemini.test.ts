@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import geminiRoute, {
   __resetGeminiProxyForTesting,
   __setGeminiRateLimitStoreForTesting,
+  MemoryRateLimitStore,
   GEMINI_TOKEN_HEADER,
   handleGeminiRequest,
   handleGeminiTokenRequest,
@@ -322,6 +323,15 @@ describe("handleGeminiRequest", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("accepts the successor model beside the one it replaces", async () => {
+    const res = await handleGeminiRequest(
+      request({ ...suggestBody(), model: "gemini-3.5-flash-lite" }),
+    );
+    expect(res.status).toBe(200);
+    const [url] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain("/gemini-3.5-flash-lite:generateContent");
+  });
+
   it("rejects models outside the app allowlist", async () => {
     const res = await handleGeminiRequest(
       request({ ...suggestBody(), model: "gemini-3.1-pro" }),
@@ -491,15 +501,6 @@ describe("handleGeminiRequest", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed in production when only Origin is configured but no durable limiter exists", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    __setGeminiRateLimitStoreForTesting(null);
-    const res = await handleGeminiRequest(request(suggestBody(), SAME_ORIGIN_FETCH_HEADERS));
-    expect(res.status).toBe(503);
-    expect(await responseJson(res)).toMatchObject({ error: "limiter-unconfigured" });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
   it("rejects request bursts through the injected durable limiter across calls", async () => {
     vi.stubEnv("GEMINI_RATE_LIMIT_MAX", "1");
     const first = await handleGeminiRequest(request(suggestBody()));
@@ -509,6 +510,70 @@ describe("handleGeminiRequest", () => {
     expect(second.status).toBe(429);
     expect(await responseJson(second)).toMatchObject({ error: "rate-limit-exceeded" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves a production request from the memory limiter with no store configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    __resetGeminiProxyForTesting();
+
+    const res = await handleGeminiRequest(
+      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.20" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps a production burst from the default memory limiter", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GEMINI_RATE_LIMIT_MAX", "1");
+    __resetGeminiProxyForTesting();
+    const signed = await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.21" });
+    const token = signed.headers.get(GEMINI_TOKEN_HEADER) ?? "";
+    const send = () =>
+      handleGeminiRequest(
+        request(suggestBody(), {
+          "x-vercel-forwarded-for": "198.51.100.21",
+          ...SAME_ORIGIN_FETCH_HEADERS,
+          [GEMINI_TOKEN_HEADER]: token,
+        }),
+      );
+
+    expect((await send()).status).toBe(200);
+    const second = await send();
+    expect(second.status).toBe(429);
+    expect(await responseJson(second)).toMatchObject({ error: "rate-limit-exceeded" });
+    expect(second.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("prunes expired identities from the memory limiter instead of growing forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryRateLimitStore();
+      for (let i = 0; i < MemoryRateLimitStore.PRUNE_ABOVE; i++) {
+        await store.increment(`identity-${i}`, 60);
+      }
+      expect(store.size).toBe(MemoryRateLimitStore.PRUNE_ABOVE);
+
+      vi.advanceTimersByTime(61_000);
+      await store.increment("fresh", 60);
+
+      expect(store.size).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds the memory limiter to a maximum number of identities", async () => {
+    const store = new MemoryRateLimitStore();
+    for (let i = 0; i < MemoryRateLimitStore.MAX_KEYS + 10; i++) {
+      await store.increment(`identity-${i}`, 600);
+    }
+    expect(store.size).toBe(MemoryRateLimitStore.MAX_KEYS);
+    // The newest identity survives; the oldest were evicted.
+    const latest = await store.increment(`identity-${MemoryRateLimitStore.MAX_KEYS + 9}`, 600);
+    expect(latest.count).toBe(2);
   });
 
   it("uses the Vercel client IP header instead of caller-supplied X-Forwarded-For in production", async () => {
@@ -541,233 +606,6 @@ describe("handleGeminiRequest", () => {
     expect(second.status).toBe(429);
     expect(await responseJson(second)).toMatchObject({ error: "rate-limit-exceeded" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses the configured Upstash REST limiter in production", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example/");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "{}" }] } }],
-        }),
-      );
-
-    const res = await handleGeminiRequest(
-      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.7" }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
-    expect(pipelineUrl).toBe("https://redis.example/pipeline");
-    expect(pipelineInit.method).toBe("POST");
-    expect(pipelineInit.headers).toMatchObject({
-      authorization: "Bearer redis-token",
-      "content-type": "application/json",
-    });
-    const commands = JSON.parse(pipelineInit.body);
-    expect(commands[0][0]).toBe("INCR");
-    expect(commands[0][1]).toContain("generate:https:__hyperactive.example:198.51.100.7");
-    expect(commands[1]).toEqual(["EXPIRE", commands[0][1], "630"]);
-  });
-
-  it("rejects non-HTTPS production limiter URLs without sending the bearer token", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "http://redis.example/");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-
-    const res = await handleGeminiRequest(request(suggestBody(), SAME_ORIGIN_FETCH_HEADERS));
-
-    expect(res.status).toBe(503);
-    expect(await responseJson(res)).toMatchObject({ error: "limiter-unconfigured" });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("treats blank Upstash envs as unset and falls back to KV aliases", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "   ");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
-    vi.stubEnv("KV_REST_API_URL", "https://kv.example/");
-    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "{}" }] } }],
-        }),
-      );
-
-    const res = await handleGeminiRequest(
-      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.8" }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
-    expect(pipelineUrl).toBe("https://kv.example/pipeline");
-    expect(pipelineInit.headers).toMatchObject({
-      authorization: "Bearer kv-token",
-      "content-type": "application/json",
-    });
-  });
-
-  it("accepts the STORAGE-prefixed pair the Upstash Marketplace integration writes", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("STORAGE_KV_REST_API_URL", "https://beloved-turkey.example");
-    vi.stubEnv("STORAGE_KV_REST_API_TOKEN", "storage-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "{}" }] } }],
-        }),
-      );
-
-    const res = await handleGeminiRequest(
-      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.12" }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
-    expect(pipelineUrl).toBe("https://beloved-turkey.example/pipeline");
-    expect(pipelineInit.headers).toMatchObject({
-      authorization: "Bearer storage-token",
-      "content-type": "application/json",
-    });
-  });
-
-  it("does not mix a partial Upstash pair with KV credentials", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example/");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
-    vi.stubEnv("KV_REST_API_URL", "https://kv.example/");
-    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "{}" }] } }],
-        }),
-      );
-
-    const res = await handleGeminiRequest(
-      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.9" }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
-    expect(pipelineUrl).toBe("https://kv.example/pipeline");
-    expect(pipelineInit.headers).toMatchObject({
-      authorization: "Bearer kv-token",
-      "content-type": "application/json",
-    });
-  });
-
-  it("counts in memory and logs the cause when the configured Upstash limiter fails", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.stubEnv("NODE_ENV", "production");
-    const tokenRes = await handleGeminiTokenRequest(
-      new Request(`${ALLOWED_ORIGIN}/api/gemini-token`, {
-        method: "POST",
-        headers: {
-          origin: ALLOWED_ORIGIN,
-          "x-vercel-forwarded-for": "198.51.100.7",
-          ...SAME_ORIGIN_FETCH_HEADERS,
-        },
-      }),
-    );
-    expect(tokenRes.status).toBe(200);
-    const tokenBody = await responseJson(tokenRes);
-
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "{}" }] } }],
-        }),
-      );
-
-    const res = await handleGeminiRequest(
-      request(suggestBody(), {
-        "x-vercel-forwarded-for": "198.51.100.7",
-        ...SAME_ORIGIN_FETCH_HEADERS,
-        [GEMINI_TOKEN_HEADER]: String(tokenBody.token),
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenCalledOnce();
-    const logged = warnSpy.mock.calls[0].map(String).join(" ");
-    expect(logged).toContain("[gemini-proxy] rate limiter unavailable");
-    expect(logged).toContain("HTTP 401");
-    expect(logged).not.toContain("redis-token");
-  });
-
-  it("keeps capping bursts from memory while the durable limiter is down", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("GEMINI_RATE_LIMIT_MAX", "2");
-    const tokenRes = await handleGeminiTokenRequest(
-      new Request(`${ALLOWED_ORIGIN}/api/gemini-token`, {
-        method: "POST",
-        headers: {
-          origin: ALLOWED_ORIGIN,
-          "x-vercel-forwarded-for": "198.51.100.11",
-          ...SAME_ORIGIN_FETCH_HEADERS,
-        },
-      }),
-    );
-    expect(tokenRes.status).toBe(200);
-    const tokenBody = await responseJson(tokenRes);
-
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
-    __resetGeminiProxyForTesting();
-    fetchSpy.mockReset();
-    fetchSpy.mockImplementation(async (url: unknown) =>
-      String(url).endsWith("/pipeline")
-        ? jsonResponse({ error: "unauthorized" }, 401)
-        : jsonResponse({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }),
-    );
-    const send = () =>
-      handleGeminiRequest(
-        request(suggestBody(), {
-          "x-vercel-forwarded-for": "198.51.100.11",
-          ...SAME_ORIGIN_FETCH_HEADERS,
-          [GEMINI_TOKEN_HEADER]: String(tokenBody.token),
-        }),
-      );
-
-    expect((await send()).status).toBe(200);
-    expect((await send()).status).toBe(200);
-    const third = await send();
-    expect(third.status).toBe(429);
-    expect(await responseJson(third)).toMatchObject({ error: "rate-limit-exceeded" });
-    expect(third.headers.get("retry-after")).toMatch(/^\d+$/);
   });
 
   it.each([

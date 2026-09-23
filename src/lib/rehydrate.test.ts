@@ -314,7 +314,7 @@ describe("rehydrateFromStorage", () => {
     expect(project.cutSubdivision).toBe("8n");
     expect(project.sameTierHoldMs).toBe(400);
     expect(project.subgenre).toBe("boom-bap");
-    expect(project.vibe).toBe("tight");
+    expect(project.vibe).toBe("varied");
     expect(project.stepCount).toBe(16);
     expect(project.tracks).toHaveLength(8);
     expect(project.tracks[0].steps).toHaveLength(16);

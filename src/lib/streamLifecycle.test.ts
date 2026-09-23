@@ -37,6 +37,11 @@ import {
   waitForUsableTracks,
 } from "./streamLifecycle";
 import { acquireRecordingStream, __resetMediaForTesting } from "./media";
+import {
+  __resetPendingAudibleClaimForTesting,
+  claimPendingAudible,
+  isPendingAudibleCurrent,
+} from "./audibleActionGate";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
@@ -984,6 +989,22 @@ describe("streamLifecycle", () => {
       detach();
     });
   });
+
+    it("on hidden: invalidates a pending audible claim so a frozen unlock cannot start sound on return", () => {
+      const release = claimPendingAudible();
+      const detach = installVisibilityListener();
+
+      try {
+        Object.defineProperty(document, "hidden", { value: true, configurable: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+
+        expect(isPendingAudibleCurrent()).toBe(false);
+      } finally {
+        detach();
+        release?.();
+        __resetPendingAudibleClaimForTesting();
+      }
+    });
 
   describe("pending acquire invalidation", () => {
     let originalMediaDevices: MediaDevices | undefined;

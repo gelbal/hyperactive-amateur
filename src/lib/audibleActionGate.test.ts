@@ -4,6 +4,9 @@ import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
   claimPendingAudible,
+  hasCurrentAudibleClaim,
+  invalidatePendingAudible,
+  isPendingAudibleCurrent,
 } from "./audibleActionGate";
 import type { AppState, PlaybackState, RecordingSlice } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -51,26 +54,53 @@ describe("canStartAudibleAction", () => {
     expect(canStartAudibleAction(state({}, { state: "reviewing", activeTrackId: 1 }))).toBe(false);
   });
 
-  it("claimPendingAudible holds the gate until its idempotent release", () => {
+  it("claimPendingAudible refuses a second claim until its idempotent release", () => {
     const release = claimPendingAudible();
 
     expect(release).toEqual(expect.any(Function));
-    expect(canStartAudibleAction(state())).toBe(false);
+    // The predicate reads only the store: a held claim never renders a
+    // control disabled. The claim itself is what refuses the second owner.
+    expect(canStartAudibleAction(state())).toBe(true);
     expect(claimPendingAudible()).toBeNull();
 
     release?.();
     release?.();
 
-    expect(canStartAudibleAction(state())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("test reset seam clears a leaked pending claim", () => {
     expect(claimPendingAudible()).toEqual(expect.any(Function));
-    expect(canStartAudibleAction(state())).toBe(false);
+    expect(claimPendingAudible()).toBeNull();
 
     __resetPendingAudibleClaimForTesting();
 
-    expect(canStartAudibleAction(state())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+  });
+
+  it("a hide invalidates the pending claim; the next claim is current again", () => {
+    const release = claimPendingAudible();
+    expect(isPendingAudibleCurrent()).toBe(true);
+
+    invalidatePendingAudible();
+
+    expect(isPendingAudibleCurrent()).toBe(false);
+    release?.();
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(isPendingAudibleCurrent()).toBe(true);
+  });
+
+  it("hasCurrentAudibleClaim reports a live, un-invalidated claim only", () => {
+    expect(hasCurrentAudibleClaim()).toBe(false);
+    const release = claimPendingAudible();
+    expect(hasCurrentAudibleClaim()).toBe(true);
+
+    invalidatePendingAudible();
+    expect(hasCurrentAudibleClaim()).toBe(false);
+
+    release?.();
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(hasCurrentAudibleClaim()).toBe(true);
   });
 
   it("claimPendingAudible returns null when another audible owner is active", () => {

@@ -117,27 +117,34 @@ describe("ExportButton format picker", () => {
     );
   });
 
-  it("clamps the popover to the mobile viewport and restores right anchoring at sm", () => {
+  it("anchors the popover under the sticky header below lg and right-aligned under the button at lg", () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     render(<ExportButton />);
     fireEvent.click(screen.getByRole("button", { name: /export/i }));
 
     const popover = screen.getByRole("dialog", { name: "Export song" });
+    expect(popover.parentElement).toHaveClass("static", "lg:relative");
     expect(popover).toHaveClass(
-      "fixed",
+      "absolute",
       "inset-x-3",
+      "top-full",
+      "mt-2",
       "w-auto",
       "max-w-[24rem]",
       "mx-auto",
-      "sm:absolute",
-      "sm:inset-x-auto",
-      "sm:right-0",
-      "sm:top-full",
-      "sm:min-w-[18rem]",
-      "sm:max-w-none",
-      "sm:mx-0",
+      "max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]",
+      "overflow-y-auto",
+      "lg:inset-x-auto",
+      "lg:right-0",
+      "lg:min-w-[18rem]",
+      "lg:max-w-none",
+      "lg:mx-0",
+      "lg:max-h-none",
+      "lg:overflow-visible",
     );
-    expect(popover.className.split(/\s+/)).not.toContain("min-w-[18rem]");
+    const classes = popover.className.split(/\s+/);
+    expect(classes).not.toContain("fixed");
+    expect(classes).not.toContain("min-w-[18rem]");
   });
 
   it("hides the picker when only one format is supported", () => {
