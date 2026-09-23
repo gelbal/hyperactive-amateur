@@ -7,7 +7,6 @@ import { PlayButton } from "./components/PlayButton";
 import { BpmDial } from "./components/BpmDial";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
-import { FlowSelector } from "./components/FlowSelector";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
@@ -131,12 +130,7 @@ export function App() {
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
               <ExportButton />
               <FeelDisclosure />
-              {hasAiUnlock && (
-                <>
-                  <SuggestButton />
-                  <FlowSelector />
-                </>
-              )}
+              {hasAiUnlock && <SuggestButton />}
             </div>
           )}
         </div>

@@ -36,7 +36,6 @@ vi.mock("./components/PlayButton", () => ({ PlayButton: () => <div data-testid="
 vi.mock("./components/BpmDial", () => ({ BpmDial: () => <div data-testid="bpm-dial" /> }));
 vi.mock("./components/ExportButton", () => ({ ExportButton: () => null }));
 vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
-vi.mock("./components/FlowSelector", () => ({ FlowSelector: () => null }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
 vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => null }));
 

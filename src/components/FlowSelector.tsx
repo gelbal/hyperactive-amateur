@@ -1,5 +1,5 @@
-// ABOUTME: FlowSelector — top-bar dropdown for the structural hint sent to AI Suggest.
-// ABOUTME: Tight (default), Varied (more space, fewer tracks), Breaky (sparse final quarter).
+// ABOUTME: FlowSelector — dropdown (in the Feel panel) for the structural hint sent to AI Suggest.
+// ABOUTME: Tight (no hint), Varied (default: more space, fewer tracks), Breaky (sparse final quarter).
 // UI label is "Flow" (the song's structural arc); the underlying data model still
 // calls the field `vibe` — translation lives here.
 import { useAppStore } from "../store/useAppStore";

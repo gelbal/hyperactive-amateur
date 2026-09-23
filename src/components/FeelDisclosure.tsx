@@ -1,4 +1,4 @@
-// ABOUTME: FeelDisclosure — single button that opens a popover holding the advanced timing controls.
+// ABOUTME: FeelDisclosure — single button that opens a popover holding the timing controls and the AI hints (style, flow, variations).
 // ABOUTME: The button label is the live state (cut rate · swing · hold) so the value stays visible while the panel is closed.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
@@ -9,6 +9,8 @@ import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
 import { RetagAllControl } from "./RetagAllControl";
 import { VariationButtons } from "./VariationButtons";
+import { StyleSelector } from "./StyleSelector";
+import { FlowSelector } from "./FlowSelector";
 import { AI_UNLOCK_CLIPS } from "../lib/aiSuggest";
 import type { CutSubdivision } from "../types";
 
@@ -48,7 +50,7 @@ export function FeelDisclosure() {
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Feel: cut rate, swing, hold"
+        aria-label="Feel: cut rate, swing, hold, style, flow"
         onClick={() => setOpen((v) => !v)}
         className={
           "flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
@@ -72,6 +74,12 @@ export function FeelDisclosure() {
           <HoldTimeControl />
           {clipsCount >= AI_UNLOCK_CLIPS && (
             <div className="border-t border-zinc-800 pt-3 flex flex-col gap-2">
+              {/* Style and Flow shape what Suggest and the variations produce;
+                  side by side they read as the two knobs on the same thing. */}
+              <div className="flex flex-wrap items-center gap-3">
+                <StyleSelector />
+                <FlowSelector />
+              </div>
               <span className="text-sm text-zinc-300">Variations</span>
               <VariationButtons onBusyChange={setVariationBusy} />
             </div>

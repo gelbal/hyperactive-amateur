@@ -42,7 +42,7 @@ export function createInitialState(): AppState {
       cutSubdivision: "8n",
       sameTierHoldMs: 400,
       subgenre: "boom-bap",
-      vibe: "tight",
+      vibe: "varied",
       stepCount: DEFAULT_STEP_COUNT,
       tagReasoning: {},
       tracks: Array.from({ length: TRACK_COUNT }, (_, i) =>

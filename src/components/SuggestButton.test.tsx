@@ -58,6 +58,14 @@ describe("SuggestButton", () => {
     useAppStore.getState().actions.setIsExporting(false);
   });
 
+  it("no longer carries the style select (it lives under Feel)", () => {
+    unlockAi();
+    render(<SuggestButton />);
+
+    expect(screen.queryByLabelText("subgenre")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();
+  });
+
   it("looks disabled while exporting and is 44px tall on coarse pointers", () => {
     unlockAi();
     act(() => useAppStore.getState().actions.setIsExporting(true));
