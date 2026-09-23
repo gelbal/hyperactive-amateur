@@ -100,6 +100,17 @@ describe("BpmDial", () => {
     expect(useAppStore.getState().project.bpm).toBe(150);
   });
 
+  it("a straight half-turn from 12 to 6 o'clock counts clockwise", () => {
+    useAppStore.getState().actions.setBpm(100);
+    const knob = renderKnob();
+
+    firePointer(knob, "pointerdown", at(0));
+    firePointer(knob, "pointermove", at(180));
+    firePointer(knob, "pointerup", at(180));
+
+    expect(useAppStore.getState().project.bpm).toBe(160);
+  });
+
   it("a sub-stop wobble and a move through the centre write nothing", () => {
     useAppStore.getState().actions.setBpm(90);
     const setBpm = vi.spyOn(useAppStore.getState().actions, "setBpm");

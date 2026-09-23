@@ -51,9 +51,11 @@ function pointerAngle(knob: HTMLElement, clientX: number, clientY: number): numb
   return (Math.atan2(dx, -dy) * 180) / Math.PI;
 }
 
-// Shortest signed rotation from one angle to another, in (-180, 180].
+// Shortest signed rotation from one angle to another, in (-180, 180]. An
+// exact half-turn is ambiguous; it counts clockwise (the increasing way).
 function unwrappedDelta(from: number, to: number): number {
-  return ((to - from + 540) % 360) - 180;
+  const delta = ((to - from + 540) % 360) - 180;
+  return delta === -180 ? 180 : delta;
 }
 
 interface Turn {
