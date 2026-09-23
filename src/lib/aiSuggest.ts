@@ -89,9 +89,13 @@ function buildSuggestSystemPrompt(subgenre: Subgenre): string {
   return SUGGEST_BASE_PROMPT + SUBGENRE_GUIDANCE[subgenre];
 }
 
-function buildSystemInstruction(base: string, vibe: Vibe): string {
-  return base + VIBE_GUIDANCE[vibe] + ROW_ORDER_RULE;
+function buildSystemInstruction(base: string, vibe: Vibe | null): string {
+  return base + (vibe ? VIBE_GUIDANCE[vibe] : "") + ROW_ORDER_RULE;
 }
+
+// "Favor space over density" would contradict a variation whose whole point
+// is adding hits, so these two send no flow hint.
+const VARIATIONS_WITHOUT_FLOW_HINT: ReadonlySet<Variation> = new Set(["busier", "fill"]);
 
 // Per-track reasoning lines, included in the user message when the model
 // previously classified the kit and we have its own description on hand.
@@ -284,7 +288,10 @@ export async function varyPattern(
   client?: GeminiPatternClient,
 ): Promise<boolean[][]> {
   return generateGrid(
-    buildSystemInstruction(VARIATION_PROMPTS[input.variation], input.vibe),
+    buildSystemInstruction(
+      VARIATION_PROMPTS[input.variation],
+      VARIATIONS_WITHOUT_FLOW_HINT.has(input.variation) ? null : input.vibe,
+    ),
     buildVaryUserMessage(input),
     input.stepCount,
     client,
