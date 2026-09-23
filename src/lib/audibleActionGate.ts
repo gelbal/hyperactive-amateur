@@ -50,6 +50,13 @@ export function isPendingAudibleCurrent(): boolean {
   return claimEpoch === hideEpoch;
 }
 
+// A pad or Play tap is unlocking right now and will make sound when it
+// settles. Guards that would re-light the camera read this (as a plain call,
+// never a selector) so playback does not start with the mic held.
+export function hasCurrentAudibleClaim(): boolean {
+  return pendingAudibleClaim && isPendingAudibleCurrent();
+}
+
 export function __resetPendingAudibleClaimForTesting(): void {
   pendingAudibleClaim = false;
   hideEpoch = 0;

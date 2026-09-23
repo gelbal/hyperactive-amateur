@@ -40,6 +40,7 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { Viewport } from "./Viewport";
 import { useAppStore } from "../store/useAppStore";
+import { __resetPendingAudibleClaimForTesting, claimPendingAudible } from "../lib/audibleActionGate";
 
 describe("Viewport", () => {
   let rafCallback: FrameRequestCallback | null = null;
@@ -619,6 +620,36 @@ describe("Viewport", () => {
     expect(ensureAudioRunning.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSpy.mock.invocationCallOrder[0],
     );
+  });
+
+  it("merged pill: skips the camera re-acquire while a Play or pad tap is still unlocking", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    ensureAudioRunning.mockClear();
+    render(<Viewport />);
+    // A Play tap claimed the gate during the pill's unlock: the beat is
+    // about to start, so the camera must not come back with it.
+    const release = claimPendingAudible();
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+
+      await waitFor(() => expect(ensureAudioRunning).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(resumeSpy).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+      __resetPendingAudibleClaimForTesting();
+      resumeSpy.mockRestore();
+    }
   });
 
   it("merged pill: declares the acquire before the unlock and stays mounted until the tap settles", async () => {

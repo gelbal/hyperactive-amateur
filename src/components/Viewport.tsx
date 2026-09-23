@@ -8,7 +8,7 @@ import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
 import { ensureAudioRunning, noteMicAcquireStarted } from "../lib/audioLifecycle";
-import { canStartAudibleAction } from "../lib/audibleActionGate";
+import { canStartAudibleAction, hasCurrentAudibleClaim } from "../lib/audibleActionGate";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -321,6 +321,7 @@ function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) =
       if (
         (typeof document !== "undefined" && document.hidden) ||
         !canStartAudibleAction(state) ||
+        hasCurrentAudibleClaim() ||
         state.media.status !== "suspended"
       ) {
         return;

@@ -4,6 +4,7 @@ import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
   claimPendingAudible,
+  hasCurrentAudibleClaim,
   invalidatePendingAudible,
   isPendingAudibleCurrent,
 } from "./audibleActionGate";
@@ -87,6 +88,19 @@ describe("canStartAudibleAction", () => {
     release?.();
     expect(claimPendingAudible()).toEqual(expect.any(Function));
     expect(isPendingAudibleCurrent()).toBe(true);
+  });
+
+  it("hasCurrentAudibleClaim reports a live, un-invalidated claim only", () => {
+    expect(hasCurrentAudibleClaim()).toBe(false);
+    const release = claimPendingAudible();
+    expect(hasCurrentAudibleClaim()).toBe(true);
+
+    invalidatePendingAudible();
+    expect(hasCurrentAudibleClaim()).toBe(false);
+
+    release?.();
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(hasCurrentAudibleClaim()).toBe(true);
   });
 
   it("claimPendingAudible returns null when another audible owner is active", () => {
