@@ -94,7 +94,7 @@ export function App() {
             the dial and the tools onto their own right-aligned line, so a
             phone spends two rows: title + Play, then controls. At lg the
             breaker is gone and title, Play and every control share one row. */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-3 px-3 py-3 sm:px-6 sm:py-4 lg:flex-nowrap lg:gap-x-3">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-3 sm:px-6 sm:py-4 lg:gap-x-3">
           <div className="mr-auto lg:mr-0">
             {/* 5xl only from lg: a phone in landscape is wider than sm and
                 must keep the phone-sized header. */}
@@ -128,7 +128,9 @@ export function App() {
             <PlayButton />
           </div>
           <div className="basis-full h-0 lg:hidden" aria-hidden="true" />
-          <div className="ml-auto lg:ml-0 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
+          {/* The zero-height breaker sits on its own flex line, so a row gap
+              would count twice; the controls carry the 12 px themselves. */}
+          <div className="ml-auto lg:ml-0 mt-3 lg:mt-0 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
             <BpmDial />
             {hasAnyClips && (
               <>

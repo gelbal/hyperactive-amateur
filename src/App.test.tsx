@@ -96,7 +96,12 @@ describe("App autosave gating", () => {
     // controls onto their own line below lg and disappears at lg.
     const titleBlock = title.parentElement as HTMLElement;
     const row = titleBlock.parentElement as HTMLElement;
-    expect(row).toHaveClass("flex", "flex-wrap", "items-center", "lg:flex-nowrap");
+    expect(row).toHaveClass("flex", "flex-wrap", "items-center", "gap-y-0");
+    // The zero-height breaker would double a row gap; the controls carry
+    // their own top margin instead. The outer row stays wrappable at lg so a
+    // narrow desktop window drops the controls under the title rather than
+    // scrolling sideways.
+    expect(row.className.split(/\s+/)).not.toContain("lg:flex-nowrap");
     expect(titleBlock).toHaveClass("mr-auto", "lg:mr-0");
     const play = screen.getByTestId("play-button");
     expect(play.parentElement).toHaveClass("lg:ml-auto");
@@ -104,7 +109,7 @@ describe("App autosave gating", () => {
     expect(breaker).toHaveClass("lg:hidden");
     expect(breaker).toHaveAttribute("aria-hidden", "true");
     const controls = screen.getByTestId("bpm-dial").parentElement as HTMLElement;
-    expect(controls).toHaveClass("ml-auto", "lg:ml-0", "justify-end");
+    expect(controls).toHaveClass("ml-auto", "lg:ml-0", "justify-end", "mt-3", "lg:mt-0");
     expect(controls).not.toContainElement(play);
 
     // DOM order: title, Play, breaker, controls.
