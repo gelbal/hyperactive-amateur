@@ -1,6 +1,7 @@
 // ABOUTME: aiAutoTag — classify a single recorded clip via Gemini 3.1 Flash Lite (default thinking level — batch path uses HIGH).
 // ABOUTME: Returns null on generic failures and an offline sentinel for transport loss; observability via logger.
 import { TAGS, type Tag } from "../types";
+import { GEMINI_MODEL } from "./aiModel";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
 import { SchemaType } from "./aiSchemaConstants";
@@ -14,7 +15,7 @@ import {
   TAG_DEFINITIONS_BLOCK,
 } from "./aiClient";
 
-export const AUTO_TAG_MODEL = "gemini-3.1-flash-lite";
+export const AUTO_TAG_MODEL = GEMINI_MODEL;
 
 // Minimum confidence required before an auto-tag result is written to a track.
 // Below this, the result is logged but discarded — both the per-record flow

@@ -4,7 +4,10 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export const GEMINI_MODEL_ALLOWLIST = ["gemini-3.1-flash-lite"] as const;
+// The client's model (src/lib/aiModel.ts) plus the id it replaced, kept for
+// rollback until gemini-3.1-flash-lite shuts down on 2027-05-07. Written here
+// rather than imported: api/ is bundled on its own by Vercel.
+export const GEMINI_MODEL_ALLOWLIST = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] as const;
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const GEMINI_TOKEN_HEADER = "x-ha-gemini-token";
 

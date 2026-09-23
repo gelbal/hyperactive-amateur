@@ -1,6 +1,7 @@
 // ABOUTME: aiSuggest — call Gemini 3.1 Flash Lite with a JSON-schema response to fill or vary the 8-track step grid.
 // ABOUTME: Uses thinkingLevel HIGH; retries once on transient HTTP errors (429/5xx); all calls go through the /api/gemini proxy.
 import type { Subgenre, Tag, Vibe } from "../types";
+import { GEMINI_MODEL } from "./aiModel";
 import { logger, LOG_EVENTS } from "./logger";
 import { errMessage } from "./aiClient";
 import { SchemaType, ThinkingLevel } from "./aiSchemaConstants";
@@ -39,7 +40,7 @@ export interface VaryPatternInput extends SuggestPatternInput {
   variation: Variation;
 }
 
-const MODEL = "gemini-3.1-flash-lite";
+const MODEL = GEMINI_MODEL;
 
 const ROW_ORDER_RULE =
   " The returned `tracks` array MUST contain exactly 8 rows in ascending " +

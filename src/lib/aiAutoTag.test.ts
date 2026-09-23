@@ -45,7 +45,7 @@ describe("autoTag", () => {
     clearLogs();
   });
 
-  it("happy path: sends gemini-3.1-flash-lite without extended thinking and returns the parsed result", async () => {
+  it("happy path: sends gemini-3.5-flash-lite without extended thinking and returns the parsed result", async () => {
     type Captured = { model?: string; config?: { thinkingConfig?: unknown } };
     let captured: Captured = {};
     const client: GeminiClient = {
@@ -58,8 +58,8 @@ describe("autoTag", () => {
     };
     const result = await autoTag(fakeBuffer(), client);
     expect(result).toEqual({ tag: "kick", confidence: 0.9, reasoning: "low thump" });
-    expect(AUTO_TAG_MODEL).toBe("gemini-3.1-flash-lite");
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(AUTO_TAG_MODEL).toBe("gemini-3.5-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     // Per-clip path intentionally omits thinkingConfig — the batch path
     // keeps HIGH for kit-balance reasoning, the single-clip path doesn't
     // need it for a 5-way classification.

@@ -70,7 +70,10 @@ function in production) reads it from `process.env` and proxies calls
 through `/api/gemini`. It never reaches the client bundle.
 
 Without a key the rest of the app works fine; AI features just go
-quiet.
+quiet. The client asks for `gemini-3.5-flash-lite` (one constant in
+`src/lib/aiModel.ts`, the named successor of 3.1 Flash-Lite, which
+shuts down on 2027-05-07); the proxy allowlist in `api/gemini.ts` also
+accepts the 3.1 id for rollback.
 
 ### Production AI proxy settings
 

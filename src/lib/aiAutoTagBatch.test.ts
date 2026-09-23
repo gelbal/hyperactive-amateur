@@ -90,8 +90,8 @@ describe("autoTagBatch", () => {
       { trackId: 2, tag: "kick", confidence: 0.9, reasoning: undefined },
       { trackId: 5, tag: "hat", confidence: 0.7, reasoning: undefined },
     ]);
-    expect(BATCH_TAG_MODEL).toBe("gemini-3.1-flash-lite");
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(BATCH_TAG_MODEL).toBe("gemini-3.5-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     expect(captured.config?.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
     const parts = (captured.contents ?? [])[0]?.parts ?? [];
     expect(parts.filter((p) => "inlineData" in p)).toHaveLength(2);

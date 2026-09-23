@@ -38,7 +38,7 @@ describe("suggestPattern", () => {
     clearLogs();
   });
 
-  it("happy path: sends gemini-3.1-flash-lite + thinkingLevel HIGH and returns the validated grid (tight vibe = no extra prompt)", async () => {
+  it("happy path: sends gemini-3.5-flash-lite + thinkingLevel HIGH and returns the validated grid (tight vibe = no extra prompt)", async () => {
     type Captured = {
       model: string;
       config: { systemInstruction: string; thinkingConfig?: { thinkingLevel?: unknown } };
@@ -57,7 +57,7 @@ describe("suggestPattern", () => {
       client,
     );
     expect(grid).toEqual(pattern8x16());
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     expect(captured.config.systemInstruction).toMatch(/hip-hop beat producer/);
     expect(captured.config.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
     // Tight is the baseline — no vibe-specific tail injected.

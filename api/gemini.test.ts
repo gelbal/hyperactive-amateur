@@ -322,6 +322,15 @@ describe("handleGeminiRequest", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("accepts the successor model beside the one it replaces", async () => {
+    const res = await handleGeminiRequest(
+      request({ ...suggestBody(), model: "gemini-3.5-flash-lite" }),
+    );
+    expect(res.status).toBe(200);
+    const [url] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain("/gemini-3.5-flash-lite:generateContent");
+  });
+
   it("rejects models outside the app allowlist", async () => {
     const res = await handleGeminiRequest(
       request({ ...suggestBody(), model: "gemini-3.1-pro" }),
