@@ -34,10 +34,10 @@ vi.mock("./components/PadGrid", () => ({ PadGrid: () => null }));
 vi.mock("./components/StepGrid", () => ({ StepGrid: () => null }));
 vi.mock("./components/PlayButton", () => ({ PlayButton: () => <div data-testid="play-button" /> }));
 vi.mock("./components/BpmDial", () => ({ BpmDial: () => <div data-testid="bpm-dial" /> }));
-vi.mock("./components/ExportButton", () => ({ ExportButton: () => null }));
-vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
+vi.mock("./components/ExportButton", () => ({ ExportButton: () => <div data-testid="export-button" /> }));
+vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => <div data-testid="suggest-button" /> }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
-vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => null }));
+vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => <div data-testid="feel-button" /> }));
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
@@ -82,7 +82,7 @@ describe("App autosave gating", () => {
     );
   });
 
-  it("puts the transport beside the title and drops the space hint", async () => {
+  it("phones: title and Play share the first row; the dial and the tools sit on one right-aligned row below", async () => {
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
@@ -90,11 +90,59 @@ describe("App autosave gating", () => {
     // the phone header.
     expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "lg:text-5xl");
     expect(title.className.split(/\s+/)).not.toContain("sm:text-5xl");
-    const titleRow = title.parentElement?.parentElement;
-    expect(titleRow).toHaveClass("flex", "items-center", "justify-between");
-    expect(titleRow).toContainElement(screen.getByTestId("play-button"));
-    expect(titleRow).toContainElement(screen.getByTestId("bpm-dial"));
     expect(screen.queryByText("space")).not.toBeInTheDocument();
+
+    // One wrapping flex container; a full-width breaker after Play forces the
+    // controls onto their own line below lg and disappears at lg.
+    const titleBlock = title.parentElement as HTMLElement;
+    const row = titleBlock.parentElement as HTMLElement;
+    expect(row).toHaveClass("flex", "flex-wrap", "items-center", "gap-y-0");
+    // The zero-height breaker would double a row gap; the controls carry
+    // their own top margin instead. The outer row stays wrappable at lg so a
+    // narrow desktop window drops the controls under the title rather than
+    // scrolling sideways.
+    expect(row.className.split(/\s+/)).not.toContain("lg:flex-nowrap");
+    expect(titleBlock).toHaveClass("mr-auto", "lg:mr-0");
+    const play = screen.getByTestId("play-button");
+    expect(play.parentElement).toHaveClass("lg:ml-auto");
+    const breaker = row.querySelector(".basis-full") as HTMLElement;
+    expect(breaker).toHaveClass("lg:hidden");
+    expect(breaker).toHaveAttribute("aria-hidden", "true");
+    const controls = screen.getByTestId("bpm-dial").parentElement as HTMLElement;
+    expect(controls).toHaveClass("ml-auto", "lg:ml-0", "justify-end", "mt-3", "lg:mt-0");
+    expect(controls).not.toContainElement(play);
+
+    // DOM order: title, Play, breaker, controls.
+    const follows = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(titleBlock, play)).toBe(true);
+    expect(follows(play, breaker)).toBe(true);
+    expect(follows(breaker, controls)).toBe(true);
+  });
+
+  it("orders the controls row dial, Export, Feel, Suggest once clips exist", async () => {
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        useAppStore.getState().actions.setTrackClip(i, {
+          blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+          url: `blob:test/clip-${i}`,
+          audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+          audioStatus: "ok",
+          trimStartMs: 0,
+          trimEndMs: 800,
+          durationMs: 1000,
+          posterBlob: null,
+          posterUrl: null,
+        });
+      }
+    });
+    await renderApp();
+
+    const controls = screen.getByTestId("bpm-dial").parentElement as HTMLElement;
+    const order = Array.from(controls.querySelectorAll("[data-testid]")).map((el) =>
+      el.getAttribute("data-testid"),
+    );
+    expect(order).toEqual(["bpm-dial", "export-button", "feel-button", "suggest-button"]);
   });
 
   it("renders no storage durability notice even with clips in best-effort storage", async () => {

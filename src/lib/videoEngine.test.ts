@@ -290,6 +290,160 @@ describe("videoEngine integration", () => {
     expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
   });
 
+  it("folds a hit that lands exactly on an already-decided boundary into that cut", () => {
+    // The boundary loop is queued further ahead than the step loop, so at
+    // the same transport time the boundary decides first and the step's
+    // trigger arrives after it. Without folding, that hit showed one cut
+    // late (or fell off the next window's strict start).
+    initVideoEngine();
+    setClipForTrack(1, makeClip(1));
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(1, 1.0);
+
+    drawCurrentFrame(makeCanvasContext(), 1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(1);
+  });
+
+  it("folding ranks the on-boundary hit with the window's other hits by tag, not by ducking", () => {
+    // A vocal and a hat both on boundary B: the vocal must show whichever
+    // arrives second. Folding the hat against the staged vocal as if it were
+    // the clip already on screen let the lower tier replace it.
+    initVideoEngine();
+    useAppStore.getState().actions.setTrackTag(0, "vocal");
+    useAppStore.getState().actions.setTrackTag(1, "hat");
+    setClipForTrack(0, makeClip(0));
+    setClipForTrack(1, makeClip(1));
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+    trigger(1, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.0);
+    expect(__getCurrentlyDisplayedForTesting()?.trackId).toBe(0);
+  });
+
+  it("folding keeps newest-wins among same-tier hits in the window", () => {
+    // An earlier hat inside the hold window must not duck the hat that lands
+    // exactly on the boundary: within one window the newest hit wins.
+    initVideoEngine();
+    useAppStore.getState().actions.setTrackTag(1, "hat");
+    useAppStore.getState().actions.setTrackTag(2, "hat");
+    setClipForTrack(1, makeClip(1));
+    setClipForTrack(2, makeClip(2));
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+
+    trigger(1, 0.875);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(2, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.0);
+    const shown = __getCurrentlyDisplayedForTesting();
+    expect(shown?.trackId).toBe(2);
+    expect(shown?.startTime).toBeCloseTo(1.0, 6);
+  });
+
+  it("the held frame does not pause the same track's next cut while it seeks", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    const pause = vi.spyOn(video, "pause");
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.1);
+    drawCurrentFrame(makeCanvasContext(), 1.35);
+    drawCurrentFrame(makeCanvasContext(), 1.4);
+    expect(pause).toHaveBeenCalledTimes(1);
+
+    // The same track hits again on the next boundary and its element is
+    // still seeking: the held frame stays up and nothing pauses the element
+    // that is about to play the new cut.
+    toneHarness.transport.fireRepeat(0, 1.5);
+    trigger(0, 1.5);
+    setVideoFrameState(video, { readyState: 2, seeking: true });
+    drawCurrentFrame(makeCanvasContext(), 1.5);
+    drawCurrentFrame(makeCanvasContext(), 1.55);
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(hasLiveFrame()).toBe(true);
+
+    setVideoFrameState(video, { readyState: 2, seeking: false });
+    const newCut = makeCanvasContext();
+    drawCurrentFrame(newCut, 1.6);
+    expect(newCut.drawImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("while playing, holds the last frame after the trim ends instead of clearing to black", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    const pause = vi.spyOn(video, "pause");
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+
+    const first = makeCanvasContext();
+    drawCurrentFrame(first, 1.1);
+    expect(first.drawImage).toHaveBeenCalledTimes(1);
+
+    // The 200 ms trim has run out: the sound is over but the cut is not, so
+    // nothing repaints and nothing clears; the video is paused.
+    const afterTrim = makeCanvasContext();
+    drawCurrentFrame(afterTrim, 1.35);
+    expect(afterTrim.drawImage).not.toHaveBeenCalled();
+    expect(afterTrim.fillRect).not.toHaveBeenCalled();
+    expect(hasLiveFrame()).toBe(true);
+    expect(pause).toHaveBeenCalled();
+
+    // Stopped (a pad preview), the same point clears so the poster takes over.
+    useAppStore.getState().actions.setIsPlaying(false);
+    const stopped = makeCanvasContext();
+    drawCurrentFrame(stopped, 1.4);
+    expect(stopped.fillRect).toHaveBeenCalled();
+    expect(hasLiveFrame()).toBe(false);
+  });
+
+  it("while playing, keeps an expired last frame up while the next clip is still seeking", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeTrimmedClip());
+    setClipForTrack(1, makeClip(1));
+    const [firstVideo, secondVideo] = Array.from(
+      document.querySelectorAll("video"),
+    ) as HTMLVideoElement[];
+    setVideoFrameState(firstVideo, { readyState: 2 });
+    setVideoFrameState(secondVideo, { readyState: 1 });
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.1);
+    expect(hasLiveFrame()).toBe(true);
+
+    // Next cut brings track 1, whose video has only metadata: the expired
+    // frame of track 0 stays up rather than a black gap.
+    toneHarness.transport.fireRepeat(0, 1.5);
+    trigger(1, 1.5);
+    const afterEnd = makeCanvasContext();
+    drawCurrentFrame(afterEnd, 1.5);
+
+    expect(afterEnd.drawImage).not.toHaveBeenCalled();
+    expect(afterEnd.fillRect).not.toHaveBeenCalled();
+    expect(hasLiveFrame()).toBe(true);
+  });
+
   it("commits the boundary winner from the paint loop even when Draw callbacks are dropped", () => {
     // Tone.Draw silently expires callbacks that are more than its expiration
     // window in the past — a stalled rAF (mobile jank, decode pressure) used

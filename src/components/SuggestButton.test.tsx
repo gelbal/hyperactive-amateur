@@ -66,6 +66,15 @@ describe("SuggestButton", () => {
     expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();
   });
 
+  it("shortens the visible label to 'Suggest' on the narrowest phones, keeping the accessible name", () => {
+    unlockAi();
+    render(<SuggestButton />);
+
+    const button = screen.getByLabelText("Suggest a beat");
+    expect(button).toHaveTextContent("Suggest a beat");
+    expect(screen.getByText("a beat")).toHaveClass("hidden", "min-[400px]:inline");
+  });
+
   it("looks disabled while exporting and is 44px tall on coarse pointers", () => {
     unlockAi();
     act(() => useAppStore.getState().actions.setIsExporting(true));

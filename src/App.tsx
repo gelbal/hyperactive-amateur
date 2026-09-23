@@ -90,51 +90,56 @@ export function App() {
     <div className="min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
-        <div className="flex flex-col gap-3 px-3 py-3 sm:px-6 sm:py-4">
-          {/* Title row: the transport sits beside the title on every width,
-              so a phone spends one row on it instead of two. */}
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              {/* 5xl only from lg: a phone in landscape is wider than sm and
-                  must keep the phone-sized header. */}
-              <h1 className="text-2xl min-[360px]:text-3xl lg:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
-                Hyperactive
-                <br />
-                Amateur
-              </h1>
-              <p className="mt-1 text-xs text-zinc-500">
-                <a
-                  href="https://fgelbal.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-zinc-300 transition-colors"
-                >
-                  Fırat Gelbal
-                </a>
-                <span aria-hidden> · </span>
-                <a
-                  href="https://github.com/gelbal/hyperactive-amateur"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="View source on GitHub"
-                  className="hover:text-zinc-300 transition-colors"
-                >
-                  source
-                </a>
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <PlayButton />
-              <BpmDial />
-            </div>
+        {/* One wrapping row. Below lg the full-width breaker after Play forces
+            the dial and the tools onto their own right-aligned line, so a
+            phone spends two rows: title + Play, then controls. At lg the
+            breaker is gone and title, Play and every control share one row. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-3 sm:px-6 sm:py-4 lg:gap-x-3">
+          <div className="mr-auto lg:mr-0">
+            {/* 5xl only from lg: a phone in landscape is wider than sm and
+                must keep the phone-sized header. */}
+            <h1 className="text-2xl min-[360px]:text-3xl lg:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
+              Hyperactive
+              <br />
+              Amateur
+            </h1>
+            <p className="mt-1 text-xs text-zinc-500">
+              <a
+                href="https://fgelbal.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-zinc-300 transition-colors"
+              >
+                Fırat Gelbal
+              </a>
+              <span aria-hidden> · </span>
+              <a
+                href="https://github.com/gelbal/hyperactive-amateur"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View source on GitHub"
+                className="hover:text-zinc-300 transition-colors"
+              >
+                source
+              </a>
+            </p>
           </div>
-          {hasAnyClips && (
-            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-              <ExportButton />
-              <FeelDisclosure />
-              {hasAiUnlock && <SuggestButton />}
-            </div>
-          )}
+          <div className="shrink-0 lg:ml-auto">
+            <PlayButton />
+          </div>
+          <div className="basis-full h-0 lg:hidden" aria-hidden="true" />
+          {/* The zero-height breaker sits on its own flex line, so a row gap
+              would count twice; the controls carry the 12 px themselves. */}
+          <div className="ml-auto lg:ml-0 mt-3 lg:mt-0 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
+            <BpmDial />
+            {hasAnyClips && (
+              <>
+                <ExportButton />
+                <FeelDisclosure />
+                {hasAiUnlock && <SuggestButton />}
+              </>
+            )}
+          </div>
         </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">

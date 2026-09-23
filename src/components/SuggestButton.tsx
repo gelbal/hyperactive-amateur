@@ -112,10 +112,20 @@ export function SuggestButton() {
             : "Ask Gemini to fill the grid")
         }
         onClick={() => void handleClick()}
-        className="flex items-center gap-2 px-3 py-2 pointer-coarse:min-h-11 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2 px-2.5 lg:px-3 py-2 pointer-coarse:min-h-11 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Sparkles size={14} className={pending ? "animate-pulse text-orange-400" : "text-orange-400"} />
-        {pending ? `${pendingVerb}…` : "Suggest a beat"}
+        {pending ? (
+          `${pendingVerb}…`
+        ) : (
+          <span>
+            Suggest
+            {/* With the dial, Export and Feel beside it, the tail only fits
+                from 400 px up (a 390 px phone wraps by a few pixels). The
+                accessible name stays "Suggest a beat". */}
+            <span className="hidden min-[400px]:inline"> a beat</span>
+          </span>
+        )}
       </button>
       {error && (
         <span role="alert" className="text-xs text-red-400 max-w-[14rem]">
