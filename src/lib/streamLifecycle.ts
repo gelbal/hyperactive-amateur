@@ -6,7 +6,8 @@ import { useAppStore } from "../store/useAppStore";
 // is only invoked at event time, long after both modules have loaded.
 import { invalidatePendingAcquire } from "./media";
 import { noteMicHeld, noteMicReleased } from "./audioLifecycle";
-import { getAudioContext, stopPlayback } from "./audio";
+import { stopPlayback } from "./audio";
+import { canStartAudibleAction } from "./audibleActionGate";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
@@ -246,12 +247,15 @@ export function suspendMediaStream(stream: MediaStream): void {
 
 // Listen for page-visibility changes and pagehide. On hidden: stop playback
 // (no saved-position bookkeeping — restart is user-initiated) and suspend the
-// held stream so the reconnect pill takes over. On visible: surface any
-// blocked AudioContext through the resume pill; user activation owns the
-// actual unlock. pagehide shares the hidden branch because it can fire
-// without a preceding visibilitychange → hidden (bfcache eviction, some iOS
-// tab-close/navigation paths) and must still flush pending saves.
-// Returns a detach function for cleanup on unmount.
+// held stream so the camera light goes off. On visible: undo that suspension
+// (the permission was never revoked) so the station re-acquires its preview
+// exactly as it did before the hide; the reconnect pill remains only for a
+// re-acquire that fails. Audio is not touched here: every audible action
+// unlocks the context inside its own tap, and a failed unlock is what sets
+// resume-required — never a visibility change. pagehide shares the hidden
+// branch because it can fire without a preceding visibilitychange → hidden
+// (bfcache eviction, some iOS tab-close/navigation paths) and must still
+// flush pending saves. Returns a detach function for cleanup on unmount.
 export function installVisibilityListener(): () => void {
   const handleHidden = () => {
     flushPending();
@@ -286,15 +290,23 @@ export function installVisibilityListener(): () => void {
       transitionToSuspended(state.media.stream);
     }
   };
+  // "suspended" after a hide is a lifecycle decision, not a permission one:
+  // handing the store back to "granted" with no stream is the same state a
+  // successful permission probe leaves, and the station (if it is wanted)
+  // acquires from there. Playback, export, or a non-idle recording keeps the
+  // camera off — the same guard the resume pill applies before re-lighting it.
+  const reconnectSuspendedMedia = () => {
+    const state = useAppStore.getState();
+    if (state.media.status !== "suspended") return;
+    if (!canStartAudibleAction(state)) return;
+    state.actions.setMedia({ stream: null, status: "granted", error: null });
+    logger.info(LOG_EVENTS.MEDIA_RECONNECTED, { source: "visible" });
+  };
   const handleVisibilityChange = () => {
     if (document.hidden) {
       handleHidden();
     } else {
-      const context = getAudioContext();
-      if (context.state !== "running") {
-        useAppStore.getState().actions.setAudioState("resume-required");
-        logger.warn(LOG_EVENTS.AUDIO_RESUME_REQUIRED, { state: context.state });
-      }
+      reconnectSuspendedMedia();
     }
   };
   const documentEvents =

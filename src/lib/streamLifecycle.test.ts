@@ -650,8 +650,16 @@ describe("streamLifecycle", () => {
       }
     });
 
-    it("on visible: marks audio resume required without starting Tone", () => {
-      const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const dispatchVisible = () => {
+      Object.defineProperty(document, "hidden", {
+        value: false,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    it("on visible: a suspended camera returns to granted so the station re-acquires without a tap", () => {
+      const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
         stream: null,
         status: "suspended",
@@ -659,20 +667,84 @@ describe("streamLifecycle", () => {
       });
       const detach = installVisibilityListener();
 
-      Object.defineProperty(document, "hidden", {
-        value: false,
-        configurable: true,
-      });
-      document.dispatchEvent(new Event("visibilitychange"));
+      try {
+        dispatchVisible();
 
-      expect(Tone.start).not.toHaveBeenCalled();
-      expect(useAppStore.getState().playback.audioState).toBe("resume-required");
-      expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_RESUME_REQUIRED, {
-        state: "suspended",
+        expect(useAppStore.getState().media).toMatchObject({
+          stream: null,
+          status: "granted",
+          error: null,
+        });
+        expect(infoSpy).toHaveBeenCalledWith(LOG_EVENTS.MEDIA_RECONNECTED, { source: "visible" });
+      } finally {
+        detach();
+      }
+    });
+
+    it.each([
+      {
+        name: "playback is running",
+        arrange: () => useAppStore.getState().actions.setIsPlaying(true),
+      },
+      {
+        name: "an export is running",
+        arrange: () => useAppStore.getState().actions.setIsExporting(true),
+      },
+      {
+        name: "a recording is not idle",
+        arrange: () => useAppStore.getState().actions.setRecordingState("reviewing"),
+      },
+    ])("on visible: leaves a suspended camera alone while $name", ({ arrange }) => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
       });
-      // Status stays suspended — auto-resume would re-light the camera.
-      expect(useAppStore.getState().media.status).toBe("suspended");
-      detach();
+      arrange();
+      const detach = installVisibilityListener();
+
+      try {
+        dispatchVisible();
+
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+        // The store's reset() refuses to run mid-export, so an arranged
+        // export would otherwise leak into every later test.
+        useAppStore.getState().actions.setIsExporting(false);
+      }
+    });
+
+    it.each(["idle", "requesting", "denied", "granted"] as const)(
+      "on visible: does not touch %s media",
+      (status) => {
+        useAppStore.getState().actions.setMedia({ stream: null, status, error: null });
+        const detach = installVisibilityListener();
+
+        try {
+          dispatchVisible();
+
+          expect(useAppStore.getState().media.status).toBe(status);
+        } finally {
+          detach();
+        }
+      },
+    );
+
+    it("on visible: neither starts Tone nor pre-marks audio resume-required", () => {
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      toneMocks.rawContext.state = "suspended";
+      const detach = installVisibilityListener();
+
+      try {
+        dispatchVisible();
+
+        expect(Tone.start).not.toHaveBeenCalled();
+        expect(useAppStore.getState().playback.audioState).toBe("unknown");
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        detach();
+      }
     });
 
     it.each([
