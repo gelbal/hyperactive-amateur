@@ -56,6 +56,12 @@ input[type="range"]::-moz-range-thumb {
 }
 
 @media (pointer: coarse) {
+  /* iOS zooms the page on focus of any control under 16px; a zoomed page
+   * re-places the anchored popovers against a different viewport. */
+  select {
+    font-size: 16px;
+  }
+
   input[type="range"] {
     height: 2rem;
   }

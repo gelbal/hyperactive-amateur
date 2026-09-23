@@ -117,27 +117,30 @@ describe("ExportButton format picker", () => {
     );
   });
 
-  it("clamps the popover to the mobile viewport and restores right anchoring at sm", () => {
+  it("anchors the popover under the sticky header on phones and right-aligned under the button at sm", () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     render(<ExportButton />);
     fireEvent.click(screen.getByRole("button", { name: /export/i }));
 
     const popover = screen.getByRole("dialog", { name: "Export song" });
+    expect(popover.parentElement).toHaveClass("static", "sm:relative");
     expect(popover).toHaveClass(
-      "fixed",
+      "absolute",
       "inset-x-3",
+      "top-full",
+      "mt-2",
       "w-auto",
       "max-w-[24rem]",
       "mx-auto",
-      "sm:absolute",
       "sm:inset-x-auto",
       "sm:right-0",
-      "sm:top-full",
       "sm:min-w-[18rem]",
       "sm:max-w-none",
       "sm:mx-0",
     );
-    expect(popover.className.split(/\s+/)).not.toContain("min-w-[18rem]");
+    const classes = popover.className.split(/\s+/);
+    expect(classes).not.toContain("fixed");
+    expect(classes).not.toContain("min-w-[18rem]");
   });
 
   it("hides the picker when only one format is supported", () => {

@@ -53,10 +53,10 @@ describe("PlayButton silent-switch hint", () => {
     expect(screen.queryByText("No sound? Check your phone's silent switch.")).not.toBeInTheDocument();
   });
 
-  it("clamps the silent-switch hint to the viewport on phones instead of centering off-screen", () => {
-    // The play button sits at the far left on phone layouts; a 224px hint
-    // centered under it ran off the left screen edge. Phones get the shared
-    // fixed inset clamp; sm+ keeps the anchored popover.
+  it("anchors the silent-switch hint under the sticky header on phones instead of centering off-screen", () => {
+    // A 224px hint centered under the play button ran off the screen edge on
+    // phones. Below sm the wrapper is not positioned, so the hint spans the
+    // header's width under it; sm+ keeps the anchored, centred popover.
     hintState.shouldShow.mockReturnValue(true);
     useAppStore.getState().actions.setAudioState("running");
 
@@ -65,10 +65,12 @@ describe("PlayButton silent-switch hint", () => {
     const hint = screen
       .getByText("No sound? Check your phone's silent switch.")
       .closest("div");
-    expect(hint?.className).toContain("fixed");
+    expect(hint?.parentElement).toHaveClass("static", "sm:relative");
+    expect(hint?.className).toContain("absolute");
     expect(hint?.className).toContain("inset-x-3");
-    expect(hint?.className).toContain("sm:absolute");
+    expect(hint?.className).toContain("top-full");
     expect(hint?.className).toContain("sm:inset-x-auto");
+    expect(hint?.className.split(/\s+/)).not.toContain("fixed");
   });
 
   it("swallows audio-unavailable playback rejections from clicks", async () => {
