@@ -65,11 +65,11 @@ describe("PlayButton silent-switch hint", () => {
     const hint = screen
       .getByText("No sound? Check your phone's silent switch.")
       .closest("div");
-    expect(hint?.parentElement).toHaveClass("static", "sm:relative");
+    expect(hint?.parentElement).toHaveClass("static", "lg:relative");
     expect(hint?.className).toContain("absolute");
     expect(hint?.className).toContain("inset-x-3");
     expect(hint?.className).toContain("top-full");
-    expect(hint?.className).toContain("sm:inset-x-auto");
+    expect(hint?.className).toContain("lg:inset-x-auto");
     expect(hint?.className.split(/\s+/)).not.toContain("fixed");
   });
 

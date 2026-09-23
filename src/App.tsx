@@ -95,7 +95,9 @@ export function App() {
               so a phone spends one row on it instead of two. */}
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl min-[360px]:text-3xl sm:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
+              {/* 5xl only from lg: a phone in landscape is wider than sm and
+                  must keep the phone-sized header. */}
+              <h1 className="text-2xl min-[360px]:text-3xl lg:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
                 Hyperactive
                 <br />
                 Amateur

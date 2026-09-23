@@ -61,7 +61,7 @@ describe("FeelDisclosure", () => {
     );
   });
 
-  it("anchors the popover under the sticky header on phones and under the button at sm", () => {
+  it("anchors the popover under the sticky header below lg (phones in both orientations) and under the button at lg", () => {
     render(<FeelDisclosure />);
     fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
 
@@ -69,7 +69,7 @@ describe("FeelDisclosure", () => {
     // Below sm the wrapper is not positioned, so the sticky header is the
     // containing block: the panel sits under the header at any scroll offset
     // and is capped to the space below it, scrolling inside.
-    expect(popover.parentElement).toHaveClass("static", "sm:relative");
+    expect(popover.parentElement).toHaveClass("static", "lg:relative");
     expect(popover).toHaveClass(
       "absolute",
       "inset-x-3",
@@ -80,13 +80,13 @@ describe("FeelDisclosure", () => {
       "mx-auto",
       "max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top))]",
       "overflow-y-auto",
-      "sm:inset-x-auto",
-      "sm:left-0",
-      "sm:min-w-[18rem]",
-      "sm:max-w-none",
-      "sm:mx-0",
-      "sm:max-h-none",
-      "sm:overflow-visible",
+      "lg:inset-x-auto",
+      "lg:left-0",
+      "lg:min-w-[18rem]",
+      "lg:max-w-none",
+      "lg:mx-0",
+      "lg:max-h-none",
+      "lg:overflow-visible",
     );
     const classes = popover.className.split(/\s+/);
     expect(classes).not.toContain("fixed");

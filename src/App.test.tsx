@@ -86,7 +86,10 @@ describe("App autosave gating", () => {
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
-    expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "sm:text-5xl");
+    // 5xl only from lg: a phone in landscape is wider than sm and must keep
+    // the phone header.
+    expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "lg:text-5xl");
+    expect(title.className.split(/\s+/)).not.toContain("sm:text-5xl");
     const titleRow = title.parentElement?.parentElement;
     expect(titleRow).toHaveClass("flex", "items-center", "justify-between");
     expect(titleRow).toContainElement(screen.getByTestId("play-button"));
