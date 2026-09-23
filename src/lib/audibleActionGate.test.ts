@@ -51,26 +51,28 @@ describe("canStartAudibleAction", () => {
     expect(canStartAudibleAction(state({}, { state: "reviewing", activeTrackId: 1 }))).toBe(false);
   });
 
-  it("claimPendingAudible holds the gate until its idempotent release", () => {
+  it("claimPendingAudible refuses a second claim until its idempotent release", () => {
     const release = claimPendingAudible();
 
     expect(release).toEqual(expect.any(Function));
-    expect(canStartAudibleAction(state())).toBe(false);
+    // The predicate reads only the store: a held claim never renders a
+    // control disabled. The claim itself is what refuses the second owner.
+    expect(canStartAudibleAction(state())).toBe(true);
     expect(claimPendingAudible()).toBeNull();
 
     release?.();
     release?.();
 
-    expect(canStartAudibleAction(state())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("test reset seam clears a leaked pending claim", () => {
     expect(claimPendingAudible()).toEqual(expect.any(Function));
-    expect(canStartAudibleAction(state())).toBe(false);
+    expect(claimPendingAudible()).toBeNull();
 
     __resetPendingAudibleClaimForTesting();
 
-    expect(canStartAudibleAction(state())).toBe(true);
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
   it("claimPendingAudible returns null when another audible owner is active", () => {

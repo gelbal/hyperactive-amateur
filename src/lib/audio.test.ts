@@ -79,6 +79,7 @@ import type { Clip } from "../types";
 import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
+  claimPendingAudible,
 } from "./audibleActionGate";
 
 function makeClip(): Clip {
@@ -223,7 +224,7 @@ describe("audio: per-step trigger logic", () => {
 
     const promise = togglePlayback();
 
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+    expect(claimPendingAudible()).toBeNull();
     expect(transportMock.start).not.toHaveBeenCalled();
 
     audioStarted.resolve();
@@ -246,7 +247,7 @@ describe("audio: per-step trigger logic", () => {
 
     const promise = triggerTrackNow(2);
 
-    expect(canStartAudibleAction(useAppStore.getState())).toBe(false);
+    expect(claimPendingAudible()).toBeNull();
     expect(synthInstances[2].triggerAttackRelease).not.toHaveBeenCalled();
 
     audioStarted.resolve();
