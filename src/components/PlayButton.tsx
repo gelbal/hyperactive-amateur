@@ -35,6 +35,7 @@ export function PlayButton() {
       <button
         type="button"
         aria-label={isPlaying ? "Stop playback" : "Start playback"}
+        title="Play or stop (space)"
         disabled={disabled}
         onClick={handleClick}
         className={

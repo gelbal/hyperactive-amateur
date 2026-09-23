@@ -32,8 +32,8 @@ vi.mock("./lib/aiSuggest", () => ({ AI_UNLOCK_CLIPS: 3 }));
 vi.mock("./components/Viewport", () => ({ Viewport: () => null }));
 vi.mock("./components/PadGrid", () => ({ PadGrid: () => null }));
 vi.mock("./components/StepGrid", () => ({ StepGrid: () => null }));
-vi.mock("./components/PlayButton", () => ({ PlayButton: () => null }));
-vi.mock("./components/BpmDial", () => ({ BpmDial: () => null }));
+vi.mock("./components/PlayButton", () => ({ PlayButton: () => <div data-testid="play-button" /> }));
+vi.mock("./components/BpmDial", () => ({ BpmDial: () => <div data-testid="bpm-dial" /> }));
 vi.mock("./components/ExportButton", () => ({ ExportButton: () => null }));
 vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
 vi.mock("./components/FlowSelector", () => ({ FlowSelector: () => null }));
@@ -81,6 +81,18 @@ describe("App autosave gating", () => {
       "pl-[env(safe-area-inset-left)]",
       "pr-[env(safe-area-inset-right)]",
     );
+  });
+
+  it("puts the transport beside the title and drops the space hint", async () => {
+    await renderApp();
+
+    const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
+    expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "sm:text-5xl");
+    const titleRow = title.parentElement?.parentElement;
+    expect(titleRow).toHaveClass("flex", "items-center", "justify-between");
+    expect(titleRow).toContainElement(screen.getByTestId("play-button"));
+    expect(titleRow).toContainElement(screen.getByTestId("bpm-dial"));
+    expect(screen.queryByText("space")).not.toBeInTheDocument();
   });
 
   it("renders no storage durability notice even with clips in best-effort storage", async () => {

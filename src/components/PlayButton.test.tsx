@@ -73,6 +73,15 @@ describe("PlayButton silent-switch hint", () => {
     expect(hint?.className.split(/\s+/)).not.toContain("fixed");
   });
 
+  it("names the keyboard shortcut in its title instead of a hint beside it", () => {
+    render(<PlayButton />);
+
+    expect(screen.getByRole("button", { name: "Start playback" })).toHaveAttribute(
+      "title",
+      "Play or stop (space)",
+    );
+  });
+
   it("swallows audio-unavailable playback rejections from clicks", async () => {
     hintState.togglePlayback.mockRejectedValueOnce(new hintState.AudioUnavailableError());
 

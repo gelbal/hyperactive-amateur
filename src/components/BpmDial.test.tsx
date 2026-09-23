@@ -126,6 +126,13 @@ describe("BpmDial", () => {
     expect(useAppStore.getState().project.bpm).toBe(90);
   });
 
+  it("stacks the readout under the knob so the transport fits beside the title", () => {
+    const knob = renderKnob();
+
+    expect(knob.parentElement).toHaveClass("flex-col", "items-center");
+    expect(screen.getByText("BPM")).toBeInTheDocument();
+  });
+
   it("ArrowUp still increments by one stop", () => {
     useAppStore.getState().actions.setBpm(90);
     const knob = renderKnob();

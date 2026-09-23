@@ -1,5 +1,5 @@
 // ABOUTME: SuggestButton tests — disabled gating + click → applyPattern + Undo.
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const suggestPattern = vi.fn();
@@ -52,6 +52,21 @@ describe("SuggestButton", () => {
 
   afterEach(() => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+    // Unmount before the store write (React warns about updates outside act);
+    // reset() itself no-ops while exporting, so the flag is cleared here.
+    cleanup();
+    useAppStore.getState().actions.setIsExporting(false);
+  });
+
+  it("looks disabled while exporting and is 44px tall on coarse pointers", () => {
+    unlockAi();
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+
+    render(<SuggestButton />);
+
+    const button = screen.getByLabelText("Suggest a beat");
+    expect(button).toBeDisabled();
+    expect(button).toHaveClass("pointer-coarse:min-h-11");
   });
 
   it("disabled with <4 clips; click after 4 calls suggestPattern and applies the result; Undo restores", async () => {

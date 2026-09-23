@@ -99,7 +99,7 @@ export function BpmDial() {
   });
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-col items-center gap-1">
       <button
         type="button"
         aria-label={`BPM ${bpm}`}
@@ -201,8 +201,8 @@ export function BpmDial() {
           />
         </svg>
       </button>
-      <div className="flex flex-col leading-none">
-        <span className="font-mono tabular-nums text-base text-zinc-200">{bpm}</span>
+      <div className="flex items-baseline gap-1 leading-none">
+        <span className="font-mono tabular-nums text-sm text-zinc-200">{bpm}</span>
         <span className="text-[10px] uppercase tracking-wider text-zinc-500">BPM</span>
       </div>
     </div>
