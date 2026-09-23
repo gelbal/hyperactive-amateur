@@ -132,7 +132,7 @@ describe("ExportButton format picker", () => {
       "w-auto",
       "max-w-[24rem]",
       "mx-auto",
-      "max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top))]",
+      "max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]",
       "overflow-y-auto",
       "lg:inset-x-auto",
       "lg:right-0",
