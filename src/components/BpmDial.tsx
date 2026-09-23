@@ -1,5 +1,5 @@
 // ABOUTME: BpmDial — circular knob for tempo, snaps to discrete stops in the hip-hop range.
-// ABOUTME: Scroll wheel or vertical drag changes the value; arrow keys adjust by one stop.
+// ABOUTME: Turning the knob by angle or the scroll wheel changes the value; arrow keys adjust by one stop.
 import { useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 
@@ -13,7 +13,9 @@ const CENTER = SIZE / 2;
 const RADIUS = 24;
 const NOTCH_INNER = 6;
 const NOTCH_OUTER = 22;
-const DRAG_PIXELS_PER_STOP = 16;
+const DEG_PER_STOP = ARC_RANGE_DEG / (STOPS.length - 1);
+// Pointer positions this close to the centre have no usable angle.
+const DEAD_ZONE_PX = 6;
 
 function indexOfNearest(value: number): number {
   let bestIdx = 0;
@@ -39,15 +41,43 @@ function stepBy(value: number, delta: number): number {
   return STOPS[next];
 }
 
+// Clock angle of a pointer around the knob: 0 at 12 o'clock, clockwise
+// positive, in (-180, 180]. Null inside the dead zone around the centre.
+function pointerAngle(knob: HTMLElement, clientX: number, clientY: number): number | null {
+  const rect = knob.getBoundingClientRect();
+  const dx = clientX - (rect.left + rect.width / 2);
+  const dy = clientY - (rect.top + rect.height / 2);
+  if (Math.hypot(dx, dy) < DEAD_ZONE_PX) return null;
+  return (Math.atan2(dx, -dy) * 180) / Math.PI;
+}
+
+// Shortest signed rotation from one angle to another, in (-180, 180].
+function unwrappedDelta(from: number, to: number): number {
+  return ((to - from + 540) % 360) - 180;
+}
+
+interface Turn {
+  startIdx: number;
+  lastAngle: number | null;
+  // Rotation since the turn began, clamped to what the starting stop can
+  // reach, so reversing after the end responds at once.
+  accumulatedDeg: number;
+}
+
 export function BpmDial() {
   const bpm = useAppStore((s) => s.project.bpm);
   // Export freezes project mutations; the dial must look disabled and ignore
   // input, not just rely on the store writer's no-op.
   const isExporting = useAppStore((s) => s.playback.isExporting);
-  const dragRef = useRef<{ startY: number; startBpm: number } | null>(null);
+  const turnRef = useRef<Turn | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const setBpm = (next: number) => useAppStore.getState().actions.setBpm(next);
+  // Every write bumps the project revision (re-arming autosave, staling an
+  // in-flight Suggest), so only a changed stop is written.
+  const setBpm = (next: number) => {
+    if (next === useAppStore.getState().project.bpm) return;
+    useAppStore.getState().actions.setBpm(next);
+  };
 
   const angleDeg = angleFor(bpm);
   const angleRad = (angleDeg * Math.PI) / 180;
@@ -79,34 +109,47 @@ export function BpmDial() {
         role="slider"
         disabled={isExporting}
         onWheel={(event) => {
-          if (isExporting) return;
+          if (isExporting || event.deltaY === 0) return;
           event.preventDefault();
           setBpm(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
         }}
         onPointerDown={(event) => {
           if (isExporting) return;
           event.preventDefault();
-          (event.currentTarget as HTMLButtonElement).setPointerCapture(
-            event.pointerId,
-          );
-          dragRef.current = { startY: event.clientY, startBpm: bpm };
+          const knob = event.currentTarget as HTMLButtonElement;
+          knob.setPointerCapture(event.pointerId);
+          turnRef.current = {
+            startIdx: indexOfNearest(bpm),
+            lastAngle: pointerAngle(knob, event.clientX, event.clientY),
+            accumulatedDeg: 0,
+          };
           setDragging(true);
         }}
         onPointerMove={(event) => {
-          if (isExporting || !dragRef.current) return;
-          const dy = dragRef.current.startY - event.clientY;
-          const stepDelta = Math.round(dy / DRAG_PIXELS_PER_STOP);
-          setBpm(stepBy(dragRef.current.startBpm, stepDelta));
+          const turn = turnRef.current;
+          if (isExporting || !turn) return;
+          const angle = pointerAngle(event.currentTarget as HTMLButtonElement, event.clientX, event.clientY);
+          if (angle === null) return;
+          if (turn.lastAngle === null) {
+            turn.lastAngle = angle;
+            return;
+          }
+          const delta = unwrappedDelta(turn.lastAngle, angle);
+          turn.lastAngle = angle;
+          const minDeg = -turn.startIdx * DEG_PER_STOP;
+          const maxDeg = (STOPS.length - 1 - turn.startIdx) * DEG_PER_STOP;
+          turn.accumulatedDeg = Math.max(minDeg, Math.min(maxDeg, turn.accumulatedDeg + delta));
+          setBpm(STOPS[turn.startIdx + Math.round(turn.accumulatedDeg / DEG_PER_STOP)]);
         }}
         onPointerUp={(event) => {
           (event.currentTarget as HTMLButtonElement).releasePointerCapture(
             event.pointerId,
           );
-          dragRef.current = null;
+          turnRef.current = null;
           setDragging(false);
         }}
         onPointerCancel={() => {
-          dragRef.current = null;
+          turnRef.current = null;
           setDragging(false);
         }}
         onKeyDown={(event) => {
@@ -119,11 +162,11 @@ export function BpmDial() {
             setBpm(stepBy(bpm, -1));
           }
         }}
-        title="Drag, scroll, or use arrow keys to change BPM"
+        title="Turn, scroll, or use arrow keys to change BPM"
         className={
           "relative shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-colors " +
           "disabled:opacity-30 disabled:cursor-not-allowed " +
-          (dragging ? "cursor-grabbing" : "cursor-ns-resize")
+          (dragging ? "cursor-grabbing" : "cursor-grab")
         }
         style={{ width: SIZE, height: SIZE, touchAction: "none" }}
       >
