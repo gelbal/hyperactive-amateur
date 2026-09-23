@@ -100,15 +100,34 @@ describe("BpmDial", () => {
     expect(useAppStore.getState().project.bpm).toBe(150);
   });
 
-  it("a straight half-turn from 12 to 6 o'clock counts clockwise", () => {
+  it("a jump of more than a quarter turn in one sample re-seeds instead of turning", () => {
+    // A finger cannot travel half the ring between two samples; a 180 degree
+    // delta means it crossed the centre. The old slider habit (land below
+    // the centre, drag straight up) must not fling the value to an end.
     useAppStore.getState().actions.setBpm(100);
     const knob = renderKnob();
 
     firePointer(knob, "pointerdown", at(0));
     firePointer(knob, "pointermove", at(180));
-    firePointer(knob, "pointerup", at(180));
+    expect(useAppStore.getState().project.bpm).toBe(100);
 
-    expect(useAppStore.getState().project.bpm).toBe(160);
+    firePointer(knob, "pointermove", at(210));
+    firePointer(knob, "pointerup", at(210));
+    expect(useAppStore.getState().project.bpm).toBe(110);
+  });
+
+  it("passing through the centre re-seeds the turn", () => {
+    useAppStore.getState().actions.setBpm(100);
+    const knob = renderKnob();
+
+    firePointer(knob, "pointerdown", at(180));
+    firePointer(knob, "pointermove", { clientX: CENTER + 1, clientY: CENTER + 1 });
+    firePointer(knob, "pointermove", at(0));
+    expect(useAppStore.getState().project.bpm).toBe(100);
+
+    firePointer(knob, "pointermove", at(30));
+    firePointer(knob, "pointerup", at(30));
+    expect(useAppStore.getState().project.bpm).toBe(110);
   });
 
   it("a sub-stop wobble and a move through the centre write nothing", () => {

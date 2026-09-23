@@ -16,6 +16,10 @@ const NOTCH_OUTER = 22;
 const DEG_PER_STOP = ARC_RANGE_DEG / (STOPS.length - 1);
 // Pointer positions this close to the centre have no usable angle.
 const DEAD_ZONE_PX = 6;
+// A finger cannot travel more than a quarter of the ring between two
+// samples; a larger delta means it crossed the centre (the old slider
+// habit: land below the centre, drag straight up), so the turn re-seeds.
+const MAX_DELTA_PER_SAMPLE_DEG = 90;
 
 function indexOfNearest(value: number): number {
   let bestIdx = 0;
@@ -131,13 +135,18 @@ export function BpmDial() {
           const turn = turnRef.current;
           if (isExporting || !turn) return;
           const angle = pointerAngle(event.currentTarget as HTMLButtonElement, event.clientX, event.clientY);
-          if (angle === null) return;
+          if (angle === null) {
+            // Inside the dead zone: the next sample outside it seeds afresh.
+            turn.lastAngle = null;
+            return;
+          }
           if (turn.lastAngle === null) {
             turn.lastAngle = angle;
             return;
           }
           const delta = unwrappedDelta(turn.lastAngle, angle);
           turn.lastAngle = angle;
+          if (Math.abs(delta) > MAX_DELTA_PER_SAMPLE_DEG) return;
           const minDeg = -turn.startIdx * DEG_PER_STOP;
           const maxDeg = (STOPS.length - 1 - turn.startIdx) * DEG_PER_STOP;
           turn.accumulatedDeg = Math.max(minDeg, Math.min(maxDeg, turn.accumulatedDeg + delta));
