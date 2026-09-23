@@ -140,12 +140,26 @@ async function waitForRunning(context: AudioContext): Promise<void> {
 }
 
 export async function ensureAudioRunning(): Promise<void> {
+  // Tone.start() is AudioContext.resume(); on iOS a resume issued while the
+  // context is interrupted can hold its promise until the interruption ends,
+  // which would hold the caller's audible claim with it. The same cap as the
+  // running wait bounds it, raced inline (every extra await here delays the
+  // record countdown by a microtask); the timer is cleared on every exit.
+  let capTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     // Declared before the unlock so the first write keeps today's timing;
     // a held or pending capture keeps "play-and-record" regardless.
     playbackDeclared = true;
     syncSessionType();
-    await Tone.start();
+    await Promise.race([
+      Tone.start(),
+      new Promise<never>((_, reject) => {
+        capTimer = setTimeout(
+          () => reject(new AudioUnavailableError("AudioContext resume did not settle.")),
+          RUNNING_WAIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
     const context = getAudioContext();
     if (context.state !== "running") {
       await waitForRunning(context);
@@ -158,6 +172,8 @@ export async function ensureAudioRunning(): Promise<void> {
     useAppStore.getState().actions.setAudioState("resume-required");
     if (err instanceof AudioUnavailableError) throw err;
     throw new AudioUnavailableError(undefined, { cause: err });
+  } finally {
+    if (capTimer !== null) clearTimeout(capTimer);
   }
 }
 

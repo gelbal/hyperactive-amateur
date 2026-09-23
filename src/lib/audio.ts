@@ -170,9 +170,12 @@ function syncPlayers(tracks: Track[]): void {
   }
 }
 
+// Re-checked after the unlock's await: a tap that was pending when the page
+// went hidden must not start sound in the background once audio resumes.
 function canStartAfterPendingAudible(): boolean {
   const { playback, recording } = useAppStore.getState();
   return (
+    !(typeof document !== "undefined" && document.hidden) &&
     !playback.isPlaying &&
     !playback.isExporting &&
     recording.state === "idle"

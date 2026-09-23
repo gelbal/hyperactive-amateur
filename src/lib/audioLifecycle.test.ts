@@ -114,6 +114,20 @@ describe("ensureAudioRunning", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("rejects with AudioUnavailableError when Tone.start never settles", async () => {
+    vi.useFakeTimers();
+    vi.mocked(Tone.start).mockReturnValue(new Promise<void>(() => undefined));
+
+    const promise = ensureAudioRunning();
+    const rejection = expect(promise).rejects.toBeInstanceOf(AudioUnavailableError);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await rejection;
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("wraps rejected Tone.start errors as AudioUnavailableError", async () => {
     const cause = new Error("resume denied");
     vi.mocked(Tone.start).mockRejectedValue(cause);

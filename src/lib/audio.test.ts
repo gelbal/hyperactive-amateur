@@ -240,6 +240,47 @@ describe("audio: per-step trigger logic", () => {
     expect(canStartAudibleAction(useAppStore.getState())).toBe(true);
   });
 
+  it("releases the audible claim when the unlock never settles", async () => {
+    vi.useFakeTimers();
+    initTransport();
+    vi.mocked(Tone.start).mockReturnValueOnce(new Promise<void>(() => undefined));
+
+    const promise = togglePlayback();
+    const rejection = expect(promise).rejects.toMatchObject({ name: "AudioUnavailableError" });
+    expect(claimPendingAudible()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await rejection;
+    expect(transportMock.start).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    expect(claimPendingAudible()).toEqual(expect.any(Function));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not start playback when the page hid during the unlock", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+
+    const promise = togglePlayback();
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    try {
+      audioStarted.resolve();
+      await promise;
+
+      expect(transportMock.start).not.toHaveBeenCalled();
+      expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "hidden");
+      }
+    }
+  });
+
   it("holds the audible gate while a pad trigger waits for audio unlock", async () => {
     initTransport();
     const audioStarted = deferred();
