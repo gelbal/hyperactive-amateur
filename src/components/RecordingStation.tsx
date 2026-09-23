@@ -5,6 +5,7 @@ import { Circle, SkipForward, Check, Settings2, SwitchCamera } from "lucide-reac
 import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { recordIntoTrack } from "../lib/recordingFlow";
 import {
+  ACQUIRE_FAILED_COPY,
   acquirePreviewStream,
   enumerateMediaDevices,
   invalidatePendingAcquire,
@@ -68,8 +69,8 @@ export function RecordingStation() {
         setError(null);
         // Labels are only populated after permission is granted; refresh now.
         void refreshDevices();
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } catch {
+        if (!cancelled) setError(ACQUIRE_FAILED_COPY);
       }
     })();
     return () => {

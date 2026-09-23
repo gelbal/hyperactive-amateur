@@ -5,11 +5,13 @@ import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
+  noteMicAcquireStarted: vi.fn(() => () => undefined),
 }));
 
 vi.mock("../lib/audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
+  noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
 }));
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
@@ -562,10 +564,6 @@ describe("useAppStore", () => {
     expect(get().session.recordingStationDismissed).toBe(false);
   });
 
-  it("stores recovery warnings in the UI slice", () => {
-    get().actions.setRecoveryWarnings(["bpm clamped", "track reset"]);
-    expect(get().ui.recoveryWarnings).toEqual(["bpm clamped", "track reset"]);
-  });
 
   it("uses projectRevision to reject stale AI pattern applies", () => {
     const revision = get().session.projectRevision;

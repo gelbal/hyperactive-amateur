@@ -124,7 +124,6 @@ export interface RecordingSlice {
 export interface UiState {
   selectedTrackId: number | null;
   showExportDialog: boolean;
-  recoveryWarnings: string[];
 }
 
 export type MediaStatus = "idle" | "requesting" | "granted" | "denied" | "suspended";

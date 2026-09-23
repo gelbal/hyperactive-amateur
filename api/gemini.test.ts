@@ -622,6 +622,35 @@ describe("handleGeminiRequest", () => {
     });
   });
 
+  it("accepts the STORAGE-prefixed pair the Upstash Marketplace integration writes", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("STORAGE_KV_REST_API_URL", "https://beloved-turkey.example");
+    vi.stubEnv("STORAGE_KV_REST_API_TOKEN", "storage-token");
+    __resetGeminiProxyForTesting();
+    fetchSpy.mockReset();
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ result: 1 }, { result: 1 }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "{}" }] } }],
+        }),
+      );
+
+    const res = await handleGeminiRequest(
+      await signedRequest(suggestBody(), { "x-vercel-forwarded-for": "198.51.100.12" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const [pipelineUrl, pipelineInit] = fetchSpy.mock.calls[1];
+    expect(pipelineUrl).toBe("https://beloved-turkey.example/pipeline");
+    expect(pipelineInit.headers).toMatchObject({
+      authorization: "Bearer storage-token",
+      "content-type": "application/json",
+    });
+  });
+
   it("does not mix a partial Upstash pair with KV credentials", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example/");
@@ -653,7 +682,8 @@ describe("handleGeminiRequest", () => {
     });
   });
 
-  it("returns a stable error when the configured Upstash limiter fails", async () => {
+  it("counts in memory and logs the cause when the configured Upstash limiter fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubEnv("NODE_ENV", "production");
     const tokenRes = await handleGeminiTokenRequest(
       new Request(`${ALLOWED_ORIGIN}/api/gemini-token`, {
@@ -672,7 +702,13 @@ describe("handleGeminiRequest", () => {
     vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
     __resetGeminiProxyForTesting();
     fetchSpy.mockReset();
-    fetchSpy.mockResolvedValueOnce(jsonResponse([{ error: "backend failed" }]));
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "{}" }] } }],
+        }),
+      );
 
     const res = await handleGeminiRequest(
       request(suggestBody(), {
@@ -682,9 +718,56 @@ describe("handleGeminiRequest", () => {
       }),
     );
 
-    expect(res.status).toBe(503);
-    expect(await responseJson(res)).toMatchObject({ error: "rate-limit-unavailable" });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const logged = warnSpy.mock.calls[0].map(String).join(" ");
+    expect(logged).toContain("[gemini-proxy] rate limiter unavailable");
+    expect(logged).toContain("HTTP 401");
+    expect(logged).not.toContain("redis-token");
+  });
+
+  it("keeps capping bursts from memory while the durable limiter is down", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GEMINI_RATE_LIMIT_MAX", "2");
+    const tokenRes = await handleGeminiTokenRequest(
+      new Request(`${ALLOWED_ORIGIN}/api/gemini-token`, {
+        method: "POST",
+        headers: {
+          origin: ALLOWED_ORIGIN,
+          "x-vercel-forwarded-for": "198.51.100.11",
+          ...SAME_ORIGIN_FETCH_HEADERS,
+        },
+      }),
+    );
+    expect(tokenRes.status).toBe(200);
+    const tokenBody = await responseJson(tokenRes);
+
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-token");
+    __resetGeminiProxyForTesting();
+    fetchSpy.mockReset();
+    fetchSpy.mockImplementation(async (url: unknown) =>
+      String(url).endsWith("/pipeline")
+        ? jsonResponse({ error: "unauthorized" }, 401)
+        : jsonResponse({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }),
+    );
+    const send = () =>
+      handleGeminiRequest(
+        request(suggestBody(), {
+          "x-vercel-forwarded-for": "198.51.100.11",
+          ...SAME_ORIGIN_FETCH_HEADERS,
+          [GEMINI_TOKEN_HEADER]: String(tokenBody.token),
+        }),
+      );
+
+    expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(200);
+    const third = await send();
+    expect(third.status).toBe(429);
+    expect(await responseJson(third)).toMatchObject({ error: "rate-limit-exceeded" });
+    expect(third.headers.get("retry-after")).toMatch(/^\d+$/);
   });
 
   it.each([

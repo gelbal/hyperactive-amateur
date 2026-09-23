@@ -7,7 +7,8 @@ import { drawCurrentFrame, initVideoEngine, setActiveCanvas } from "../lib/video
 import { useAppStore } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
-import { ensureAudioRunning } from "../lib/audioLifecycle";
+import { ensureAudioRunning, noteMicAcquireStarted } from "../lib/audioLifecycle";
+import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { useFullscreen } from "../lib/useFullscreen";
 import { RecordingStation } from "./RecordingStation";
 import { RecordCountdown } from "./RecordCountdown";
@@ -33,6 +34,10 @@ export function Viewport() {
   const mediaStatus = useAppStore((s) => s.media.status);
   const mediaError = useAppStore((s) => s.media.error);
   const audioState = useAppStore((s) => s.playback.audioState);
+  // The merged pill stays mounted while its tap is in flight, even after the
+  // audio half has already flipped to running, so the label and disabled
+  // state do not change under the user's finger.
+  const [resumeBothPending, setResumeBothPending] = useState(false);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const { isFullscreen, isSupported: fullscreenSupported, enter, exit } = useFullscreen();
 
@@ -49,8 +54,8 @@ export function Viewport() {
   // During playback the viewport belongs to the hard-cut video: the station
   // and gate overlays stand down until stop (recording can't run while
   // playing anyway). Unmounting the station also releases its preview stream,
-  // so playback never runs with the mic held (on iOS a held mic keeps the
-  // audio session in play-and-record, which routes output to the earpiece).
+  // so playback never runs with the mic held and the audio session can sit
+  // in "playback" (audible with the ringer switch on) while the beat plays.
   const showStation =
     mediaStatus === "granted" && emptyTrackCount > 0 && !stationDismissed && !isPlaying;
   // "suspended" is "was granted, currently disconnected" — the gate must NOT
@@ -160,14 +165,18 @@ export function Viewport() {
           aria-label="hard-cut video viewport"
           className="ha-canvas ha-display-canvas block w-full h-full bg-zinc-950 rounded shadow-lg"
         />
-        {showGate && (
-          <PermissionGate status={mediaStatus} error={mediaError} />
-        )}
+        {showGate && <PermissionGate status={mediaStatus} error={mediaError} />}
         {showStation && <RecordingStation />}
-        {(showAudioResumePill || showReconnectPill) && (
+        {(showAudioResumePill || showReconnectPill || resumeBothPending) && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
-            {showAudioResumePill && <AudioResumePill />}
-            {showReconnectPill && <ReconnectPill />}
+            {(showAudioResumePill && showReconnectPill) || resumeBothPending ? (
+              <ResumePill onPendingChange={setResumeBothPending} />
+            ) : (
+              <>
+                {showAudioResumePill && <AudioResumePill />}
+                {showReconnectPill && <ReconnectPill />}
+              </>
+            )}
           </div>
         )}
         {mediaStatus === "granted" && !hasClips && stationDismissed && !isPlaying && (
@@ -251,6 +260,72 @@ function AudioResumePill() {
   );
 }
 
+// After a background/return both the AudioContext and the camera need the
+// user back: one tap unlocks audio (which needs user activation) and then
+// re-acquires the camera. A failed unlock keeps the existing still-blocked
+// line and skips the reconnect — recording needs both, and the next tap
+// retries both.
+function ResumePill({ onPendingChange }: { onPendingChange: (pending: boolean) => void }) {
+  const recordingState = useAppStore((s) => s.recording.state);
+  const [pending, setPending] = useState(false);
+  const [stillBlocked, setStillBlocked] = useState(false);
+  const disabled = pending || recordingState !== "idle" || isAcquireInFlight();
+
+  const resume = async () => {
+    setPending(true);
+    onPendingChange(true);
+    setStillBlocked(false);
+    // Declared before the unlock, exactly like a record flow, so the audio
+    // session goes straight to "play-and-record" instead of being resumed
+    // under "playback" and flipped a moment later by the camera acquire.
+    const releaseClaim = noteMicAcquireStarted();
+    try {
+      try {
+        await ensureAudioRunning();
+      } catch {
+        setStillBlocked(true);
+        return;
+      }
+      // The unlock awaited a user-visible moment; re-check the world before
+      // re-lighting the camera. A hide in between already suspended
+      // everything (a late acquire would outlive that suspension), playback
+      // or export must not run with the mic held, and a changed media state
+      // means someone else already dealt with it.
+      const state = useAppStore.getState();
+      if (
+        (typeof document !== "undefined" && document.hidden) ||
+        !canStartAudibleAction(state) ||
+        state.media.status !== "suspended"
+      ) {
+        return;
+      }
+      await state.actions.resumeMedia();
+    } finally {
+      releaseClaim();
+      setPending(false);
+      onPendingChange(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => void resume()}
+        className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs uppercase tracking-wide text-orange-300 hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-zinc-950/80"
+      >
+        Interrupted — tap to resume
+      </button>
+      {stillBlocked && (
+        <div className="px-3 py-1 rounded-full bg-zinc-950/80 border border-orange-500/60 text-xs text-orange-200">
+          Still blocked — try the volume keys or reopen the app.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecordMoreButton({ hasClips }: { hasClips: boolean }) {
   return (
     <button
@@ -268,18 +343,21 @@ interface PermissionGateProps {
   // Accepts the full MediaStatus union; "granted" is unreachable here because
   // the parent only renders this gate when status !== "granted".
   status: MediaStatus;
+  // Only ever the fixed acquire line (set by media.ts for a non-denial probe
+  // failure); the engine's own message never reaches this prop for "idle".
   error: string | null;
 }
 
+// "denied" is reserved for an explicit permission denial (media.ts), so the
+// settings line is always the right advice there; engine error text stays in
+// the log, never on screen.
 function PermissionGate({ status, error }: PermissionGateProps) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center px-10">
       {status === "denied" ? (
         <>
           <Video size={32} className="text-red-400" aria-hidden />
-          <div className="text-sm text-red-300 max-w-[20rem]">
-            Camera blocked: {error ?? "permission denied"}.
-          </div>
+          <div className="text-sm text-red-300 max-w-[20rem]">Camera blocked.</div>
           <p className="text-xs text-zinc-500 max-w-[20rem]">
             Allow camera and microphone access in your browser, then reload.
           </p>
@@ -300,6 +378,11 @@ function PermissionGate({ status, error }: PermissionGateProps) {
           >
             {status === "requesting" ? "Requesting…" : "Enable camera & mic"}
           </button>
+          {status === "idle" && error && (
+            <p role="alert" className="text-xs text-red-400 max-w-[18rem]">
+              {error}
+            </p>
+          )}
         </>
       )}
     </div>

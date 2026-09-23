@@ -2,13 +2,31 @@
 // ABOUTME: Streams are held only while the RecordingStation is mounted (preview + record reuse the same stream); otherwise the camera light stays off.
 import { useAppStore } from "../store/useAppStore";
 import {
+  markSuspendedWithoutStream,
   registerStreamLifecycle,
   releaseMediaStream,
 } from "./streamLifecycle";
+import { noteMicAcquireStarted } from "./audioLifecycle";
+import { LOG_EVENTS, logger } from "./logger";
+
+// One fixed line for a failed camera/mic acquire, shared by the permission
+// gate, the record row, and the station: the viewport state change carries
+// the detail (gate or reconnect pill); no engine text reaches the screen.
+export const ACQUIRE_FAILED_COPY = "Camera unavailable — try again.";
+// When no camera or microphone exists at all, "try again" is the wrong next
+// action; say what is missing instead.
+export const NO_DEVICE_COPY = "No camera or microphone found.";
+// The row's line when the permission probe lands in "denied" while the gate
+// is not on screen (station dismissed): the settings, not another tap.
+export const CAMERA_DENIED_COPY =
+  "Camera blocked — allow camera and microphone access in your browser, then reload.";
 
 let inFlight: Promise<void> | null = null;
 let acquireGeneration = 0;
 let activeAcquireToken: number | null = null;
+// The audio-session claim of the acquire that is currently in flight, so an
+// invalidation can drop it before the native getUserMedia settles.
+let activeAcquireRelease: (() => void) | null = null;
 
 // Build a MediaStreamConstraints honoring the user's preferred input devices.
 // `ideal` sizing lets the browser negotiate sane defaults instead of throwing
@@ -36,6 +54,35 @@ export function buildConstraints(): MediaStreamConstraints {
   return { video, audio };
 }
 
+function errorName(err: unknown): string {
+  if (err instanceof Error) return err.name;
+  if (typeof err === "object" && err !== null && "name" in err) {
+    return String((err as { name: unknown }).name);
+  }
+  return "";
+}
+
+// Only an explicit denial is "denied" (the gate's settings copy). Everything
+// else — a busy camera, WebKit's audio-session rejection, an abort — lands
+// the user back in the state whose retry already exists.
+export function isPermissionDenial(err: unknown): boolean {
+  const name = errorName(err);
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
+// The audio-session state is read at failure time so a device log answers
+// "was the type capture-compatible when getUserMedia was called?" directly.
+function logAcquireFailure(site: "probe" | "acquire", err: unknown): void {
+  logger.warn(LOG_EVENTS.MEDIA_ACQUIRE_FAILED, {
+    site,
+    name: errorName(err),
+    message: err instanceof Error ? err.message : String(err),
+    hasAudioSession: typeof navigator !== "undefined" && "audioSession" in navigator,
+    audioSessionType:
+      typeof navigator !== "undefined" ? (navigator.audioSession?.type ?? null) : null,
+  });
+}
+
 // Confirms permission to use the camera + mic. Acquires a stream just long
 // enough to trigger the browser's permission prompt (if needed), then releases
 // the tracks immediately so the camera light goes back off. The viewport gate
@@ -49,6 +96,10 @@ export async function requestMedia(): Promise<void> {
     .actions.setMedia({ stream: null, status: "requesting", error: null });
 
   inFlight = (async () => {
+    // The audio session must already be capture-compatible when getUserMedia
+    // is called (WebKit rejects audio capture under the "playback" type), so
+    // the acquire is declared before the call and released after the probe.
+    const releaseClaim = noteMicAcquireStarted();
     try {
       const stream = await getUserMediaWithDeviceFallback();
       // Permission confirmed. Release the tracks immediately — the recording
@@ -58,11 +109,21 @@ export async function requestMedia(): Promise<void> {
         .getState()
         .actions.setMedia({ stream: null, status: "granted", error: null });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      useAppStore
-        .getState()
-        .actions.setMedia({ stream: null, status: "denied", error: message });
+      logAcquireFailure("probe", err);
+      if (isPermissionDenial(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        useAppStore
+          .getState()
+          .actions.setMedia({ stream: null, status: "denied", error: message });
+      } else {
+        // Not a denial: back to the gate's idle button (the retry), with one
+        // fixed line so the tap is not a silent no-op. A missing device gets
+        // its own line because retrying cannot help.
+        const error = isStaleDeviceError(err) ? NO_DEVICE_COPY : ACQUIRE_FAILED_COPY;
+        useAppStore.getState().actions.setMedia({ stream: null, status: "idle", error });
+      }
     } finally {
+      releaseClaim();
       inFlight = null;
     }
   })();
@@ -108,13 +169,20 @@ async function getUserMediaWithDeviceFallback(token?: number): Promise<MediaStre
 }
 
 // Acquire a fresh MediaStream for either preview or capture (same constraints).
-// On failure, flip the media slice to 'denied' so the viewport gate re-opens —
-// requestMedia is callable again because we no longer short-circuit on
-// status === 'granted'. If the failure looks like a stale deviceId, clear the
-// preference and retry once with the browser default.
+// On failure the slice lands where the retry already lives: "denied" (the
+// gate's settings copy) only for an explicit permission denial, otherwise
+// "suspended" for a previously granted user (the reconnect pill). If the
+// failure looks like a stale deviceId, clear the preference and retry once
+// with the browser default.
 export async function acquireRecordingStream(): Promise<MediaStream> {
   const token = ++acquireGeneration;
   activeAcquireToken = token;
+  // Declared before getUserMedia and released only after the stream is
+  // registered as held, so the session type goes straight from
+  // "play-and-record" (pending) to "play-and-record" (held) with no
+  // intermediate write.
+  const releaseClaim = noteMicAcquireStarted();
+  activeAcquireRelease = releaseClaim;
   try {
     const stream = await getUserMediaWithDeviceFallback(token);
     if (token !== acquireGeneration) {
@@ -130,14 +198,22 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
     return stream;
   } catch (err) {
     if (token === acquireGeneration) {
-      const message = err instanceof Error ? err.message : String(err);
-      useAppStore
-        .getState()
-        .actions.setMedia({ stream: null, status: "denied", error: message });
+      logAcquireFailure("acquire", err);
+      const state = useAppStore.getState();
+      if (isPermissionDenial(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        state.actions.setMedia({ stream: null, status: "denied", error: message });
+      } else if (state.media.status === "granted") {
+        // A granted user keeps the reconnect pill as the retry; nothing
+        // was revoked, so the permission gate must not reappear.
+        markSuspendedWithoutStream();
+      }
     }
     throw err;
   } finally {
     if (activeAcquireToken === token) activeAcquireToken = null;
+    if (activeAcquireRelease === releaseClaim) activeAcquireRelease = null;
+    releaseClaim();
   }
 }
 
@@ -150,6 +226,10 @@ export async function acquireRecordingStream(): Promise<MediaStream> {
 export function invalidatePendingAcquire(): void {
   acquireGeneration += 1;
   activeAcquireToken = null;
+  // The obsolete acquire's audio-session claim goes now — playback must not
+  // run under "play-and-record" while a stalled native call keeps it alive.
+  activeAcquireRelease?.();
+  activeAcquireRelease = null;
 }
 
 // Release a stream returned by acquireRecordingStream. Stops every track (so
@@ -201,4 +281,5 @@ export function __resetMediaForTesting(): void {
   inFlight = null;
   acquireGeneration = 0;
   activeAcquireToken = null;
+  activeAcquireRelease = null;
 }

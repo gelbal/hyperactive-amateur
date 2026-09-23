@@ -25,12 +25,16 @@ vi.mock("../lib/videoEngine", () => videoEngineMocks);
 const requestMedia = vi.fn();
 const isAcquireInFlight = vi.fn(() => false);
 const ensureAudioRunning = vi.fn();
+const releaseAcquireClaim = vi.fn();
+const noteMicAcquireStarted = vi.fn(() => releaseAcquireClaim);
 vi.mock("../lib/media", () => ({
+  ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
   requestMedia: () => requestMedia(),
   isAcquireInFlight: () => isAcquireInFlight(),
 }));
 vi.mock("../lib/audioLifecycle", () => ({
   ensureAudioRunning: () => ensureAudioRunning(),
+  noteMicAcquireStarted: () => noteMicAcquireStarted(),
 }));
 
 import { Viewport } from "./Viewport";
@@ -263,6 +267,7 @@ describe("Viewport", () => {
     });
     render(<Viewport />);
     expect(screen.getByText(/blocked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/user blocked it/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /enable camera & mic/i })).not.toBeInTheDocument();
     cleanup();
 
@@ -474,7 +479,7 @@ describe("Viewport", () => {
     spy.mockRestore();
   });
 
-  it('resume-required: audio pill shows exactly "Audio interrupted — tap to resume." and stacks with reconnect pill', () => {
+  it("resume-required + suspended: one merged pill replaces the audio and reconnect pills", () => {
     render(<Viewport />);
     expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
     cleanup();
@@ -489,8 +494,149 @@ describe("Viewport", () => {
     });
     render(<Viewport />);
 
-    expect(screen.getByRole("button", { name: "Audio interrupted — tap to resume." })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /tap to reconnect/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Audio interrupted — tap to resume." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /tap to reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it("merged pill: one tap unlocks audio and then reconnects the camera", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    ensureAudioRunning.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+
+    await waitFor(() => expect(resumeSpy).toHaveBeenCalledTimes(1));
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(ensureAudioRunning.mock.invocationCallOrder[0]).toBeLessThan(
+      resumeSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("merged pill: declares the acquire before the unlock and stays mounted until the tap settles", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    // The real unlock flips audioState to running before the camera is back.
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    let settleResume!: () => void;
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockImplementation(() => new Promise<void>((resolve) => (settleResume = resolve)));
+    resumeSpy.mockClear();
+    noteMicAcquireStarted.mockClear();
+    releaseAcquireClaim.mockClear();
+    ensureAudioRunning.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(resumeSpy).toHaveBeenCalledTimes(1));
+
+    // Still the merged pill (disabled), not the reconnect pill, while pending.
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /tap to reconnect/i })).not.toBeInTheDocument();
+    expect(noteMicAcquireStarted.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureAudioRunning.mock.invocationCallOrder[0],
+    );
+    expect(releaseAcquireClaim).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settleResume();
+    });
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Interrupted — tap to resume" })).not.toBeInTheDocument();
+  });
+
+  it("merged pill: skips the reconnect when the page went hidden during the unlock", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    releaseAcquireClaim.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
+
+    // The hide already suspended everything; a late acquire must not re-light the camera.
+    expect(resumeSpy).not.toHaveBeenCalled();
+    Reflect.deleteProperty(document, "hidden");
+  });
+
+  it("merged pill: skips the reconnect when playback started during the unlock", async () => {
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    ensureAudioRunning.mockImplementationOnce(async () => {
+      useAppStore.getState().actions.setIsPlaying(true);
+      useAppStore.getState().actions.setAudioState("running");
+    });
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    releaseAcquireClaim.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+    await waitFor(() => expect(releaseAcquireClaim).toHaveBeenCalledTimes(1));
+
+    // Playback owns the viewport now; the mic must not be held under it.
+    expect(resumeSpy).not.toHaveBeenCalled();
+  });
+
+  it("idle gate: shows the one fixed line after a non-denial probe failure", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "idle",
+        error: "Camera unavailable — try again.",
+      });
+    });
+    render(<Viewport />);
+
+    expect(screen.getByRole("button", { name: /enable camera & mic/i })).toBeInTheDocument();
+    expect(screen.getByText("Camera unavailable — try again.")).toBeInTheDocument();
+  });
+
+  it("merged pill: a failed unlock shows the still-blocked line and skips the reconnect", async () => {
+    ensureAudioRunning.mockRejectedValueOnce(new Error("still blocked"));
+    act(() => {
+      useAppStore.getState().actions.setAudioState("resume-required");
+      useAppStore.getState().actions.setMedia({ stream: null, status: "suspended", error: null });
+    });
+    // spyOn returns the spy an earlier test installed; clear its calls.
+    const resumeSpy = vi
+      .spyOn(useAppStore.getState().actions, "resumeMedia")
+      .mockResolvedValue(undefined);
+    resumeSpy.mockClear();
+    render(<Viewport />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupted — tap to resume" }));
+
+    expect(await screen.findByText("Still blocked — try the volume keys or reopen the app.")).toBeInTheDocument();
+    expect(ensureAudioRunning).toHaveBeenCalledTimes(1);
+    expect(resumeSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Interrupted — tap to resume" })).toBeInTheDocument();
   });
 
   it("resume-required: tapping the audio pill resumes audio and hides it", async () => {

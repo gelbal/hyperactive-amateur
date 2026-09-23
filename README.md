@@ -85,7 +85,16 @@ UPSTASH_REDIS_REST_TOKEN=...
 ```
 
 Vercel KV's `KV_REST_API_URL` and `KV_REST_API_TOKEN` aliases work in
-place of the Upstash names. The limiter URL must be HTTPS in production.
+place of the Upstash names, as does the `STORAGE_KV_REST_API_URL` and
+`STORAGE_KV_REST_API_TOKEN` pair that Vercel's Upstash Marketplace
+integration writes under the `STORAGE` prefix (the read-only token and
+the `rediss://` URLs it also writes are not used). The limiter URL must
+be HTTPS in production.
+If the configured backend fails at request time (rotated credentials, a
+deleted store, an outage), the proxy logs
+`[gemini-proxy] rate limiter unavailable` with the HTTP status and keeps
+serving with a per-instance in-memory limiter until the backend is
+repaired; only a missing backend fails closed.
 `GEMINI_RATE_LIMIT_MAX` and `GEMINI_RATE_LIMIT_WINDOW_SECONDS` are
 optional; they default to 60 requests per 10 minutes per route bucket
 and client identity. Production browser calls also fetch a short-lived

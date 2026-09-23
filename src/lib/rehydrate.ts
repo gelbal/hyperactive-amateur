@@ -1,16 +1,19 @@
-// ABOUTME: rehydrate — load, validate, decode, and dispatch persisted project state.
-// ABOUTME: Object URLs are recreated on every load (not persisted); degraded loads keep one backup.
+// ABOUTME: rehydrate — load (with bounded retry), validate, decode, and dispatch persisted project state.
+// ABOUTME: Recovery is silent: notes go to the log, the pre-repair backup is best-effort insurance, autosave never waits.
 import {
   InvalidMetadataError,
   loadProject,
   migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
+  resetPersistenceStore,
   saveProject,
   saveRecoveryBackup,
   type PersistedProject,
   type PersistedTrack,
 } from "./persistence";
 import { getAudioContext } from "./audio";
+import { waitMs } from "./async";
+import { LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 import { TAGS, type AppState, type Clip, type CutSubdivision, type Subgenre, type Tag, type Track, type Vibe } from "../types";
 import {
@@ -28,6 +31,21 @@ export interface RehydrateResult {
   degraded: boolean;
   warnings: string[];
 }
+
+export interface RehydrateOptions {
+  // Waits before the second and third load attempts; the array length sets
+  // the number of retries.
+  retryDelaysMs?: number[];
+}
+
+// iOS 17.4+ can reject an IndexedDB open with "Connection to Indexed
+// Database server lost" (WebKit 273827) and recover on a later attempt.
+// Three attempts behind the loading state, then the App shows its single
+// failure line with autosave off. Attempts are retried on rejection only:
+// there is no per-attempt timeout, because an abandoned attempt keeps
+// reading and would contend with the next one (a slow but healthy load of
+// eight clips must never end with autosave off).
+const DEFAULT_RETRY_DELAYS_MS = [300, 900];
 
 const TRACK_COUNT = 8;
 const CUT_SUBDIVISIONS: CutSubdivision[] = ["16n", "8n", "4n", "2n", "1m"];
@@ -215,22 +233,17 @@ function normalizeClipFields(
 
   const startRaw = finiteNumber(raw.trimStartMs) ?? 0;
   const endRaw = finiteNumber(raw.trimEndMs) ?? durationMs;
-  const trimStartMs = Math.max(0, Math.min(durationMs, startRaw));
-  const trimEndMs = Math.max(0, Math.min(durationMs, endRaw));
+  let trimStartMs = Math.max(0, Math.min(durationMs, startRaw));
+  let trimEndMs = Math.max(0, Math.min(durationMs, endRaw));
   if (trimStartMs !== startRaw || trimEndMs !== endRaw) {
     warn(warnings, `Track ${trackId + 1} trim window was clamped.`);
   }
+  // Trims are metadata over an immutable blob: an inverted window is reset
+  // to the whole clip rather than costing the clip its bytes.
   if (trimEndMs <= trimStartMs) {
-    warn(warnings, `Track ${trackId + 1} trim window was invalid and its clip was dropped.`);
-    return {
-      clipBlob: null,
-      audioBlob: null,
-      posterBlob: null,
-      trimStartMs: 0,
-      trimEndMs: 0,
-      durationMs: 0,
-      audioStatus: "ok",
-    };
+    warn(warnings, `Track ${trackId + 1} trim window was invalid and reset.`);
+    trimStartMs = 0;
+    trimEndMs = durationMs;
   }
 
   return {
@@ -370,6 +383,27 @@ async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(buffer.slice(0));
 }
 
+// Why a clip landed in repair state is the one fact a device run cannot
+// reconstruct later: record the container, the sidecar's presence, and the
+// decoder's own error at the moment the decode fails.
+export function logDecodeFailure(
+  phase: "load" | "repair",
+  trackId: number,
+  clipBlob: Blob,
+  audioBlob: Blob | null,
+  err: unknown,
+): void {
+  logger.warn(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+    phase,
+    trackId,
+    hasSidecar: audioBlob !== null,
+    blobType: clipBlob.type,
+    blobSize: clipBlob.size,
+    name: err instanceof Error ? err.name : "",
+    message: err instanceof Error ? err.message : String(err),
+  });
+}
+
 export async function decodeClipAudio(clipBlob: Blob, audioBlob?: Blob | null): Promise<AudioBuffer> {
   if (audioBlob) {
     try {
@@ -414,43 +448,56 @@ async function rehydrateClip(
   };
 }
 
-async function trySaveRecoveryBackup(
-  persisted: PersistedProject,
-  warnings: string[],
-): Promise<boolean> {
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// The pre-repair backup is insurance for the original metadata (trim values
+// and the like): the live record references every real blob a build wrote,
+// so a failed backup write is logged and never blocks hydration or saving.
+async function ensureRecoveryBackup(persisted: PersistedProject): Promise<void> {
   try {
     await saveRecoveryBackup(persisted);
-    return true;
-  } catch {
-    warn(
-      warnings,
-      "Recovery backup could not be written. Saved project was left untouched and autosave was paused.",
-    );
-    return false;
+  } catch (err) {
+    logger.warn(LOG_EVENTS.RECOVERY_BACKUP_FAILED, { message: errorMessage(err) });
   }
 }
 
-function revokeRecoveredClipUrls(tracks: Track[]): void {
-  for (const track of tracks) {
-    if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
-    if (track.clip?.posterUrl) URL.revokeObjectURL(track.clip.posterUrl);
+// Retries transient load failures only. InvalidMetadataError is final: the
+// record has already been moved to quarantine, so a second attempt would
+// load the legacy record or nothing and hide the quarantine.
+async function loadProjectWithRetry(
+  options: RehydrateOptions,
+): Promise<Awaited<ReturnType<typeof loadProject>>> {
+  const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await loadProject();
+    } catch (err) {
+      if (err instanceof InvalidMetadataError) throw err;
+      if (attempt >= delays.length) throw err;
+      await waitMs(delays[attempt]);
+      // A rejected open is cached by idb-keyval; the retry needs a fresh one.
+      resetPersistenceStore();
+    }
   }
 }
 
-export async function rehydrateFromStorage(): Promise<RehydrateResult> {
+export async function rehydrateFromStorage(options: RehydrateOptions = {}): Promise<RehydrateResult> {
   let persisted: Awaited<ReturnType<typeof loadProject>>;
   try {
-    persisted = await loadProject();
+    persisted = await loadProjectWithRetry(options);
   } catch (err) {
-    // Invalid current metadata is its own failure, not a legacy migration
-    // candidate: the record and the last good backup stay untouched.
-    const warnings = [
-      err instanceof InvalidMetadataError
-        ? "Saved project metadata was invalid. Autosave was paused to avoid overwriting it."
-        : "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
-    ];
-    useAppStore.getState().actions.setRecoveryWarnings(warnings);
-    return { ok: false, degraded: true, warnings };
+    if (err instanceof InvalidMetadataError) {
+      // The unreadable record is already set aside; the app starts empty
+      // with autosave on, and blob GC stays held while the quarantine exists.
+      logger.warn(LOG_EVENTS.RECOVERY_QUARANTINED, { message: err.message });
+      return { ok: false, degraded: true, warnings: [err.message] };
+    }
+    // Anything else (IndexedDB failing to open after every attempt) rejects:
+    // the App keeps autosave off so a transient read failure followed by a
+    // successful write cannot replace a good project with an empty one.
+    throw err;
   }
   if (!persisted) return cleanResult(false);
 
@@ -458,24 +505,21 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
   const warnings: string[] = [];
   const normalized = normalizeProject(persisted, warnings);
   warnMissingMediaBlobs(persisted, warnings);
-  let recoveryBackupWritten = false;
+  let backupAttempted = false;
   if (warnings.length > 0 || persisted.storageFormat === "legacy") {
-    recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
-    if (!recoveryBackupWritten) {
-      useAppStore.getState().actions.setRecoveryWarnings(warnings);
-      return { ok: false, degraded: true, warnings };
-    }
+    backupAttempted = true;
+    await ensureRecoveryBackup(persisted);
   }
   if (persisted.storageFormat === "legacy") {
+    // migrateLegacyProject writes blob records, then ha:meta, then deletes
+    // the legacy keys, then collects orphans: a failure before the delete
+    // leaves the monolith intact, and a failure after it leaves only
+    // orphaned records. Either way the in-memory project stays usable and
+    // the next save writes schema 2.
     try {
       await migrateLegacyProject(normalized);
-    } catch {
-      warn(
-        warnings,
-        "Saved project could not be migrated. Autosave was paused to avoid overwriting it.",
-      );
-      useAppStore.getState().actions.setRecoveryWarnings(warnings);
-      return { ok: false, degraded: true, warnings };
+    } catch (err) {
+      logger.warn(LOG_EVENTS.RECOVERY_MIGRATION_FAILED, { message: errorMessage(err) });
     }
   }
 
@@ -504,7 +548,8 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
               // Keep the decoded buffer; the sidecar stays absent.
             }
           }
-        } catch {
+        } catch (err) {
+          logDecodeFailure("load", pt.id, pt.clipBlob, pt.audioBlob ?? null, err);
           // A clip already persisted as unavailable warns at the original
           // failure, not on every later load — TrackInfo carries the hint.
           if (!wasUnavailable) warnAudioUnavailable(warnings, pt.id);
@@ -536,13 +581,8 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     if (!track.clip && track.id in tagReasoning) delete tagReasoning[track.id];
   }
 
-  if (warnings.length > 0 && !recoveryBackupWritten) {
-    recoveryBackupWritten = await trySaveRecoveryBackup(persisted, warnings);
-    if (!recoveryBackupWritten) {
-      revokeRecoveredClipUrls(tracks);
-      useAppStore.getState().actions.setRecoveryWarnings(warnings);
-      return { ok: false, degraded: true, warnings };
-    }
+  if (warnings.length > 0 && !backupAttempted) {
+    await ensureRecoveryBackup(persisted);
   }
 
   const project: AppState["project"] = {
@@ -562,12 +602,15 @@ export async function rehydrateFromStorage(): Promise<RehydrateResult> {
     )
     .map((track) => track.id);
   useAppStore.getState().actions.hydrateProject(project, manuallyTagged);
-  useAppStore.getState().actions.setRecoveryWarnings(warnings);
+  // Recovery notes are diagnostics, not user actions: the grid already shows
+  // what was recovered and the per-track hint carries the only actionable
+  // state, so they go to the log ring buffer instead of the screen.
+  if (warnings.length > 0) logger.info(LOG_EVENTS.RECOVERY_APPLIED, { warnings });
   // Persist a load-time heal right away: autosave only attaches after this
   // function resolves and only fires on future edits, so without this write a
   // healed clip (or regenerated sidecar) would silently repeat its repair on
   // every load — and stay broken on browsers whose decoder cannot heal it.
-  // Clean loads only: a degraded load keeps the saved original protected.
+  // Clean loads only: on a degraded load the next edit's autosave carries it.
   if (audioRepairedDuringLoad && warnings.length === 0) {
     try {
       await saveProject(useAppStore.getState());

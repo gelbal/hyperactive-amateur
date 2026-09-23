@@ -1,7 +1,7 @@
 // ABOUTME: audioRepair — retries decoding repair-state clip audio once sound is available.
 // ABOUTME: Subscribes to audioState transitions; heals audioStatus:"unavailable" clips in place.
 import { useAppStore } from "../store/useAppStore";
-import { decodeClipAudio } from "./rehydrate";
+import { decodeClipAudio, logDecodeFailure } from "./rehydrate";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
 
@@ -42,8 +42,9 @@ export async function attemptAudioRepair(): Promise<void> {
         if (healedClip && healedClip !== clip && healedClip.audioStatus === "ok") {
           logger.info(LOG_EVENTS.AUDIO_REPAIRED, { trackId: track.id });
         }
-      } catch {
-        // Still undecodable — stays in repair state.
+      } catch (err) {
+        // Still undecodable — stays in repair state; the log says why.
+        logDecodeFailure("repair", track.id, clip.blob, clip.audioBlob ?? null, err);
       }
     }
   } finally {

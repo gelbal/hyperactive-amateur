@@ -9,10 +9,27 @@ import {
   clearProject,
   loadProject,
   loadRecoveryBackup,
+  resetPersistenceStore,
   saveProject,
   saveRecoveryBackup,
   snapshot,
 } from "./persistence";
+
+// An IDBOpenDBRequest stand-in that fails asynchronously, the way WebKit's
+// "Connection to Indexed Database server lost" surfaces (WebKit 273827).
+function failingOpenRequest(): IDBOpenDBRequest {
+  const request = {
+    onupgradeneeded: null as null | (() => void),
+    onsuccess: null as null | (() => void),
+    onerror: null as null | (() => void),
+    onabort: null as null | (() => void),
+    oncomplete: null as null | (() => void),
+    result: undefined,
+    error: new DOMException("Connection to Indexed Database server lost", "UnknownError"),
+  };
+  setTimeout(() => request.onerror?.(), 0);
+  return request as unknown as IDBOpenDBRequest;
+}
 import { useAppStore } from "../store/useAppStore";
 import { validV1MonolithProject } from "./__fixtures__/persistedProjects";
 
@@ -25,6 +42,7 @@ vi.mock("idb-keyval", async (importOriginal) => {
 });
 
 const META_KEY = "ha:meta";
+const QUARANTINE_KEY = "ha:meta-quarantine";
 const BACKUP_KEY = "ha:meta-backup";
 const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
 const LEGACY_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
@@ -370,17 +388,91 @@ describe("persistence", () => {
     expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
   });
 
-  it("rejects an existing-but-invalid ha:meta instead of treating it as legacy", async () => {
+  it("quarantines an existing-but-invalid ha:meta instead of treating it as legacy", async () => {
     const invalidMeta = { schemaVersion: 2, tracks: "not-an-array" };
     await set(META_KEY, invalidMeta);
     await set(LEGACY_PROJECT_KEY, { schemaVersion: 1, tracks: [] });
 
     await expect(loadProject()).rejects.toMatchObject({ name: "InvalidMetadataError" });
 
-    // The invalid record is preserved for recovery, never rewritten, and the
-    // legacy record cannot be reached while ha:meta exists.
-    expect(await get(META_KEY)).toEqual(invalidMeta);
+    // The unreadable record is set aside under the quarantine key (never
+    // rewritten in place), so the app can start fresh and keep saving; the
+    // legacy record is untouched.
+    expect(await get(META_KEY)).toBeUndefined();
+    expect(await get(QUARANTINE_KEY)).toEqual(invalidMeta);
     expect(await get(LEGACY_PROJECT_KEY)).toEqual({ schemaVersion: 1, tracks: [] });
+  });
+
+  it("holds blob GC while a quarantine record has no readable track list", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(13));
+    await saveProject(useAppStore.getState());
+    const orphaned = await storedBlobKeys();
+    expect(orphaned.length).toBeGreaterThan(0);
+    await set(QUARANTINE_KEY, { schemaVersion: 2, tracks: "not-an-array" });
+    useAppStore.getState().actions.clearTrackClip(0);
+
+    await saveProject(useAppStore.getState());
+    expect(await storedBlobKeys()).toEqual(orphaned);
+
+    await del(QUARANTINE_KEY);
+    await saveProject(useAppStore.getState());
+    expect(await storedBlobKeys()).toEqual([]);
+  });
+
+  it("roots the blob refs of a quarantine record that has a track list, and collects the rest", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(14));
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    const keptRef = meta.tracks[0].clipBlobRef as string;
+    const allRefs = await storedBlobKeys();
+    expect(allRefs.length).toBeGreaterThan(1);
+    // A future-schema record still names its media by ref.
+    await set(QUARANTINE_KEY, { schemaVersion: 2, tracks: [{ id: 0, clipBlobRef: keptRef }] });
+    useAppStore.getState().actions.clearTrackClip(0);
+
+    await saveProject(useAppStore.getState());
+
+    expect(await storedBlobKeys()).toEqual([keptRef]);
+  });
+
+  it("refuses to overwrite an unresolved quarantine record with a second one", async () => {
+    const first = { schemaVersion: 2, tracks: "first" };
+    const second = { schemaVersion: 2, tracks: "second" };
+    await set(QUARANTINE_KEY, first);
+    await set(META_KEY, second);
+
+    await expect(loadProject()).rejects.toThrow(/quarantine/);
+
+    expect(await get(QUARANTINE_KEY)).toEqual(first);
+    expect(await get(META_KEY)).toEqual(second);
+  });
+
+  it("leaves a record from a newer schema untouched and fails the load instead of quarantining it", async () => {
+    const newer = { schemaVersion: 3, tracks: [] };
+    await set(META_KEY, newer);
+
+    await expect(loadProject()).rejects.toThrow(/newer/);
+
+    expect(await get(META_KEY)).toEqual(newer);
+    expect(await get(QUARANTINE_KEY)).toBeUndefined();
+  });
+
+  it("reopens the database after a failed open once the store is reset", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(15));
+    await saveProject(useAppStore.getState());
+    resetPersistenceStore();
+    const openSpy = vi.spyOn(indexedDB, "open").mockImplementationOnce(() => failingOpenRequest());
+
+    await expect(loadProject()).rejects.toMatchObject({ name: "UnknownError" });
+    // idb-keyval caches the rejected open: without a reset every later call
+    // fails the same way.
+    await expect(loadProject()).rejects.toMatchObject({ name: "UnknownError" });
+
+    resetPersistenceStore();
+
+    expect((await loadProject())?.tracks[0].clipBlob).not.toBeNull();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
   });
 
   it("omits transient playback and recording fields from persistence snapshots", () => {
@@ -402,6 +494,7 @@ describe("persistence", () => {
     await saveProject(useAppStore.getState());
     await saveRecoveryBackup((await loadProject())!);
     await set(LEGACY_PROJECT_KEY, { schemaVersion: 1 });
+    await set(QUARANTINE_KEY, { schemaVersion: 3, tracks: [] });
 
     await clearProject();
 
@@ -409,6 +502,7 @@ describe("persistence", () => {
     expect(await get(META_KEY)).toBeUndefined();
     expect(await loadRecoveryBackup()).toBeNull();
     expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
+    expect(await get(QUARANTINE_KEY)).toBeUndefined();
     expect(await storedBlobKeys()).toEqual([]);
   });
 });

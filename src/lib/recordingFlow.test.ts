@@ -49,6 +49,13 @@ vi.mock("tone", () => ({
 }));
 
 vi.mock("./media", () => ({
+  ACQUIRE_FAILED_COPY: "Camera unavailable — try again.",
+  CAMERA_DENIED_COPY: "Camera blocked — allow camera and microphone access in your browser, then reload.",
+  isPermissionDenial: (err: unknown) => {
+    const name =
+      typeof err === "object" && err !== null && "name" in err ? String((err as { name: unknown }).name) : "";
+    return name === "NotAllowedError" || name === "SecurityError";
+  },
   acquireRecordingStream: mediaMocks.acquireRecordingStream,
   releaseRecordingStream: mediaMocks.releaseRecordingStream,
   invalidatePendingAcquire: mediaMocks.invalidatePendingAcquire,
@@ -103,8 +110,10 @@ import {
   cancelCurrentRecording,
   recordIntoTrack,
 } from "./recordingFlow";
+import { ACQUIRE_FAILED_COPY, CAMERA_DENIED_COPY } from "./media";
 import { useAppStore } from "../store/useAppStore";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
 import { clearLogs } from "./logger";
@@ -145,16 +154,17 @@ async function observeResolution(
   return result;
 }
 
+// EventTarget-based so the warm-up grace can listen for unmute/ended.
 function makeTrack(
   kind: "audio" | "video",
   overrides: Partial<Pick<MediaStreamTrack, "muted" | "readyState">> = {},
 ): MediaStreamTrack {
-  return {
+  return Object.assign(new EventTarget(), {
     kind,
     muted: false,
     readyState: "live",
     ...overrides,
-  } as MediaStreamTrack;
+  }) as unknown as MediaStreamTrack;
 }
 
 class LifecycleTrack extends EventTarget {
@@ -245,8 +255,11 @@ function makeAbortableRecordClip() {
 }
 
 describe("recordingFlow", () => {
+  let audioSession: ReturnType<typeof installNavigatorAudioSession>;
+
   beforeEach(() => {
     __resetAudioLifecycleForTesting();
+    audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     audioMocks.context.state = "running";
@@ -271,7 +284,69 @@ describe("recordingFlow", () => {
   });
 
   afterEach(() => {
+    audioSession.uninstall();
     vi.useRealTimers();
+  });
+
+  it("declares capture intent before unlocking audio so the session type never passes through playback", async () => {
+    vi.useFakeTimers();
+    const typesAtAcquire: string[] = [];
+    mediaMocks.acquireRecordingStream.mockImplementation(async () => {
+      typesAtAcquire.push(navigator.audioSession?.type ?? "missing");
+      return makeStream();
+    });
+
+    const promise = recordIntoTrack(1);
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(typesAtAcquire).toEqual(["play-and-record"]);
+    expect(audioSession.types).toEqual(["play-and-record", "playback"]);
+  });
+
+  it("reports a fixed line and reopens the gate when acquisition fails outside cancellation", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      ),
+    );
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(mediaMocks.requestMedia).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(ACQUIRE_FAILED_COPY).toBe("Camera unavailable — try again.");
+    expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
+    expect(onError).not.toHaveBeenCalledWith(expect.stringMatching(/AudioSession/));
+    expect(useAppStore.getState().recording.state).toBe("idle");
+  });
+
+  it("reports the denied line on the row when the acquire itself was a permission denial", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(mediaMocks.requestMedia).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(CAMERA_DENIED_COPY);
+  });
+
+  it("never waits on the re-probe: a pending probe cannot hold the flow open", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException("AudioSession category is not compatible with audio capture.", "InvalidStateError"),
+    );
+    mediaMocks.requestMedia.mockReturnValue(new Promise(() => undefined));
+
+    await expect(recordIntoTrack(1, { onError })).resolves.toBe(false);
+
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(onError).toHaveBeenCalledWith(ACQUIRE_FAILED_COPY);
   });
 
   it("refuses to start recording while export is active", async () => {
@@ -305,7 +380,7 @@ describe("recordingFlow", () => {
 
     expect(toneMocks.start).toHaveBeenCalledTimes(1);
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith("Couldn't start audio — tap the audio pill, then try again.");
+    expect(onError).toHaveBeenCalledWith("Couldn't start audio — try again.");
     expect(useAppStore.getState().recording.state).toBe("idle");
   });
 
@@ -483,6 +558,29 @@ describe("recordingFlow", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
     expect(mediaMocks.releaseRecordingStream).toHaveBeenCalledWith(stream);
+  });
+
+  it("records after a cold audio track unmutes within the warm-up grace", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const audioTrack = makeTrack("audio", { muted: true });
+    mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream([audioTrack, makeTrack("video")]));
+    setTimeout(() => {
+      (audioTrack as { muted: boolean }).muted = false;
+      audioTrack.dispatchEvent(new Event("unmute"));
+    }, 400);
+
+    const promise = recordIntoTrack(1, { onError });
+    await flushMicrotasks();
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(useAppStore.getState().recording.state).toBe("countdown");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+
+    await abortPendingFlow(promise);
   });
 
   it.each([

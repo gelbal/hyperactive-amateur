@@ -92,8 +92,9 @@ describe("attemptAudioRepair", () => {
     expect(clip?.audioBlob?.type).toBe("audio/wav");
   });
 
-  it("leaves clips in repair state when decode still fails", async () => {
+  it("leaves clips in repair state when decode still fails, and logs why", async () => {
     audioMocks.decodeAudioData.mockRejectedValue(new Error("still broken"));
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     seedRepairTrack(0, makeRepairClip());
 
     await attemptAudioRepair();
@@ -102,6 +103,16 @@ describe("attemptAudioRepair", () => {
     expect(track.clip?.audioStatus).toBe("unavailable");
     expect(track.muted).toBe(true);
     expect(track.mutedByRepair).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+      phase: "repair",
+      trackId: 0,
+      hasSidecar: true,
+      blobType: "video/webm",
+      blobSize: 1,
+      name: "Error",
+      message: "still broken",
+    });
+    warnSpy.mockRestore();
   });
 
   it("does nothing while an export owns playback", async () => {

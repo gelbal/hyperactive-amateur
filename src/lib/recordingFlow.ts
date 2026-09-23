@@ -3,25 +3,37 @@
 import { useAppStore } from "../store/useAppStore";
 import { recordClip } from "./recorder";
 import { getAudioContext } from "./audio";
-import { AudioUnavailableError, ensureAudioRunning } from "./audioLifecycle";
+import { AudioUnavailableError, ensureAudioRunning, noteMicAcquireStarted } from "./audioLifecycle";
 import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
-import { acquireRecordingStream, releaseRecordingStream, requestMedia } from "./media";
+import {
+  ACQUIRE_FAILED_COPY,
+  CAMERA_DENIED_COPY,
+  acquireRecordingStream,
+  isPermissionDenial,
+  releaseRecordingStream,
+  requestMedia,
+} from "./media";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
 import { canStartAudibleAction } from "./audibleActionGate";
-import { allTracksUsable, registerRecordingInterruptHandler } from "./streamLifecycle";
+import {
+  allTracksUsable,
+  registerRecordingInterruptHandler,
+  waitForUsableTracks,
+} from "./streamLifecycle";
+import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import { saveNow } from "./autoSave";
 import { requestPersistence } from "./install";
 import type { Clip, Tag } from "../types";
 
 export const RECORD_DURATION_MS = 2000;
 export const COUNTDOWN_MS = 3000;
-const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — tap the audio pill, then try again.";
+const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — try again.";
 const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
 export type RecordingCancelReason = "user" | "interrupted";
@@ -123,30 +135,6 @@ registerRecordingInterruptHandler({
   interrupt: (reason) => cancelCurrentRecording(reason),
 });
 
-function waitMs(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(makeAbortError("Aborted before wait started"));
-      return;
-    }
-    const delayMs = Math.max(0, ms);
-    if (delayMs === 0) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, delayMs);
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-      reject(makeAbortError("Aborted during wait"));
-    };
-    signal.addEventListener("abort", onAbort);
-  });
-}
-
 async function waitUntilAudioTime(
   deadlineSeconds: number,
   audioContext: Pick<BaseAudioContext, "currentTime">,
@@ -157,16 +145,6 @@ async function waitUntilAudioTime(
     const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
     if (remainingMs <= 0) return;
     await waitMs(remainingMs, signal);
-  }
-}
-
-function makeAbortError(message: string): DOMException {
-  return new DOMException(message, "AbortError");
-}
-
-function throwIfFlowAborted(signal: AbortSignal, message: string): void {
-  if (signal.aborted) {
-    throw makeAbortError(message);
   }
 }
 
@@ -258,6 +236,10 @@ async function runFlow(
   const externalStream = options.stream ?? null;
   let stream: MediaStream | null = null;
 
+  // A flow that will acquire its own stream declares capture intent before
+  // the audio unlock, so the session type never passes through "playback"
+  // on the way to getUserMedia. A station-supplied stream is already held.
+  const releaseCaptureIntent = externalStream ? null : noteMicAcquireStarted();
   try {
     try {
       await ensureAudioRunning();
@@ -280,17 +262,24 @@ async function runFlow(
         if (signal.aborted) {
           throw makeAbortError("Aborted during media acquisition");
         }
-        // Permission may have been revoked since the last grant — surface the
-        // viewport gate so the user can re-allow.
+        // Permission may have been revoked since the last grant — re-probe so
+        // the viewport gate can take over, without waiting on it: a pending
+        // probe must never hold the flow (and its Cancel) open. With the
+        // station dismissed the gate is not on screen, so the row's line
+        // carries the right next action from the failure itself: the
+        // settings for a denial, a retry for anything else.
         void requestMedia();
-        options.onError?.(e instanceof Error ? e.message : String(e));
+        options.onError?.(isPermissionDenial(e) ? CAMERA_DENIED_COPY : ACQUIRE_FAILED_COPY);
         return false;
       }
     }
     if (!stream) return false;
     throwIfFlowAborted(signal, "Aborted before countdown");
 
-    if (!allTracksUsable(stream)) {
+    // Already-usable tracks take the synchronous path; a cold track (muted
+    // for a few hundred ms after acquisition on phones) gets a bounded grace.
+    const tracksUsable = allTracksUsable(stream) || (await waitForUsableTracks(stream, { signal }));
+    if (!tracksUsable) {
       actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
       options.onError?.(RECORDING_INTERRUPTED_COPY);
       return false;
@@ -324,8 +313,8 @@ async function runFlow(
     };
     actions.setTrackClip(trackId, newClip);
     try {
-      // saveNow resolves false when the degraded-load autosave pause skipped
-      // the write — no persistence request should anchor to a skipped save.
+      // saveNow resolves false when autosave has not started (load pending
+      // or failed) — no persistence request should anchor to a skipped save.
       if (await saveNow()) requestPersistenceAfterClipSave();
     } catch {
       // saveNow logs autosave.error; durability failure is not a recording failure.
@@ -354,6 +343,7 @@ async function runFlow(
     return false;
   } finally {
     if (!externalStream && stream) releaseRecordingStream(stream);
+    releaseCaptureIntent?.();
     actions.setCountdownEndsAt(null);
     actions.setRecordingState("idle", null);
   }

@@ -89,7 +89,6 @@ export interface AppActions {
     showVideo: boolean,
     source?: "user" | "system",
   ) => void;
-  setRecoveryWarnings: (warnings: string[]) => void;
   setStorageDurability: (durability: StorageDurability) => void;
   setMedia: (next: { stream: MediaStream | null; status: MediaStatus; error: string | null }) => void;
   setPreferredDevices: (next: { video?: string | null; audio?: string | null }) => void;
@@ -499,9 +498,6 @@ export const useAppStore = create<AppStore>((set) => ({
         return { project: { ...state.project, tracks: next }, session };
       }),
 
-    setRecoveryWarnings: (warnings) =>
-      set((state) => ({ ui: { ...state.ui, recoveryWarnings: [...warnings] } })),
-
     setStorageDurability: (storageDurability) =>
       set((state) => ({ session: { ...state.session, storageDurability } })),
 
@@ -548,7 +544,8 @@ export const useAppStore = create<AppStore>((set) => ({
     // hoists the static binding and we only invoke acquireRecordingStream
     // lazily inside the action body — by which time both modules are loaded.
     // On success acquireRecordingStream flips status to "granted"; on failure
-    // it flips to "denied" and we let the gate take over.
+    // it leaves the slice where the retry lives ("suspended" keeps this pill;
+    // only an explicit permission denial hands over to the gate).
     resumeMedia: async () => {
       if (useAppStore.getState().recording.state !== "idle") return;
       if (isAcquireInFlight()) return;

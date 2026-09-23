@@ -6,6 +6,7 @@ import "fake-indexeddb/auto";
 const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicHeld: vi.fn(),
   noteMicReleased: vi.fn(),
+  noteMicAcquireStarted: vi.fn(() => () => undefined),
 }));
 const toneMocks = vi.hoisted(() => ({
   rawContext: { state: "suspended" as AudioContextState },
@@ -20,17 +21,20 @@ vi.mock("tone", () => ({
 vi.mock("./audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
+  noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
 }));
 
 import * as Tone from "tone";
 import {
   attachStreamEndedListeners,
   installVisibilityListener,
+  markSuspendedWithoutStream,
   onMediaRecorderError,
   registerRecordingInterruptHandler,
   registerStreamLifecycle,
   releaseMediaStream,
   suspendMediaStream,
+  waitForUsableTracks,
 } from "./streamLifecycle";
 import { acquireRecordingStream, __resetMediaForTesting } from "./media";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
@@ -129,6 +133,84 @@ describe("streamLifecycle", () => {
       suspendMediaStream(stream);
 
       expect(audioLifecycleMocks.noteMicReleased).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("markSuspendedWithoutStream", () => {
+    it("moves a granted user to suspended with no stream and no error", () => {
+      useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+
+      markSuspendedWithoutStream();
+
+      expect(useAppStore.getState().media).toMatchObject({
+        stream: null,
+        status: "suspended",
+        error: null,
+      });
+    });
+  });
+
+  describe("waitForUsableTracks", () => {
+    it("waits through cold-track mute until unmute at 450ms", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+      // Mid-poll on purpose: the settle must cancel the in-flight wait.
+      setTimeout(() => tracks[1].fireUnmute(), 450);
+
+      const usable = waitForUsableTracks(stream);
+      let settled = false;
+      void usable.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(449);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(usable).resolves.toBe(true);
+      expect(settled).toBe(true);
+      // The poll loop stops with the settle; no timer is left behind.
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("returns false when a live track never unmutes before timeout", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+
+      const usable = waitForUsableTracks(stream);
+      let settled = false;
+      void usable.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(usable).resolves.toBe(false);
+      expect(settled).toBe(true);
+    });
+
+    it("rejects with AbortError when aborted during the grace period", async () => {
+      vi.useFakeTimers();
+      const { stream, tracks } = makeStream();
+      tracks[1].muted = true;
+      const controller = new AbortController();
+
+      const usable = waitForUsableTracks(stream, { signal: controller.signal });
+      controller.abort("user");
+
+      await expect(usable).rejects.toMatchObject({ name: "AbortError" });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("returns immediately when audio and video tracks are already usable", async () => {
+      vi.useFakeTimers();
+      const { stream } = makeStream();
+
+      await expect(waitForUsableTracks(stream)).resolves.toBe(true);
+
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 
@@ -568,8 +650,16 @@ describe("streamLifecycle", () => {
       }
     });
 
-    it("on visible: marks audio resume required without starting Tone", () => {
-      const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const dispatchVisible = () => {
+      Object.defineProperty(document, "hidden", {
+        value: false,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    it("on visible: a suspended camera returns to granted so the station re-acquires without a tap", () => {
+      const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => undefined);
       useAppStore.getState().actions.setMedia({
         stream: null,
         status: "suspended",
@@ -577,20 +667,84 @@ describe("streamLifecycle", () => {
       });
       const detach = installVisibilityListener();
 
-      Object.defineProperty(document, "hidden", {
-        value: false,
-        configurable: true,
-      });
-      document.dispatchEvent(new Event("visibilitychange"));
+      try {
+        dispatchVisible();
 
-      expect(Tone.start).not.toHaveBeenCalled();
-      expect(useAppStore.getState().playback.audioState).toBe("resume-required");
-      expect(loggerSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_RESUME_REQUIRED, {
-        state: "suspended",
+        expect(useAppStore.getState().media).toMatchObject({
+          stream: null,
+          status: "granted",
+          error: null,
+        });
+        expect(infoSpy).toHaveBeenCalledWith(LOG_EVENTS.MEDIA_RECONNECTED, { source: "visible" });
+      } finally {
+        detach();
+      }
+    });
+
+    it.each([
+      {
+        name: "playback is running",
+        arrange: () => useAppStore.getState().actions.setIsPlaying(true),
+      },
+      {
+        name: "an export is running",
+        arrange: () => useAppStore.getState().actions.setIsExporting(true),
+      },
+      {
+        name: "a recording is not idle",
+        arrange: () => useAppStore.getState().actions.setRecordingState("reviewing"),
+      },
+    ])("on visible: leaves a suspended camera alone while $name", ({ arrange }) => {
+      useAppStore.getState().actions.setMedia({
+        stream: null,
+        status: "suspended",
+        error: null,
       });
-      // Status stays suspended — auto-resume would re-light the camera.
-      expect(useAppStore.getState().media.status).toBe("suspended");
-      detach();
+      arrange();
+      const detach = installVisibilityListener();
+
+      try {
+        dispatchVisible();
+
+        expect(useAppStore.getState().media.status).toBe("suspended");
+      } finally {
+        detach();
+        // The store's reset() refuses to run mid-export, so an arranged
+        // export would otherwise leak into every later test.
+        useAppStore.getState().actions.setIsExporting(false);
+      }
+    });
+
+    it.each(["idle", "requesting", "denied", "granted"] as const)(
+      "on visible: does not touch %s media",
+      (status) => {
+        useAppStore.getState().actions.setMedia({ stream: null, status, error: null });
+        const detach = installVisibilityListener();
+
+        try {
+          dispatchVisible();
+
+          expect(useAppStore.getState().media.status).toBe(status);
+        } finally {
+          detach();
+        }
+      },
+    );
+
+    it("on visible: neither starts Tone nor pre-marks audio resume-required", () => {
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      toneMocks.rawContext.state = "suspended";
+      const detach = installVisibilityListener();
+
+      try {
+        dispatchVisible();
+
+        expect(Tone.start).not.toHaveBeenCalled();
+        expect(useAppStore.getState().playback.audioState).toBe("unknown");
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        detach();
+      }
     });
 
     it.each([

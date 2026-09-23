@@ -6,9 +6,10 @@ import "./index.css";
 import { App } from "./App";
 import { installWindowHook } from "./lib/logger";
 
-// window.__haLogs is a developer convenience for poking at the in-memory
-// log buffer from devtools — no need to expose it on a public deploy.
-if (import.meta.env.DEV) installWindowHook();
+// window.__haLogs exposes the in-memory log ring buffer (no secrets in it)
+// on every build: a phone run with a cable and Web Inspector reads it here,
+// and ?halogs=1 renders the same buffer on screen for browsers without one.
+installWindowHook();
 
 // Register the service worker in production builds only — a SW in dev would
 // cache Vite's HMR assets and break the dev loop. Registration failure is

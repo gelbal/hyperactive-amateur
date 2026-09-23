@@ -1,15 +1,22 @@
 // ABOUTME: media tests — permission flow + on-demand stream acquire/release.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  ACQUIRE_FAILED_COPY,
+  NO_DEVICE_COPY,
   requestMedia,
   acquireRecordingStream,
+  acquirePreviewStream,
   releaseRecordingStream,
+  releasePreviewStream,
   invalidatePendingAcquire,
   isAcquireInFlight,
   buildConstraints,
   __resetMediaForTesting,
 } from "./media";
 import { useAppStore } from "../store/useAppStore";
+import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
+import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
+import { clearLogs, getLogs, LOG_EVENTS } from "./logger";
 
 function makeFakeStream() {
   // Tracks need addEventListener / removeEventListener for streamLifecycle's
@@ -53,8 +60,13 @@ describe("media", () => {
   let originalMediaDevices: MediaDevices | undefined;
   let originalPermissions: Permissions | undefined;
 
+  let audioSession: ReturnType<typeof installNavigatorAudioSession>;
+
   beforeEach(() => {
     __resetMediaForTesting();
+    __resetAudioLifecycleForTesting();
+    clearLogs();
+    audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.reset();
     useAppStore.getState().actions.setPreferredDevices({ video: null, audio: null });
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
@@ -62,6 +74,7 @@ describe("media", () => {
   });
 
   afterEach(() => {
+    audioSession.uninstall();
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: originalMediaDevices,
@@ -70,6 +83,124 @@ describe("media", () => {
       configurable: true,
       value: originalPermissions,
     });
+  });
+
+  it("writes play-and-record before every getUserMedia call, for the probe and both acquires", async () => {
+    const typesAtCall: string[] = [];
+    stubGetUserMedia(async () => {
+      typesAtCall.push(navigator.audioSession?.type ?? "missing");
+      return makeFakeStream();
+    });
+
+    await requestMedia();
+    const held = await acquireRecordingStream();
+    releaseRecordingStream(held);
+    const preview = await acquirePreviewStream();
+    releasePreviewStream(preview);
+
+    expect(typesAtCall).toEqual(["play-and-record", "play-and-record", "play-and-record"]);
+    // The probe settles to the platform default; each held stream keeps
+    // play-and-record until it is released, then settles again.
+    expect(audioSession.types).toEqual([
+      "play-and-record",
+      "auto",
+      "play-and-record",
+      "auto",
+      "play-and-record",
+      "auto",
+    ]);
+  });
+
+  it("settles the session bracket when the acquire is rejected with WebKit's category error", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      );
+    });
+
+    await expect(acquireRecordingStream()).rejects.toMatchObject({ name: "InvalidStateError" });
+
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("releases the session claim the moment a pending acquire is invalidated", async () => {
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquisition = acquireRecordingStream();
+    expect(audioSession.types).toEqual(["play-and-record"]);
+
+    // Playback started and the station unmounted: the claim goes with it
+    // now, not when the native call eventually settles.
+    invalidatePendingAcquire();
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+
+    pending.resolve(makeFakeStream());
+    await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("settles the session bracket for a stale acquire that resolves after invalidation", async () => {
+    const pending = deferred<MediaStream>();
+    stubGetUserMedia(() => pending.promise);
+
+    const acquisition = acquireRecordingStream();
+    expect(audioSession.types).toEqual(["play-and-record"]);
+    invalidatePendingAcquire();
+    pending.resolve(makeFakeStream());
+
+    await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
+  });
+
+  it("lands a post-grant acquire failure that is not a permission denial in suspended, and logs it", async () => {
+    useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
+    stubGetUserMedia(async () => {
+      throw new DOMException(
+        "AudioSession category is not compatible with audio capture.",
+        "InvalidStateError",
+      );
+    });
+
+    await expect(acquireRecordingStream()).rejects.toMatchObject({ name: "InvalidStateError" });
+
+    expect(useAppStore.getState().media.status).toBe("suspended");
+    expect(useAppStore.getState().media.error).toBeNull();
+    const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
+    expect(entry?.payload).toMatchObject({
+      site: "acquire",
+      name: "InvalidStateError",
+      // jsdom prefixes DOMException messages with the name; browsers do not.
+      message: expect.stringContaining("AudioSession category is not compatible with audio capture."),
+      hasAudioSession: true,
+      audioSessionType: "play-and-record",
+    });
+  });
+
+  it("leaves the gate idle when the permission probe fails for a reason other than denial", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException("Could not start video source", "NotReadableError");
+    });
+
+    await requestMedia();
+
+    expect(useAppStore.getState().media.status).toBe("idle");
+    // One fixed line under the gate button; never the engine's message.
+    expect(useAppStore.getState().media.error).toBe(ACQUIRE_FAILED_COPY);
+    const entry = getLogs().find((log) => log.event === LOG_EVENTS.MEDIA_ACQUIRE_FAILED);
+    expect(entry?.payload).toMatchObject({ site: "probe", name: "NotReadableError" });
+  });
+
+  it("names the missing device when the probe finds no camera or microphone", async () => {
+    stubGetUserMedia(async () => {
+      throw new DOMException("Requested device not found", "NotFoundError");
+    });
+
+    await requestMedia();
+
+    expect(useAppStore.getState().media.status).toBe("idle");
+    expect(useAppStore.getState().media.error).toBe(NO_DEVICE_COPY);
   });
 
   it("requestMedia confirms then releases (granted, no stream held), and surfaces denied with error on rejection", async () => {

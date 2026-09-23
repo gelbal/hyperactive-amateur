@@ -1,6 +1,6 @@
-// ABOUTME: App tests — autosave gating around rehydration outcomes.
-// ABOUTME: Degraded loads keep autosave paused until the recovery notice is acknowledged.
-import { act, fireEvent, render, screen } from "@testing-library/react";
+// ABOUTME: App tests — autosave starts after every load that resolves; a rejected load shows one line.
+// ABOUTME: The shell keeps safe-area padding; no storage or recovery banners render.
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rehydrateMocks = vi.hoisted(() => ({
@@ -39,12 +39,12 @@ vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => null }));
 vi.mock("./components/FlowSelector", () => ({ FlowSelector: () => null }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
 vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => null }));
-vi.mock("./components/StorageDurabilityChip", () => ({ StorageDurabilityChip: () => null }));
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
+import { clearLogs, getLogs, LOG_EVENTS } from "./lib/logger";
 
-const REPAIR_WARNING = "Track 1 audio unavailable — re-record to restore sound.";
+const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
 
 async function renderApp(): Promise<HTMLElement> {
   let container: HTMLElement = document.createElement("div");
@@ -60,6 +60,7 @@ async function renderApp(): Promise<HTMLElement> {
 describe("App autosave gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearLogs();
     useAppStore.getState().actions.reset();
     rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
       ok: true,
@@ -82,64 +83,84 @@ describe("App autosave gating", () => {
     );
   });
 
+  it("renders no storage durability notice even with clips in best-effort storage", async () => {
+    useAppStore.getState().actions.setStorageDurability("best-effort");
+    useAppStore.getState().actions.setTrackClip(0, {
+      blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+      url: "blob:test/clip-0",
+      audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
+      trimStartMs: 0,
+      trimEndMs: 800,
+      durationMs: 1000,
+      posterBlob: null,
+      posterUrl: null,
+    });
+
+    await renderApp();
+
+    expect(screen.queryByLabelText("Storage durability notice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Protect project" })).not.toBeInTheDocument();
+  });
+
+  it("renders the on-device log panel only behind the halogs URL flag", async () => {
+    await renderApp();
+    expect(screen.queryByLabelText("Diagnostic log")).not.toBeInTheDocument();
+    cleanup();
+
+    vi.stubGlobal("location", { ...window.location, search: "?halogs=1" });
+    await renderApp();
+
+    expect(screen.getByLabelText("Diagnostic log")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("starts autosave after a clean load", async () => {
     await renderApp();
 
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });
 
-  it("does not start autosave for a degraded-but-hydrated load", async () => {
-    rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
-      useAppStore.getState().actions.setRecoveryWarnings([REPAIR_WARNING]);
-      return { ok: true, degraded: true, warnings: [REPAIR_WARNING] };
+  it("starts autosave for a degraded-but-hydrated load and shows no recovery notice", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
+      ok: true,
+      degraded: true,
+      warnings: ["Track 1 trim window was clamped."],
     });
 
     await renderApp();
 
-    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+    expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Recovered saved project/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Project recovery notice")).not.toBeInTheDocument();
   });
 
-  it("re-enables autosave when the recovery notice is dismissed after a hydrated degraded load", async () => {
-    rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
-      useAppStore.getState().actions.setRecoveryWarnings([REPAIR_WARNING]);
-      return { ok: true, degraded: true, warnings: [REPAIR_WARNING] };
+  it("starts autosave after a load that resolved ok: false", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
+      ok: false,
+      degraded: true,
+      warnings: [],
     });
-    await renderApp();
-    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
+    await renderApp();
 
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps autosave paused even after dismissal when the load did not hydrate", async () => {
-    rehydrateMocks.rehydrateFromStorage.mockImplementation(async () => {
-      useAppStore.getState().actions.setRecoveryWarnings([
-        "Saved project could not be migrated. Autosave was paused to avoid overwriting it.",
-      ]);
-      return {
-        ok: false,
-        degraded: true,
-        warnings: [
-          "Saved project could not be migrated. Autosave was paused to avoid overwriting it.",
-        ],
-      };
-    });
-    await renderApp();
-
-    fireEvent.click(screen.getByLabelText("Dismiss recovery notice"));
-
-    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
-  });
-
-  it("keeps autosave paused when rehydration rejects", async () => {
+  it("shows one line and keeps autosave off when rehydration rejects", async () => {
     rehydrateMocks.rehydrateFromStorage.mockRejectedValue(new Error("load blew up"));
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
 
     await renderApp();
 
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
-    expect(useAppStore.getState().ui.recoveryWarnings).toEqual([
-      "Saved project could not be loaded. Autosave was paused to avoid overwriting it.",
-    ]);
+    expect(screen.getByText(LOAD_FAILED_COPY)).toBeInTheDocument();
+    expect(getLogs().some((entry) => entry.event === LOG_EVENTS.RECOVERY_LOAD_FAILED)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

@@ -10,6 +10,7 @@ describe("LOG_EVENTS", () => {
         "audio.session-error",
         "audio.interrupted",
         "audio.resume-required",
+        "media.reconnected",
         "recording.interrupted",
         "video.draw-error",
         "autosave.flush",
