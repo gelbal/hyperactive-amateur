@@ -155,17 +155,6 @@ describe("RecordingStation", () => {
     expect(flipButton).not.toBeDisabled();
   });
 
-  it("shows the store recording error while the station is open", async () => {
-    useAppStore.getState().actions.setRecordingError(INTERRUPTION_COPY);
-
-    await act(async () => {
-      render(<RecordingStation />);
-      await Promise.resolve();
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent(INTERRUPTION_COPY);
-  });
-
   it("shows the store recording error only in the station while the station is open", async () => {
     const actions = useAppStore.getState().actions;
     await act(async () => {

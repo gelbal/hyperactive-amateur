@@ -1,9 +1,10 @@
-// ABOUTME: FeelDisclosure — single button that opens a popover holding the timing controls and the AI hints (style, flow, variations).
-// ABOUTME: On desktop the button label carries the live state (cut rate · swing · hold); on phones it is the icon and the word so the controls row fits.
+// ABOUTME: FeelDisclosure — single button that opens a popover holding the tempo dial, the timing controls and the AI hints (style, flow, variations).
+// ABOUTME: On desktop the button label carries the live state (BPM · cut rate · swing · hold); on phones it is the icon and the word so the controls row fits.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
 import { useAppStore, selectClipCount } from "../store/useAppStore";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
+import { BpmDial } from "./BpmDial";
 import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
 import { HoldTimeControl } from "./HoldTimeControl";
@@ -23,6 +24,7 @@ const CUT_LABEL: Record<CutSubdivision, string> = {
 };
 
 export function FeelDisclosure() {
+  const bpm = useAppStore((s) => s.project.bpm);
   const cut = useAppStore((s) => s.project.cutSubdivision);
   const swing = useAppStore((s) => s.project.swing);
   const hold = useAppStore((s) => s.project.sameTierHoldMs);
@@ -51,7 +53,7 @@ export function FeelDisclosure() {
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Feel: cut rate, swing, hold, style, flow"
+        aria-label="Feel: tempo, cut rate, swing, hold, style, flow"
         onClick={() => setOpen((v) => !v)}
         className={
           "flex items-center gap-2 px-2.5 lg:px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
@@ -65,7 +67,12 @@ export function FeelDisclosure() {
         {/* The live values ride along only where the row has room; on a
             phone the button is the icon and the word so the controls row
             stays one line. */}
-        <span className="hidden lg:inline font-mono tabular-nums text-xs text-zinc-500">{summary}</span>
+        <span className="hidden lg:inline font-mono tabular-nums text-xs text-zinc-500">
+          {/* Three digit slots: the button, and the right-packed row with
+              it, must not change width when a turn crosses 100 BPM under a
+              captured pointer. */}
+          <span className="inline-block w-[3ch] text-right">{bpm}</span> BPM · {summary}
+        </span>
       </button>
       {open && (
         <div
@@ -73,6 +80,8 @@ export function FeelDisclosure() {
           aria-label="Feel controls"
           className="absolute inset-x-3 top-full mt-2 z-30 w-auto max-w-[24rem] mx-auto max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 lg:inset-x-auto lg:left-0 lg:min-w-[18rem] lg:max-w-none lg:mx-0 lg:max-h-none lg:overflow-visible"
         >
+          {/* Tempo first: it is the control reached for most. */}
+          <BpmDial />
           <CutSubdivisionSelect />
           <SwingSlider />
           <HoldTimeControl />

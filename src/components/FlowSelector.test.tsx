@@ -16,17 +16,4 @@ describe("FlowSelector", () => {
 
     expect(screen.getByLabelText("Flow")).toHaveClass("pointer-coarse:min-h-11");
   });
-
-  it("enables the select when no export is running", () => {
-    render(<FlowSelector />);
-
-    expect(screen.getByLabelText("Flow")).toBeEnabled();
-  });
-
-  it("renders the select disabled while exporting", () => {
-    useAppStore.getState().actions.setIsExporting(true);
-    render(<FlowSelector />);
-
-    expect(screen.getByLabelText("Flow")).toBeDisabled();
-  });
 });

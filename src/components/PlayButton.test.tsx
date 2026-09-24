@@ -53,7 +53,7 @@ describe("PlayButton silent-switch hint", () => {
     expect(screen.queryByText("No sound? Check your phone's silent switch.")).not.toBeInTheDocument();
   });
 
-  it("anchors the silent-switch hint under the sticky header on phones instead of centering off-screen", () => {
+  it("anchors the silent-switch hint under the sticky header on phones, below the header panels", () => {
     // A 224px hint centered under the play button ran off the screen edge on
     // phones. Below sm the wrapper is not positioned, so the hint spans the
     // header's width under it; sm+ keeps the anchored, centred popover.
@@ -70,7 +70,20 @@ describe("PlayButton silent-switch hint", () => {
     expect(hint?.className).toContain("inset-x-3");
     expect(hint?.className).toContain("top-full");
     expect(hint?.className).toContain("lg:inset-x-auto");
-    expect(hint?.className.split(/\s+/)).not.toContain("fixed");
+    const classes = hint?.className.split(/\s+/) ?? [];
+    expect(classes).not.toContain("fixed");
+    // Below the Feel and Export panels (z-30), which hang under the header
+    // at the same spot: a hint above them covered the Feel panel's first row,
+    // so a tap on the tempo knob's top edge landed on the hint and closed the
+    // panel as an outside click. Same corner radius as the panels, or the
+    // hint's corners peek out at theirs.
+    expect(classes).toContain("z-20");
+    expect(classes).not.toContain("z-40");
+    expect(classes).toContain("rounded-md");
+    // While a panel is open the stylesheet removes the hint altogether
+    // (display: none), so its Dismiss button leaves the tab order and the
+    // accessibility tree instead of sitting reachable behind the panel.
+    expect(classes).toContain("ha-silent-hint");
   });
 
   it("names the keyboard shortcut in its title instead of a hint beside it", () => {

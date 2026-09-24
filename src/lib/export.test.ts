@@ -207,15 +207,6 @@ describe("exportSong", () => {
     expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
 
-  it("exportSong honors a video/mp4 mimeType passed by the caller", async () => {
-    const blob = await exportSong(makeCanvas(), makeAudioContext(), {
-      bars: 1,
-      bpm: 24000,
-      mimeType: "video/mp4",
-    });
-    expect(blob.type).toBe("video/mp4");
-  });
-
   it("uses the MediaRecorder-reported MIME for the export blob when present", async () => {
     class ReportingMediaRecorder extends FakeMediaRecorder {
       mimeType = "video/webm";

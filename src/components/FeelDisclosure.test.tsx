@@ -5,6 +5,8 @@ import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 
+const FEEL_LABEL = "Feel: tempo, cut rate, swing, hold, style, flow";
+
 function makeClip(): Clip {
   return {
     blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
@@ -34,7 +36,7 @@ describe("FeelDisclosure", () => {
       for (let i = 0; i < 4; i++) useAppStore.getState().actions.setTrackClip(i, makeClip());
     });
     render(<FeelDisclosure />);
-    fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
 
     expect(screen.getByLabelText("Style")).toBeEnabled();
     expect(screen.getByLabelText("Flow")).toBeEnabled();
@@ -47,32 +49,48 @@ describe("FeelDisclosure", () => {
 
   it("keeps Style and Flow out of the panel below four clips", () => {
     render(<FeelDisclosure />);
-    fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
 
     expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Flow")).not.toBeInTheDocument();
   });
 
-  it("sizes the trigger to 44px on coarse pointers", () => {
+  it("trigger: 44px on coarse pointers, icon + word on phones, the tempo · cut · swing · hold summary only from lg", () => {
+    useAppStore.getState().actions.setBpm(110);
     render(<FeelDisclosure />);
 
-    expect(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow")).toHaveClass(
-      "pointer-coarse:min-h-11",
-    );
+    const button = screen.getByLabelText(FEEL_LABEL);
+    expect(button).toHaveClass("pointer-coarse:min-h-11");
+    expect(button).toHaveTextContent("Feel");
+    const summary = screen.getByText(/BPM · 1\/8 · 0% · 400ms/);
+    expect(summary).toHaveClass("hidden", "lg:inline");
+    expect(summary).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
+    // Three digit slots, so the button (and the right-packed row with it)
+    // keeps its width when a turn crosses 100 BPM under a captured pointer.
+    expect(screen.getByText("110")).toHaveClass("inline-block", "w-[3ch]", "text-right");
   });
 
-  it("keeps the phone button narrow: the cut · swing · hold summary shows only from lg", () => {
+  it("opens with Tempo first: the knob and its readout sit above Cut rate, and only inside the panel", () => {
     render(<FeelDisclosure />);
+    expect(screen.queryByRole("slider", { name: "Tempo" })).not.toBeInTheDocument();
 
-    const button = screen.getByLabelText("Feel: cut rate, swing, hold, style, flow");
-    expect(button).toHaveTextContent("Feel");
-    const summary = screen.getByText(/1\/8 · 0% · 400ms/);
-    expect(summary).toHaveClass("hidden", "lg:inline");
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+
+    const panel = screen.getByRole("dialog", { name: "Feel controls" });
+    // Swing and Hold are range inputs (sliders too); the knob is named.
+    const knob = screen.getByRole("slider", { name: "Tempo" });
+    expect(panel).toContainElement(knob);
+    expect(knob).toHaveAttribute("aria-valuenow", "90");
+    expect(panel).toContainElement(screen.getByText("Tempo"));
+    const cutRate = screen.getByLabelText("cut rate");
+    expect(
+      (knob.compareDocumentPosition(cutRate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true);
   });
 
   it("anchors the popover under the sticky header below lg (phones in both orientations) and under the button at lg", () => {
     render(<FeelDisclosure />);
-    fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
 
     const popover = screen.getByRole("dialog", { name: "Feel controls" });
     // Below sm the wrapper is not positioned, so the sticky header is the
@@ -84,6 +102,9 @@ describe("FeelDisclosure", () => {
       "inset-x-3",
       "top-full",
       "mt-2",
+      // Above the Play button's silent-switch hint (z-20), which hangs at
+      // the same spot under the header.
+      "z-30",
       "w-auto",
       "max-w-[24rem]",
       "mx-auto",
@@ -105,7 +126,7 @@ describe("FeelDisclosure", () => {
   it("Scratch needs a second click to confirm; Cancel keeps state", () => {
     useAppStore.getState().actions.setBpm(140);
     render(<FeelDisclosure />);
-    fireEvent.click(screen.getByLabelText("Feel: cut rate, swing, hold, style, flow"));
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
     fireEvent.click(screen.getByLabelText("Scratch: start fresh"));
     fireEvent.click(screen.getByLabelText("Cancel scratch"));
     expect(useAppStore.getState().project.bpm).toBe(140);

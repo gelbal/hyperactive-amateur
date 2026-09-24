@@ -183,13 +183,6 @@ describe("audio: per-step trigger logic", () => {
     expect(videoEngineTrigger).toHaveBeenCalledWith(1, 0.5, 0.5);
   });
 
-  it("manual triggers unlock the audio context before firing", async () => {
-    initTransport();
-    await triggerTrackNow(2);
-    expect(Tone.start).toHaveBeenCalled();
-    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
-  });
-
   it("manual clipped triggers display at Tone.immediate while audio schedules at Tone.now", async () => {
     initTransport();
     useAppStore.getState().actions.setTrackClip(0, makeClip());

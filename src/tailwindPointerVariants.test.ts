@@ -60,6 +60,13 @@ describe("tailwind pointer-coarse variants", () => {
     );
   }, 20_000);
 
+  it("removes the silent-switch hint while a header panel is open", async () => {
+    const css = await builtCss();
+    // The Feel and Export panels are role="dialog" inside the sticky header
+    // and hang at the same spot as the hint.
+    expect(css).toMatch(/header:has\(\[role="dialog"\]\)\s*\.ha-silent-hint\s*{\s*display:\s*none;/);
+  }, 20_000);
+
   it("emits dynamic viewport sizing and the shared dark page background", async () => {
     const css = await builtCss();
     expect(css).toContain("min-height: 100dvh");

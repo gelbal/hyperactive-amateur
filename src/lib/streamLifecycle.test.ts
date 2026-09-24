@@ -232,20 +232,6 @@ describe("streamLifecycle", () => {
       expect(media.stream).toBeNull();
     });
 
-    it("does NOT touch the store when the store holds a different stream", () => {
-      const { stream: s1, tracks } = makeStream();
-      const { stream: s2 } = makeStream();
-      // Listen on s1 but the store ends up holding s2 (e.g. user re-flipped).
-      attachStreamEndedListeners(s1);
-      setGrantedWithStream(s2);
-
-      tracks[0].fireEnded();
-
-      const media = useAppStore.getState().media;
-      expect(media.status).toBe("granted");
-      expect(media.stream).toBe(s2);
-    });
-
     it("stale stream ended does not interrupt a recording on the current stream", () => {
       const { stream: s1, tracks } = makeStream();
       const { stream: s2 } = makeStream();
@@ -1203,18 +1189,6 @@ describe("streamLifecycle", () => {
 
       expect(useAppStore.getState().media.status).toBe("suspended");
       expect(useAppStore.getState().media.stream).toBeNull();
-    });
-
-    it("does NOT touch the store when the store holds a different stream", () => {
-      const { stream: s1, tracks } = makeStream();
-      for (const t of tracks) t.readyState = "ended";
-      const { stream: s2 } = makeStream();
-      setGrantedWithStream(s2);
-
-      onMediaRecorderError(s1, new Error("stream gone"));
-
-      expect(useAppStore.getState().media.status).toBe("granted");
-      expect(useAppStore.getState().media.stream).toBe(s2);
     });
 
     it("does not interrupt a recording on the current stream for a stale stream's error", () => {

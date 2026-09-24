@@ -118,13 +118,7 @@ export function SuggestButton() {
         {pending ? (
           `${pendingVerb}…`
         ) : (
-          <span>
-            Suggest
-            {/* With the dial, Export and Feel beside it, the tail only fits
-                from 400 px up (a 390 px phone wraps by a few pixels). The
-                accessible name stays "Suggest a beat". */}
-            <span className="hidden min-[400px]:inline"> a beat</span>
-          </span>
+          "Suggest a beat"
         )}
       </button>
       {error && (

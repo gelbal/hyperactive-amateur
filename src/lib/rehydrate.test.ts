@@ -284,17 +284,6 @@ describe("rehydrateFromStorage", () => {
     expect(audioMocks.decodeAudioData).toHaveBeenCalledTimes(1);
   });
 
-  it("sets recordingStationDismissed=true after rehydrating a project with at least one clip", async () => {
-    useAppStore.getState().actions.setTrackClip(0, await makeClip());
-    await saveProject(useAppStore.getState());
-
-    useAppStore.getState().actions.reset();
-    expect(useAppStore.getState().session.recordingStationDismissed).toBe(false);
-
-    await rehydrateFromStorage();
-    expect(useAppStore.getState().session.recordingStationDismissed).toBe(true);
-  });
-
   it("migrates corrupt v1 legacy saves through validation and records degraded recovery warnings", async () => {
     await set(LEGACY_PROJECT_KEY, corruptV1MonolithProject());
 

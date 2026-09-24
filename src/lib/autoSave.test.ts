@@ -57,7 +57,7 @@ describe("autoSave", () => {
     expect(loaded?.bpm).toBe(120);
   });
 
-  it("saveNow persists immediately without waiting for the debounce window", async () => {
+  it("saveNow persists immediately and cancels the pending debounce timer", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
     startAutoSave();
     useAppStore.getState().actions.setBpm(130);
@@ -66,16 +66,7 @@ describe("autoSave", () => {
 
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(saveSpy.mock.calls[0][0].project.bpm).toBe(130);
-  });
-
-  it("saveNow during the debounce window cancels the pending timer", async () => {
-    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
-    startAutoSave();
-    useAppStore.getState().actions.setBpm(131);
-
-    await saveNow();
-
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    // The pending debounce timer is cancelled, not left to save again.
     expect(vi.getTimerCount()).toBe(0);
   });
 

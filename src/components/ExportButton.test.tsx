@@ -129,6 +129,9 @@ describe("ExportButton format picker", () => {
       "inset-x-3",
       "top-full",
       "mt-2",
+      // Above the Play button's silent-switch hint (z-20), which hangs at
+      // the same spot under the header.
+      "z-30",
       "w-auto",
       "max-w-[24rem]",
       "mx-auto",
