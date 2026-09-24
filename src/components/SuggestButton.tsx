@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { suggestTracks } from "../lib/suggestTracks";
 import { AI_UNLOCK_CLIPS, suggestPattern } from "../lib/aiSuggest";
 import { aiErrorMessage, aiOfflineHint } from "../lib/aiOffline";
 
@@ -72,11 +73,7 @@ export function SuggestButton() {
         subgenre,
         vibe,
         stepCount,
-        tracks: requestTracks.map((t) => ({
-          id: t.id,
-          tag: t.tag,
-          reasoning: tagReasoning[t.id] ?? null,
-        })),
+        tracks: suggestTracks(requestTracks, tagReasoning),
       });
       const applied = useAppStore
         .getState()

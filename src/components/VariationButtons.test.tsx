@@ -74,8 +74,14 @@ describe("VariationButtons", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(varyPattern).toHaveBeenCalled());
-    const arg = varyPattern.mock.calls[0]?.[0] as { variation: string; subgenre: string; vibe: string };
+    const arg = varyPattern.mock.calls[0]?.[0] as {
+      variation: string;
+      subgenre: string;
+      vibe: string;
+      tracks: Array<{ tag: string | null }>;
+    };
     expect(arg.variation).toBe("break");
+    expect(arg.tracks[4].tag).toBe("kick");
     expect(arg.subgenre).toBe("lo-fi");
     expect(arg.vibe).toBe("varied");
   });

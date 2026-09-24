@@ -1,0 +1,18 @@
+// ABOUTME: Builds the per-track rows that Suggest and the variations send to Gemini.
+// ABOUTME: A track without a clip plays its kit voice, so it is sent under that voice's tag; the stored tag is untouched.
+import { KIT } from "./drumKit";
+import type { SuggestPatternInput } from "./aiSuggest";
+import type { Track } from "../types";
+
+export function suggestTracks(
+  tracks: Track[],
+  tagReasoning: Record<number, string>,
+): SuggestPatternInput["tracks"] {
+  return tracks.map((t) => ({
+    id: t.id,
+    // clearTrackClip keeps the tag, so the clip decides: a cleared track
+    // plays a kit voice again and is described as one.
+    tag: t.clip ? t.tag : KIT[t.id].tag,
+    reasoning: tagReasoning[t.id] ?? null,
+  }));
+}

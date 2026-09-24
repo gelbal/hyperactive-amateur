@@ -93,6 +93,11 @@ describe("SuggestButton", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(suggestPattern).toHaveBeenCalled());
+    // A recorded track goes under its own tag (none here); an empty track
+    // under its kit voice's tag (track 4 plays kick 2).
+    const arg = suggestPattern.mock.calls[0]?.[0] as { tracks: Array<{ tag: string | null }> };
+    expect(arg.tracks[0].tag).toBeNull();
+    expect(arg.tracks[4].tag).toBe("kick");
     await waitFor(() =>
       expect(useAppStore.getState().project.tracks[0].steps.every((s) => s)).toBe(true),
     );
