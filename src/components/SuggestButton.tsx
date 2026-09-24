@@ -97,7 +97,7 @@ export function SuggestButton() {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 grow lg:grow-0">
       <button
         type="button"
         aria-label="Suggest a beat"
@@ -109,7 +109,7 @@ export function SuggestButton() {
             : "Ask Gemini to fill the grid")
         }
         onClick={() => void handleClick()}
-        className="flex items-center gap-2 px-2.5 lg:px-3 py-2 pointer-coarse:min-h-11 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center justify-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-2 pointer-coarse:min-h-11 grow lg:grow-0 text-sm rounded bg-zinc-900 border border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Sparkles size={14} className={pending ? "animate-pulse text-orange-400" : "text-orange-400"} />
         {pending ? (

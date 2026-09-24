@@ -1,5 +1,5 @@
 // ABOUTME: FeelDisclosure — single button that opens a popover holding the tempo dial, the timing controls and the AI hints (style, flow, variations).
-// ABOUTME: On desktop the button label carries the live state (BPM · cut rate · swing · hold); on phones it is the icon and the word so the controls row fits.
+// ABOUTME: The button carries the live state: the BPM at every width, cut rate · swing · hold on desktop; on phones it fills its share of the controls row.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
 import { useAppStore, selectClipCount } from "../store/useAppStore";
@@ -48,7 +48,7 @@ export function FeelDisclosure() {
     // and drifted down by whatever sits above the header). lg, not sm: a
     // phone in landscape is wider than sm and must keep the capped, scrolling
     // phone panel. At lg the wrapper anchors it under the button again.
-    <div className="static lg:relative" ref={rootRef}>
+    <div className="static lg:relative grow lg:grow-0" ref={rootRef}>
       <button
         type="button"
         aria-haspopup="dialog"
@@ -56,7 +56,7 @@ export function FeelDisclosure() {
         aria-label="Feel: tempo, cut rate, swing, hold, style, flow"
         onClick={() => setOpen((v) => !v)}
         className={
-          "flex items-center gap-2 px-2.5 lg:px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
+          "flex items-center justify-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-2 pointer-coarse:min-h-11 w-full lg:w-auto text-sm rounded border transition-colors " +
           (open
             ? "bg-zinc-800 border-zinc-600"
             : "bg-zinc-900 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600")
@@ -64,14 +64,14 @@ export function FeelDisclosure() {
       >
         <Sliders size={14} className="text-zinc-400" />
         <span className="text-zinc-300">Feel</span>
-        {/* The live values ride along only where the row has room; on a
-            phone the button is the icon and the word so the controls row
-            stays one line. */}
-        <span className="hidden lg:inline font-mono tabular-nums text-xs text-zinc-500">
-          {/* Three digit slots: the button, and the right-packed row with
-              it, must not change width when a turn crosses 100 BPM under a
-              captured pointer. */}
-          <span className="inline-block w-[3ch] text-right">{bpm}</span> BPM · {summary}
+        {/* The tempo rides along at every width; cut, swing and hold only
+            where the row has room. */}
+        <span className="font-mono tabular-nums text-xs text-zinc-500">
+          {/* Three digit slots: the button, and the two sharing the row
+              with it, must not change width when a turn crosses 100 BPM
+              under a captured pointer. */}
+          <span className="inline-block w-[3ch] text-right">{bpm}</span> BPM
+          <span className="hidden lg:inline"> · {summary}</span>
         </span>
       </button>
       {open && (

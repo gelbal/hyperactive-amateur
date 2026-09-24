@@ -55,17 +55,20 @@ describe("FeelDisclosure", () => {
     expect(screen.queryByLabelText("Flow")).not.toBeInTheDocument();
   });
 
-  it("trigger: 44px on coarse pointers, icon + word on phones, the tempo · cut · swing · hold summary only from lg", () => {
+  it("trigger: 44px on coarse pointers, fills its share of the phone row, the BPM at every width, cut · swing · hold only from lg", () => {
     useAppStore.getState().actions.setBpm(110);
     render(<FeelDisclosure />);
 
     const button = screen.getByLabelText(FEEL_LABEL);
-    expect(button).toHaveClass("pointer-coarse:min-h-11");
+    expect(button).toHaveClass("pointer-coarse:min-h-11", "w-full", "lg:w-auto", "justify-center", "px-2", "lg:px-3", "gap-1.5", "lg:gap-2");
+    expect(button.parentElement).toHaveClass("static", "lg:relative", "grow", "lg:grow-0");
     expect(button).toHaveTextContent("Feel");
-    const summary = screen.getByText(/BPM · 1\/8 · 0% · 400ms/);
-    expect(summary).toHaveClass("hidden", "lg:inline");
-    expect(summary).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
-    // Three digit slots, so the button (and the right-packed row with it)
+    const tail = screen.getByText(/· 1\/8 · 0% · 400ms/);
+    expect(tail).toHaveClass("hidden", "lg:inline");
+    const readout = screen.getByText("110").parentElement as HTMLElement;
+    expect(readout).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
+    expect(readout.className.split(/\s+/)).not.toContain("hidden");
+    // Three digit slots, so the button (and the two sharing the row with it)
     // keeps its width when a turn crosses 100 BPM under a captured pointer.
     expect(screen.getByText("110")).toHaveClass("inline-block", "w-[3ch]", "text-right");
   });

@@ -58,7 +58,7 @@ describe("SuggestButton", () => {
     useAppStore.getState().actions.setIsExporting(false);
   });
 
-  it("is one plain button: the full label at every width, 44px on coarse pointers, disabled while exporting, no style select", () => {
+  it("is one plain button: the full label at every width, fills its share of the phone row, 44px on coarse pointers, disabled while exporting, no style select", () => {
     unlockAi();
     act(() => useAppStore.getState().actions.setIsExporting(true));
 
@@ -68,6 +68,10 @@ describe("SuggestButton", () => {
     expect(button).toHaveTextContent("Suggest a beat");
     expect(button.querySelector(".hidden")).toBeNull();
     expect(button).toHaveClass("pointer-coarse:min-h-11");
+    // grow, not w-full: the root also holds the inline error text, which
+    // w-full would squeeze.
+    expect(button).toHaveClass("grow", "lg:grow-0", "justify-center", "px-2", "lg:px-3", "gap-1.5", "lg:gap-2");
+    expect(button.parentElement).toHaveClass("grow", "lg:grow-0");
     expect(button).toBeDisabled();
     // Style lives under Feel.
     expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();

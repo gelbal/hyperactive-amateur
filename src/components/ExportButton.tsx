@@ -201,7 +201,7 @@ export function ExportButton() {
   };
 
   return (
-    <div className="static lg:relative" ref={rootRef}>
+    <div className="static lg:relative grow lg:grow-0" ref={rootRef}>
       <button
         type="button"
         aria-label="Export"
@@ -213,7 +213,7 @@ export function ExportButton() {
           setOpen((v) => !v);
         }}
         className={
-          "flex items-center gap-2 px-2.5 lg:px-3 py-2 pointer-coarse:min-h-11 text-sm rounded border transition-colors " +
+          "flex items-center justify-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-2 pointer-coarse:min-h-11 w-full lg:w-auto text-sm rounded border transition-colors " +
           (rendering
             ? "bg-zinc-800 border-zinc-600 text-zinc-400 cursor-progress"
             : !canStart && !open
