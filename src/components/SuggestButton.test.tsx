@@ -58,32 +58,19 @@ describe("SuggestButton", () => {
     useAppStore.getState().actions.setIsExporting(false);
   });
 
-  it("no longer carries the style select (it lives under Feel)", () => {
-    unlockAi();
-    render(<SuggestButton />);
-
-    expect(screen.queryByLabelText("subgenre")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();
-  });
-
-  it("shows the full 'Suggest a beat' label at every width", () => {
-    unlockAi();
-    render(<SuggestButton />);
-
-    const button = screen.getByLabelText("Suggest a beat");
-    expect(button).toHaveTextContent("Suggest a beat");
-    expect(button.querySelector(".hidden")).toBeNull();
-  });
-
-  it("looks disabled while exporting and is 44px tall on coarse pointers", () => {
+  it("is one plain button: the full label at every width, 44px on coarse pointers, disabled while exporting, no style select", () => {
     unlockAi();
     act(() => useAppStore.getState().actions.setIsExporting(true));
 
     render(<SuggestButton />);
 
     const button = screen.getByLabelText("Suggest a beat");
-    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Suggest a beat");
+    expect(button.querySelector(".hidden")).toBeNull();
     expect(button).toHaveClass("pointer-coarse:min-h-11");
+    expect(button).toBeDisabled();
+    // Style lives under Feel.
+    expect(screen.queryByLabelText("Style")).not.toBeInTheDocument();
   });
 
   it("disabled with <4 clips; click after 4 calls suggestPattern and applies the result; Undo restores", async () => {

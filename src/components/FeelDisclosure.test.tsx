@@ -55,19 +55,12 @@ describe("FeelDisclosure", () => {
     expect(screen.queryByLabelText("Flow")).not.toBeInTheDocument();
   });
 
-  it("sizes the trigger to 44px on coarse pointers", () => {
-    render(<FeelDisclosure />);
-
-    expect(screen.getByLabelText(FEEL_LABEL)).toHaveClass(
-      "pointer-coarse:min-h-11",
-    );
-  });
-
-  it("keeps the phone button narrow: the tempo · cut · swing · hold summary shows only from lg", () => {
+  it("trigger: 44px on coarse pointers, icon + word on phones, the tempo · cut · swing · hold summary only from lg", () => {
     useAppStore.getState().actions.setBpm(110);
     render(<FeelDisclosure />);
 
     const button = screen.getByLabelText(FEEL_LABEL);
+    expect(button).toHaveClass("pointer-coarse:min-h-11");
     expect(button).toHaveTextContent("Feel");
     const summary = screen.getByText("110 BPM · 1/8 · 0% · 400ms");
     expect(summary).toHaveClass("hidden", "lg:inline");

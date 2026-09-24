@@ -105,17 +105,14 @@ describe("App autosave gating", () => {
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
     const row = title.parentElement!.parentElement as HTMLElement;
+    // Title block, Play wrapper, nothing else: no breaker, no controls row.
+    expect(row.children).toHaveLength(2);
     expect(row.querySelector(".basis-full")).toBeNull();
     expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("feel-button")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("suggest-button")).not.toBeInTheDocument();
-    // Title block, Play wrapper, nothing else.
-    expect(row.children).toHaveLength(2);
   });
 
-  it("phones: title and Play share the first row; the tools sit on one right-aligned row below", async () => {
-    seedClips(1);
+  it("with clips: title and Play share the first row; Export, Feel, Suggest sit on one right-aligned row below", async () => {
+    seedClips(3);
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
@@ -153,13 +150,6 @@ describe("App autosave gating", () => {
     expect(follows(titleBlock, play)).toBe(true);
     expect(follows(play, breaker)).toBe(true);
     expect(follows(breaker, controls)).toBe(true);
-  });
-
-  it("orders the controls row Export, Feel, Suggest once clips exist", async () => {
-    seedClips(3);
-    await renderApp();
-
-    const controls = screen.getByTestId("export-button").parentElement as HTMLElement;
     const order = Array.from(controls.querySelectorAll("[data-testid]")).map((el) =>
       el.getAttribute("data-testid"),
     );
