@@ -7,7 +7,7 @@ on a 16-step grid, hit play, and watch a hip-hop video of you
 default on Chromium browsers, with MP4 used where the browser exposes
 that MediaRecorder path.
 
-Live at [hyperactive-amateur.fgelbal.com](https://hyperactive-amateur.fgelbal.com/).
+Live at [ha.fgelbal.com](https://ha.fgelbal.com/).
 
 ## Quick start
 
@@ -82,7 +82,7 @@ origin. In Vercel, set:
 
 ```
 GEMINI_API_KEY=...
-GEMINI_ALLOWED_ORIGINS=https://hyperactive-amateur.fgelbal.com
+GEMINI_ALLOWED_ORIGINS=https://ha.fgelbal.com
 ```
 
 Rate limiting runs in memory, per function instance, in every
