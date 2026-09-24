@@ -309,7 +309,7 @@ test("boots production app and reloads offline from the service worker", async (
   await expect(page.getByRole("button", { name: "Enable camera & mic" })).toBeVisible();
 });
 
-test("blocks keyboard playback while recording and suspends camera on hide", async ({
+test("shows no transport before the first clip and suspends camera on hide", async ({
   page,
   context,
 }) => {
@@ -323,7 +323,9 @@ test("blocks keyboard playback while recording and suspends camera on hide", asy
   await page.getByRole("button", { name: "Record clip for track 1" }).click();
   await expect(page.getByRole("status", { name: "recording countdown" })).toBeVisible();
   await page.keyboard.press("Space");
-  await expect(page.getByRole("button", { name: "Start playback" })).toBeVisible();
+  // Before the first clip there is no transport; the recording gate on
+  // Space is covered by the useSpacebarPlayToggle unit tests.
+  await expect(page.getByRole("button", { name: /playback/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("status", { name: "recording countdown" })).toHaveCount(0);
 

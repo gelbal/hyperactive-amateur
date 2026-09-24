@@ -1,4 +1,4 @@
-// ABOUTME: useSpacebarPlayToggle tests — start gating and editable-target suppression.
+// ABOUTME: useSpacebarPlayToggle tests — start gating, no transport before the first clip, and editable-target suppression.
 import { cleanup, render } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -22,6 +22,25 @@ vi.mock("./audioLifecycle", () => ({
 
 import { useSpacebarPlayToggle } from "./useSpacebarPlayToggle";
 import { useAppStore } from "../store/useAppStore";
+import type { Clip } from "../types";
+
+function makeClip(): Clip {
+  return {
+    blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    url: "blob:test/x",
+    audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
+    trimStartMs: 0,
+    trimEndMs: 800,
+    durationMs: 1000,
+    posterBlob: null,
+    posterUrl: null,
+  };
+}
+
+function pressSpace(): void {
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+}
 
 function Harness({ withInput = false }: { withInput?: boolean }) {
   useSpacebarPlayToggle();
@@ -34,6 +53,8 @@ describe("useSpacebarPlayToggle", () => {
     togglePlayback.mockResolvedValue(undefined);
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
+    // Space is the Play button's shortcut, and Play shows from the first clip.
+    useAppStore.getState().actions.setTrackClip(0, makeClip());
   });
 
   afterEach(() => {
@@ -68,6 +89,18 @@ describe("useSpacebarPlayToggle", () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
 
     expect(togglePlayback).not.toHaveBeenCalled();
+  });
+
+  it("ignores Space before the first clip; stops playback from Space when the last clip goes while playing", () => {
+    useAppStore.getState().actions.reset();
+    render(<Harness />);
+
+    pressSpace();
+    expect(togglePlayback).not.toHaveBeenCalled();
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    pressSpace();
+    expect(togglePlayback).toHaveBeenCalledTimes(1);
   });
 
   it("swallows audio-unavailable Space rejections", async () => {

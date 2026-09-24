@@ -100,14 +100,13 @@ describe("App autosave gating", () => {
     );
   });
 
-  it("before the first clip the header is the title and Play only: no controls row, no dial", async () => {
+  it("before the first clip the header is the title only: no Play, no controls row, no dial", async () => {
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
     const row = title.parentElement!.parentElement as HTMLElement;
-    // Title block, Play wrapper, nothing else: no breaker, no controls row.
-    expect(row.children).toHaveLength(2);
-    expect(row.querySelector(".basis-full")).toBeNull();
+    expect(row.children).toHaveLength(1);
+    expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
   });
 
   it("reserves an empty controls row while a saved project hydrates, so the page does not jump when the clips arrive", async () => {
@@ -117,15 +116,17 @@ describe("App autosave gating", () => {
     expect(screen.getByText("Loading project…")).toBeInTheDocument();
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
     const row = title.parentElement!.parentElement as HTMLElement;
-    const breaker = row.querySelector(".basis-full") as HTMLElement;
-    expect(breaker).not.toBeNull();
-    const controls = breaker.nextElementSibling as HTMLElement;
+    const wrapper = row.children[1] as HTMLElement;
+    // No Play while loading: only the reserved controls row.
+    expect(wrapper.children).toHaveLength(1);
+    expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
+    const controls = wrapper.lastElementChild as HTMLElement;
     expect(controls.children).toHaveLength(0);
     // The buttons' height: 38 px on fine pointers, 44 px on coarse ones.
     expect(controls).toHaveClass("min-h-[2.375rem]", "pointer-coarse:min-h-11");
   });
 
-  it("with clips: title and Play share the first row; Export, Feel, Suggest sit on one right-aligned row below", async () => {
+  it("with clips: title and Play share the first line; Export, Feel, Suggest fill the line below; at lg Play sits above them in a right-aligned column", async () => {
     seedClips(3);
     await renderApp();
 
@@ -135,38 +136,58 @@ describe("App autosave gating", () => {
     expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "lg:text-5xl");
     expect(title.className.split(/\s+/)).not.toContain("sm:text-5xl");
 
-    // One wrapping flex container; a full-width breaker after Play forces the
-    // controls onto their own line below lg and disappears at lg.
+    // One wrapping flex container. The outer row stays wrappable at lg so a
+    // narrow desktop window drops the column under the title rather than
+    // scrolling sideways.
     const titleBlock = title.parentElement as HTMLElement;
     const row = titleBlock.parentElement as HTMLElement;
     expect(row).toHaveClass("flex", "flex-wrap", "items-center", "gap-y-0");
-    // The zero-height breaker would double a row gap; the controls carry
-    // their own top margin instead. The outer row stays wrappable at lg so a
-    // narrow desktop window drops the controls under the title rather than
-    // scrolling sideways.
     expect(row.className.split(/\s+/)).not.toContain("lg:flex-nowrap");
-    expect(titleBlock).toHaveClass("mr-auto", "lg:mr-0");
+    expect(titleBlock).toHaveClass("mr-auto");
+    expect(titleBlock.className.split(/\s+/)).not.toContain("lg:mr-0");
     const play = screen.getByTestId("play-button");
-    expect(play.parentElement).toHaveClass("lg:ml-auto");
-    const breaker = row.querySelector(".basis-full") as HTMLElement;
-    expect(breaker).toHaveClass("lg:hidden");
-    expect(breaker).toHaveAttribute("aria-hidden", "true");
-    const controls = breaker.nextElementSibling as HTMLElement;
-    expect(controls).toHaveClass("ml-auto", "lg:ml-0", "justify-end", "mt-3", "lg:mt-0");
+    const playWrapper = play.parentElement as HTMLElement;
+    expect(playWrapper).toHaveClass("shrink-0");
+    expect(playWrapper.className.split(/\s+/)).not.toContain("lg:ml-auto");
+    // Below lg the wrapper is display: contents, so Play and the controls
+    // are the row's own items; at lg it is a right-aligned column.
+    const wrapper = playWrapper.parentElement as HTMLElement;
+    expect(wrapper).toHaveClass("contents", "lg:flex", "lg:flex-col", "lg:items-end", "lg:gap-3");
+    expect(wrapper.parentElement).toBe(row);
+    // A full-width controls row is its own line: no breaker needed.
+    expect(row.querySelector(".basis-full")).toBeNull();
+    const controls = wrapper.lastElementChild as HTMLElement;
+    expect(controls).toHaveClass("w-full", "lg:w-auto", "mt-3", "lg:mt-0");
+    expect(controls.className.split(/\s+/)).not.toContain("ml-auto");
+    expect(controls.className.split(/\s+/)).not.toContain("justify-end");
     expect(controls).not.toContainElement(play);
     // The tempo lives under Feel; the header holds no dial at any width.
     expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
 
-    // DOM order: title, Play, breaker, controls.
+    // DOM order: title, Play, controls.
     const follows = (a: Element, b: Element) =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     expect(follows(titleBlock, play)).toBe(true);
-    expect(follows(play, breaker)).toBe(true);
-    expect(follows(breaker, controls)).toBe(true);
+    expect(follows(play, controls)).toBe(true);
     const order = Array.from(controls.querySelectorAll("[data-testid]")).map((el) =>
       el.getAttribute("data-testid"),
     );
     expect(order).toEqual(["export-button", "feel-button", "suggest-button"]);
+  });
+
+  it("keeps Play and the controls while playing after the last clip goes; drops them on stop", async () => {
+    seedClips(1);
+    await renderApp();
+    const actions = useAppStore.getState().actions;
+
+    act(() => actions.setIsPlaying(true));
+    act(() => actions.clearTrackClip(0));
+    expect(screen.getByTestId("play-button")).toBeInTheDocument();
+    expect(screen.getByTestId("export-button")).toBeInTheDocument();
+
+    act(() => actions.setIsPlaying(false));
+    expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
   });
 
   it("renders no storage durability notice even with clips in best-effort storage", async () => {

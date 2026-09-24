@@ -53,9 +53,10 @@ export function PlayButton() {
           header at the same spot; an open panel covers the hint, not the
           other way round. ha-silent-hint: the stylesheet removes the hint
           while a panel is open, so its Dismiss button is not reachable
-          behind the panel. */}
+          behind the panel. At lg the controls sit under Play, so the hint
+          moves beside it. */}
       {showSilentSwitchHint && (
-        <div className="ha-silent-hint absolute inset-x-3 top-full mt-2 z-20 w-auto max-w-[24rem] mx-auto flex items-center gap-2 rounded-md border border-orange-500/60 bg-zinc-950/95 px-3 py-2 text-xs text-orange-200 shadow-lg lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 lg:w-56 lg:max-w-none lg:mx-0">
+        <div className="ha-silent-hint absolute inset-x-3 top-full mt-2 z-20 w-auto max-w-[24rem] mx-auto flex items-center gap-2 rounded-md border border-orange-500/60 bg-zinc-950/95 px-3 py-2 text-xs text-orange-200 shadow-lg lg:inset-x-auto lg:right-full lg:top-1/2 lg:-translate-y-1/2 lg:mt-0 lg:mx-0 lg:mr-3 lg:w-56 lg:max-w-none">
           <span>No sound? Check your phone's silent switch.</span>
           <button
             type="button"
