@@ -1,19 +1,18 @@
 // ABOUTME: Tone.js bootstrap, Transport scheduling, and play/stop control for Hyperactive Amateur.
-// ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
+// ABOUTME: Owns per-track Tone.Players for recorded clips plus the drum kit that plays on empty tracks.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import { claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
+import { KIT, type DrumVoice } from "./drumKit";
 import type { Clip, Track } from "../types";
 
-// Per-track pitches let you hear which tracks are firing while a track has no
-// recorded clip. They keep the sequencer audible during build-up phases.
-const TRACK_PITCHES = ["C2", "D2", "E2", "F2", "G2", "A2", "B2", "C3"];
-
+// The kit keeps the sequencer audible while a track has no recorded clip:
+// each track position plays one fixed drum voice (drumKit.ts).
 let initialized = false;
-let metronomeSynths: Tone.MembraneSynth[] = [];
+let kit: DrumVoice[] = [];
 let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
@@ -35,9 +34,7 @@ export function initTransport(): void {
   const transport = Tone.getTransport();
   transport.bpm.value = useAppStore.getState().project.bpm;
 
-  metronomeSynths = TRACK_PITCHES.map(
-    () => new Tone.MembraneSynth({ volume: -10 }).toDestination(),
-  );
+  kit = KIT.map((voice) => voice.make());
 
   // Build any Tone.Players for clips that already exist (rehydrate path).
   syncPlayers(useAppStore.getState().project.tracks);
@@ -77,7 +74,7 @@ export function initTransport(): void {
 }
 
 // Per-step trigger logic. If the track has a Tone.Player, fire that with the
-// trim offsets; otherwise fall back to the placeholder synth.
+// trim offsets; otherwise play its kit voice.
 function onStep(stepIndex: number, time: number): void {
   const tracks = useAppStore.getState().project.tracks;
   for (const track of tracks) {
@@ -112,8 +109,9 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
     return;
   }
 
-  const synth = metronomeSynths[trackId];
-  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when, track.volume);
+  // No clip: the track's kit voice. Optional because render tests use this
+  // module without initTransport, so the kit is not built there.
+  kit[trackId]?.trigger(when, track.volume);
   useAppStore.getState().actions.markTriggered(trackId);
 }
 
@@ -248,7 +246,8 @@ export function __resetAudioForTesting(): void {
   for (const player of players.values()) player.dispose();
   players = new Map();
   lastClips = new Map();
-  metronomeSynths = [];
+  for (const voice of kit) voice.dispose();
+  kit = [];
   initialized = false;
   stepCounter = 0;
 }
