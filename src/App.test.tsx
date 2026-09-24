@@ -45,6 +45,24 @@ import { clearLogs, getLogs, LOG_EVENTS } from "./lib/logger";
 
 const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
 
+function seedClips(count: number): void {
+  act(() => {
+    for (let i = 0; i < count; i++) {
+      useAppStore.getState().actions.setTrackClip(i, {
+        blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+        url: `blob:test/clip-${i}`,
+        audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+        audioStatus: "ok",
+        trimStartMs: 0,
+        trimEndMs: 800,
+        durationMs: 1000,
+        posterBlob: null,
+        posterUrl: null,
+      });
+    }
+  });
+}
+
 async function renderApp(): Promise<HTMLElement> {
   let container: HTMLElement = document.createElement("div");
   await act(async () => {
@@ -82,7 +100,22 @@ describe("App autosave gating", () => {
     );
   });
 
-  it("phones: title and Play share the first row; the dial and the tools sit on one right-aligned row below", async () => {
+  it("before the first clip the header is the title and Play only: no controls row, no dial", async () => {
+    await renderApp();
+
+    const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
+    const row = title.parentElement!.parentElement as HTMLElement;
+    expect(row.querySelector(".basis-full")).toBeNull();
+    expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("feel-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("suggest-button")).not.toBeInTheDocument();
+    // Title block, Play wrapper, nothing else.
+    expect(row.children).toHaveLength(2);
+  });
+
+  it("phones: title and Play share the first row; the tools sit on one right-aligned row below", async () => {
+    seedClips(1);
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
@@ -108,9 +141,11 @@ describe("App autosave gating", () => {
     const breaker = row.querySelector(".basis-full") as HTMLElement;
     expect(breaker).toHaveClass("lg:hidden");
     expect(breaker).toHaveAttribute("aria-hidden", "true");
-    const controls = screen.getByTestId("bpm-dial").parentElement as HTMLElement;
+    const controls = breaker.nextElementSibling as HTMLElement;
     expect(controls).toHaveClass("ml-auto", "lg:ml-0", "justify-end", "mt-3", "lg:mt-0");
     expect(controls).not.toContainElement(play);
+    // The tempo lives under Feel; the header holds no dial at any width.
+    expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
 
     // DOM order: title, Play, breaker, controls.
     const follows = (a: Element, b: Element) =>
@@ -120,29 +155,15 @@ describe("App autosave gating", () => {
     expect(follows(breaker, controls)).toBe(true);
   });
 
-  it("orders the controls row dial, Export, Feel, Suggest once clips exist", async () => {
-    act(() => {
-      for (let i = 0; i < 3; i++) {
-        useAppStore.getState().actions.setTrackClip(i, {
-          blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-          url: `blob:test/clip-${i}`,
-          audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
-          audioStatus: "ok",
-          trimStartMs: 0,
-          trimEndMs: 800,
-          durationMs: 1000,
-          posterBlob: null,
-          posterUrl: null,
-        });
-      }
-    });
+  it("orders the controls row Export, Feel, Suggest once clips exist", async () => {
+    seedClips(3);
     await renderApp();
 
-    const controls = screen.getByTestId("bpm-dial").parentElement as HTMLElement;
+    const controls = screen.getByTestId("export-button").parentElement as HTMLElement;
     const order = Array.from(controls.querySelectorAll("[data-testid]")).map((el) =>
       el.getAttribute("data-testid"),
     );
-    expect(order).toEqual(["bpm-dial", "export-button", "feel-button", "suggest-button"]);
+    expect(order).toEqual(["export-button", "feel-button", "suggest-button"]);
   });
 
   it("renders no storage durability notice even with clips in best-effort storage", async () => {

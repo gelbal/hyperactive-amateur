@@ -156,11 +156,20 @@ describe("BpmDial", () => {
     expect(useAppStore.getState().project.bpm).toBe(90);
   });
 
-  it("stacks the readout under the knob so the transport fits beside the title", () => {
+  it("lays out as one panel row: the Tempo label, the knob, then the readout", () => {
     const knob = renderKnob();
 
-    expect(knob.parentElement).toHaveClass("flex-col", "items-center");
-    expect(screen.getByText("BPM")).toBeInTheDocument();
+    const row = knob.parentElement as HTMLElement;
+    expect(row).toHaveClass("flex", "items-center");
+    expect(row.className.split(/\s+/)).not.toContain("flex-col");
+    const follows = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const label = screen.getByText("Tempo");
+    const unit = screen.getByText("BPM");
+    expect(row).toContainElement(label);
+    expect(row).toContainElement(unit);
+    expect(follows(label, knob)).toBe(true);
+    expect(follows(knob, unit)).toBe(true);
   });
 
   it("ArrowUp still increments by one stop", () => {

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
-import { BpmDial } from "./components/BpmDial";
 import { ExportButton } from "./components/ExportButton";
 import { SuggestButton } from "./components/SuggestButton";
 import { CompatibilityBanner } from "./components/CompatibilityBanner";
@@ -127,19 +126,22 @@ export function App() {
           <div className="shrink-0 lg:ml-auto">
             <PlayButton />
           </div>
-          <div className="basis-full h-0 lg:hidden" aria-hidden="true" />
-          {/* The zero-height breaker sits on its own flex line, so a row gap
-              would count twice; the controls carry the 12 px themselves. */}
-          <div className="ml-auto lg:ml-0 mt-3 lg:mt-0 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
-            <BpmDial />
-            {hasAnyClips && (
-              <>
+          {/* Before the first clip the header is the title and Play; the
+              tempo dial lives in the Feel panel, so nothing else is worth a
+              row until there is something to play. */}
+          {hasAnyClips && (
+            <>
+              <div className="basis-full h-0 lg:hidden" aria-hidden="true" />
+              {/* The zero-height breaker sits on its own flex line, so a row
+                  gap would count twice; the controls carry the 12 px
+                  themselves. */}
+              <div className="ml-auto lg:ml-0 mt-3 lg:mt-0 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
                 <ExportButton />
                 <FeelDisclosure />
                 {hasAiUnlock && <SuggestButton />}
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">

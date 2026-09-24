@@ -1,4 +1,4 @@
-// ABOUTME: BpmDial — circular knob for tempo, snaps to discrete stops in the hip-hop range.
+// ABOUTME: BpmDial — the Feel panel's tempo row: a circular knob that snaps to discrete stops in the hip-hop range, with its readout beside it.
 // ABOUTME: Turning the knob by angle or the scroll wheel changes the value; arrow keys adjust by one stop.
 import { useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
@@ -105,7 +105,8 @@ export function BpmDial() {
   });
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex items-center gap-3 text-sm text-zinc-300">
+      <span>Tempo</span>
       <button
         type="button"
         aria-label={`BPM ${bpm}`}
