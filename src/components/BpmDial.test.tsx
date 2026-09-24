@@ -172,6 +172,28 @@ describe("BpmDial", () => {
     expect(follows(knob, unit)).toBe(true);
   });
 
+  it("the wheel steps one stop and cancels the scroll of whatever the knob sits in", () => {
+    // React registers wheel listeners as passive, so a synthetic onWheel
+    // cannot cancel the scroll; inside the scrolling Feel panel that would
+    // step the tempo and scroll the knob away at once.
+    useAppStore.getState().actions.setBpm(90);
+    const knob = renderKnob();
+
+    const notCancelled = fireEvent.wheel(knob, { deltaY: -1 });
+
+    expect(notCancelled).toBe(false);
+    expect(useAppStore.getState().project.bpm).toBe(100);
+  });
+
+  it("is named by its visible Tempo label and reads its value as BPM", () => {
+    useAppStore.getState().actions.setBpm(110);
+    const knob = renderKnob();
+
+    expect(knob).toHaveAccessibleName("Tempo");
+    expect(knob).toHaveAttribute("aria-valuenow", "110");
+    expect(knob).toHaveAttribute("aria-valuetext", "110 BPM");
+  });
+
   it("ArrowUp still increments by one stop", () => {
     useAppStore.getState().actions.setBpm(90);
     const knob = renderKnob();

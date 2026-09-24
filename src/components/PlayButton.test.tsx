@@ -80,6 +80,10 @@ describe("PlayButton silent-switch hint", () => {
     expect(classes).toContain("z-20");
     expect(classes).not.toContain("z-40");
     expect(classes).toContain("rounded-md");
+    // While a panel is open the stylesheet removes the hint altogether
+    // (display: none), so its Dismiss button leaves the tab order and the
+    // accessibility tree instead of sitting reachable behind the panel.
+    expect(classes).toContain("ha-silent-hint");
   });
 
   it("names the keyboard shortcut in its title instead of a hint beside it", () => {

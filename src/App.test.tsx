@@ -108,7 +108,21 @@ describe("App autosave gating", () => {
     // Title block, Play wrapper, nothing else: no breaker, no controls row.
     expect(row.children).toHaveLength(2);
     expect(row.querySelector(".basis-full")).toBeNull();
-    expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
+  });
+
+  it("reserves an empty controls row while a saved project hydrates, so the page does not jump when the clips arrive", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockReturnValue(new Promise(() => undefined));
+    await renderApp();
+
+    expect(screen.getByText("Loading project…")).toBeInTheDocument();
+    const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
+    const row = title.parentElement!.parentElement as HTMLElement;
+    const breaker = row.querySelector(".basis-full") as HTMLElement;
+    expect(breaker).not.toBeNull();
+    const controls = breaker.nextElementSibling as HTMLElement;
+    expect(controls.children).toHaveLength(0);
+    // The buttons' height: 38 px on fine pointers, 44 px on coarse ones.
+    expect(controls).toHaveClass("min-h-[2.375rem]", "pointer-coarse:min-h-11");
   });
 
   it("with clips: title and Play share the first row; Export, Feel, Suggest sit on one right-aligned row below", async () => {
@@ -120,7 +134,6 @@ describe("App autosave gating", () => {
     // the phone header.
     expect(title).toHaveClass("text-2xl", "min-[360px]:text-3xl", "lg:text-5xl");
     expect(title.className.split(/\s+/)).not.toContain("sm:text-5xl");
-    expect(screen.queryByText("space")).not.toBeInTheDocument();
 
     // One wrapping flex container; a full-width breaker after Play forces the
     // controls onto their own line below lg and disappears at lg.

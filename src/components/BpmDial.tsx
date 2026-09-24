@@ -1,6 +1,6 @@
 // ABOUTME: BpmDial — the Feel panel's tempo row: a circular knob that snaps to discrete stops in the hip-hop range, with its readout beside it.
 // ABOUTME: Turning the knob by angle or the scroll wheel changes the value; arrow keys adjust by one stop.
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 
 const STOPS = [70, 80, 90, 100, 110, 120, 130, 140, 150, 160] as const;
@@ -62,6 +62,13 @@ function unwrappedDelta(from: number, to: number): number {
   return delta === -180 ? 180 : delta;
 }
 
+// Every write bumps the project revision (re-arming autosave, staling an
+// in-flight Suggest), so only a changed stop is written.
+function writeBpm(next: number): void {
+  if (next === useAppStore.getState().project.bpm) return;
+  useAppStore.getState().actions.setBpm(next);
+}
+
 interface Turn {
   startIdx: number;
   lastAngle: number | null;
@@ -76,14 +83,25 @@ export function BpmDial() {
   // input, not just rely on the store writer's no-op.
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const turnRef = useRef<Turn | null>(null);
+  const knobRef = useRef<HTMLButtonElement | null>(null);
+  const labelId = useId();
   const [dragging, setDragging] = useState(false);
 
-  // Every write bumps the project revision (re-arming autosave, staling an
-  // in-flight Suggest), so only a changed stop is written.
-  const setBpm = (next: number) => {
-    if (next === useAppStore.getState().project.bpm) return;
-    useAppStore.getState().actions.setBpm(next);
-  };
+  // React registers wheel listeners as passive, so a synthetic onWheel
+  // cannot cancel the scroll: inside the scrolling Feel panel a wheel over
+  // the knob would step the tempo and scroll the knob away at once. A
+  // native listener registered with passive: false can cancel it.
+  useEffect(() => {
+    const knob = knobRef.current;
+    if (!knob) return;
+    const onWheel = (event: WheelEvent) => {
+      if (useAppStore.getState().playback.isExporting || event.deltaY === 0) return;
+      event.preventDefault();
+      writeBpm(stepBy(useAppStore.getState().project.bpm, event.deltaY > 0 ? -1 : 1));
+    };
+    knob.addEventListener("wheel", onWheel, { passive: false });
+    return () => knob.removeEventListener("wheel", onWheel);
+  }, []);
 
   const angleDeg = angleFor(bpm);
   const angleRad = (angleDeg * Math.PI) / 180;
@@ -106,20 +124,17 @@ export function BpmDial() {
 
   return (
     <div className="flex items-center gap-3 text-sm text-zinc-300">
-      <span>Tempo</span>
+      <span id={labelId}>Tempo</span>
       <button
+        ref={knobRef}
         type="button"
-        aria-label={`BPM ${bpm}`}
+        aria-labelledby={labelId}
         aria-valuemin={STOPS[0]}
         aria-valuemax={STOPS[STOPS.length - 1]}
         aria-valuenow={bpm}
+        aria-valuetext={`${bpm} BPM`}
         role="slider"
         disabled={isExporting}
-        onWheel={(event) => {
-          if (isExporting || event.deltaY === 0) return;
-          event.preventDefault();
-          setBpm(stepBy(bpm, event.deltaY > 0 ? -1 : 1));
-        }}
         onPointerDown={(event) => {
           if (isExporting) return;
           event.preventDefault();
@@ -151,7 +166,7 @@ export function BpmDial() {
           const minDeg = -turn.startIdx * DEG_PER_STOP;
           const maxDeg = (STOPS.length - 1 - turn.startIdx) * DEG_PER_STOP;
           turn.accumulatedDeg = Math.max(minDeg, Math.min(maxDeg, turn.accumulatedDeg + delta));
-          setBpm(STOPS[turn.startIdx + Math.round(turn.accumulatedDeg / DEG_PER_STOP)]);
+          writeBpm(STOPS[turn.startIdx + Math.round(turn.accumulatedDeg / DEG_PER_STOP)]);
         }}
         onPointerUp={(event) => {
           (event.currentTarget as HTMLButtonElement).releasePointerCapture(
@@ -168,10 +183,10 @@ export function BpmDial() {
           if (isExporting) return;
           if (event.key === "ArrowUp" || event.key === "ArrowRight") {
             event.preventDefault();
-            setBpm(stepBy(bpm, 1));
+            writeBpm(stepBy(bpm, 1));
           } else if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
             event.preventDefault();
-            setBpm(stepBy(bpm, -1));
+            writeBpm(stepBy(bpm, -1));
           }
         }}
         title="Turn, scroll, or use arrow keys to change BPM"

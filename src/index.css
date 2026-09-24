@@ -140,3 +140,12 @@ textarea:focus-visible,
   border-radius: 0;
   box-shadow: none;
 }
+
+/* The Feel and Export panels (role="dialog") hang under the sticky header
+ * at the same spot as the Play button's silent-switch hint. While one is
+ * open the hint leaves the page, and with it the tab order and the
+ * accessibility tree; stacked behind the panel its Dismiss button would
+ * still take focus. */
+header:has([role="dialog"]) .ha-silent-hint {
+  display: none;
+}

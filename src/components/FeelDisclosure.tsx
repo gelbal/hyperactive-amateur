@@ -39,7 +39,7 @@ export function FeelDisclosure() {
   // Undo / result toast.
   usePopoverDismiss(rootRef, open, close, { whileBusy: retagBusy || variationBusy });
 
-  const summary = `${bpm} BPM · ${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
+  const summary = `${CUT_LABEL[cut]} · ${Math.round(swing * 100)}% · ${hold}ms`;
 
   return (
     // Below lg this wrapper is not positioned, so the popover's containing
@@ -67,7 +67,12 @@ export function FeelDisclosure() {
         {/* The live values ride along only where the row has room; on a
             phone the button is the icon and the word so the controls row
             stays one line. */}
-        <span className="hidden lg:inline font-mono tabular-nums text-xs text-zinc-500">{summary}</span>
+        <span className="hidden lg:inline font-mono tabular-nums text-xs text-zinc-500">
+          {/* Three digit slots: the button, and the right-packed row with
+              it, must not change width when a turn crosses 100 BPM under a
+              captured pointer. */}
+          <span className="inline-block w-[3ch] text-right">{bpm}</span> BPM · {summary}
+        </span>
       </button>
       {open && (
         <div
@@ -75,8 +80,7 @@ export function FeelDisclosure() {
           aria-label="Feel controls"
           className="absolute inset-x-3 top-full mt-2 z-30 w-auto max-w-[24rem] mx-auto max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 lg:inset-x-auto lg:left-0 lg:min-w-[18rem] lg:max-w-none lg:mx-0 lg:max-h-none lg:overflow-visible"
         >
-          {/* Tempo first: it is the control reached for most, and the only
-              one whose value shows on the button. */}
+          {/* Tempo first: it is the control reached for most. */}
           <BpmDial />
           <CutSubdivisionSelect />
           <SwingSlider />

@@ -62,19 +62,23 @@ describe("FeelDisclosure", () => {
     const button = screen.getByLabelText(FEEL_LABEL);
     expect(button).toHaveClass("pointer-coarse:min-h-11");
     expect(button).toHaveTextContent("Feel");
-    const summary = screen.getByText("110 BPM · 1/8 · 0% · 400ms");
+    const summary = screen.getByText(/BPM · 1\/8 · 0% · 400ms/);
     expect(summary).toHaveClass("hidden", "lg:inline");
+    expect(summary).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
+    // Three digit slots, so the button (and the right-packed row with it)
+    // keeps its width when a turn crosses 100 BPM under a captured pointer.
+    expect(screen.getByText("110")).toHaveClass("inline-block", "w-[3ch]", "text-right");
   });
 
   it("opens with Tempo first: the knob and its readout sit above Cut rate, and only inside the panel", () => {
     render(<FeelDisclosure />);
-    expect(screen.queryByRole("slider", { name: "BPM 90" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "Tempo" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText(FEEL_LABEL));
 
     const panel = screen.getByRole("dialog", { name: "Feel controls" });
     // Swing and Hold are range inputs (sliders too); the knob is named.
-    const knob = screen.getByRole("slider", { name: "BPM 90" });
+    const knob = screen.getByRole("slider", { name: "Tempo" });
     expect(panel).toContainElement(knob);
     expect(knob).toHaveAttribute("aria-valuenow", "90");
     expect(panel).toContainElement(screen.getByText("Tempo"));
