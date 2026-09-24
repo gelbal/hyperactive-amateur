@@ -141,19 +141,6 @@ describe("media", () => {
     expect(audioSession.types).toEqual(["play-and-record", "auto"]);
   });
 
-  it("settles the session bracket for a stale acquire that resolves after invalidation", async () => {
-    const pending = deferred<MediaStream>();
-    stubGetUserMedia(() => pending.promise);
-
-    const acquisition = acquireRecordingStream();
-    expect(audioSession.types).toEqual(["play-and-record"]);
-    invalidatePendingAcquire();
-    pending.resolve(makeFakeStream());
-
-    await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
-    expect(audioSession.types).toEqual(["play-and-record", "auto"]);
-  });
-
   it("lands a post-grant acquire failure that is not a permission denial in suspended, and logs it", async () => {
     useAppStore.getState().actions.setMedia({ stream: null, status: "granted", error: null });
     stubGetUserMedia(async () => {

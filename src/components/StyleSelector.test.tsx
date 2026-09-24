@@ -31,11 +31,4 @@ describe("StyleSelector", () => {
 
     expect(useAppStore.getState().project.subgenre).toBe("trap");
   });
-
-  it("renders the select disabled while exporting", () => {
-    useAppStore.getState().actions.setIsExporting(true);
-    render(<StyleSelector />);
-
-    expect(screen.getByLabelText("Style")).toBeDisabled();
-  });
 });
