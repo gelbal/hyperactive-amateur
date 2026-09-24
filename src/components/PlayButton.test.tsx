@@ -73,6 +73,26 @@ describe("PlayButton silent-switch hint", () => {
     expect(hint?.className.split(/\s+/)).not.toContain("fixed");
   });
 
+  it("stacks the hint below the Feel and Export panels, which hang under the header at the same spot", () => {
+    // The panels are z-30 inside the header's stacking context; a hint above
+    // them covered the Feel panel's first row, so a tap on the tempo knob's
+    // top edge landed on the hint and closed the panel as an outside click.
+    hintState.shouldShow.mockReturnValue(true);
+    useAppStore.getState().actions.setAudioState("running");
+
+    render(<PlayButton />);
+
+    const hint = screen
+      .getByText("No sound? Check your phone's silent switch.")
+      .closest("div");
+    const classes = hint?.className.split(/\s+/) ?? [];
+    expect(classes).toContain("z-20");
+    expect(classes).not.toContain("z-40");
+    // Same corner radius as the panels, or the pill's corners peek out at
+    // the panel's rounded corners.
+    expect(classes).toContain("rounded-md");
+  });
+
   it("names the keyboard shortcut in its title instead of a hint beside it", () => {
     render(<PlayButton />);
 
