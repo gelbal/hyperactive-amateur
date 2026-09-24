@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
+import { KIT } from "../lib/drumKit";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { AI_OFFLINE_COPY } from "../lib/aiOffline";
@@ -97,15 +98,18 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     });
   };
 
-  const label = tag ? tag.toUpperCase() : `T${trackId + 1}`;
+  // clearTrackClip keeps the tag, so the clip decides: an empty track names
+  // the kit voice it plays, in zinc; a tagged clip shows its tag in orange.
+  const clipTag = clip ? tag : null;
+  const label = !clip ? KIT[trackId].name : clipTag ? clipTag.toUpperCase() : `T${trackId + 1}`;
 
   return (
     <div className="h-12 flex items-center gap-2 pr-2">
       <span
         className={
-          "w-14 text-sm font-mono " + (tag ? "text-orange-400" : "text-zinc-500")
+          "w-14 text-sm font-mono " + (clipTag ? "text-orange-400" : "text-zinc-500")
         }
-        title={tag ? `Track ${trackId + 1}` : undefined}
+        title={!clip || clipTag ? `Track ${trackId + 1}` : undefined}
       >
         {label}
       </span>

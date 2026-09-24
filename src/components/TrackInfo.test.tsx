@@ -1,4 +1,4 @@
-// ABOUTME: TrackInfo tests — clip thumbnail re-record overlay is touch-reachable on coarse pointers.
+// ABOUTME: TrackInfo tests — clip thumbnail re-record overlay is touch-reachable on coarse pointers; empty tracks name their kit voice.
 // ABOUTME: The overlay is hover-only on desktop; on touch it must stay visible at reduced opacity.
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -160,5 +160,31 @@ describe("TrackInfo re-record overlay", () => {
       useAppStore.getState().actions.setRecordingState("preparing", 2);
     });
     expect(screen.queryByText(INTERRUPTION_COPY)).not.toBeInTheDocument();
+  });
+});
+
+describe("TrackInfo label", () => {
+  beforeEach(() => {
+    useAppStore.getState().actions.reset();
+  });
+
+  it("names the kit voice on an empty track in zinc; a tagged clip shows its tag in orange; clearing the clip returns to the voice although the tag stays", () => {
+    const actions = useAppStore.getState().actions;
+    render(<TrackInfo trackId={3} />);
+    expect(screen.getByText("open hat")).toHaveClass("text-zinc-500");
+
+    act(() => {
+      actions.setTrackClip(3, makeClip());
+      actions.setTrackTag(3, "fx");
+    });
+    // The tag chip renders lower-case "fx" (upper-cased by CSS), so "FX"
+    // matches only the label.
+    expect(screen.getByText("FX")).toHaveClass("text-orange-400");
+    expect(screen.queryByText("open hat")).not.toBeInTheDocument();
+
+    act(() => actions.clearTrackClip(3));
+    expect(screen.getByText("open hat")).toHaveClass("text-zinc-500");
+    expect(screen.queryByText("FX")).not.toBeInTheDocument();
+    expect(useAppStore.getState().project.tracks[3].tag).toBe("fx");
   });
 });
