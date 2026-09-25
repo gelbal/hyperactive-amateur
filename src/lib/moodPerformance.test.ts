@@ -612,6 +612,23 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
   });
 
+  it("lets the performer cancel that queued swap by tapping the take now playing", async () => {
+    createMoodWithStack(2);
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "take-b");
+    toneHarness.setImmediate(12.02);
+    armSelection("mic-0", "take-a");
+    applyDueCommits(12.03);
+
+    armSelection("mic-0", "take-b");
+    applyDueCommits(14);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
+  });
+
   it("clears a queued Drop when performance stops", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("print");
