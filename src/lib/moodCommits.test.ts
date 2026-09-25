@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const moodTransportMocks = vi.hoisted(() => ({
   consumeDueCommits: vi.fn(),
+  pendingSelectionCommits: vi.fn(() => []),
 }));
 
 const moodPerformanceMocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const moodVideoPoolMocks = vi.hoisted(() => ({
 
 vi.mock("./moodTransport", () => ({
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
+  pendingSelectionCommits: moodTransportMocks.pendingSelectionCommits,
 }));
 
 vi.mock("./moodPerformance", () => ({

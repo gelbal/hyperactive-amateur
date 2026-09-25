@@ -564,6 +564,27 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
   });
 
+  it("keeps a mic armed through a commit when a re-arm in the sliver is queued for the next One", async () => {
+    createMoodWithStack(2);
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "take-b");
+
+    // The arm clock has passed 12, so take-b is held for 12 and the new
+    // tap goes to 14.
+    toneHarness.setImmediate(12.02);
+    armSelection("mic-0", "take-a");
+    applyDueCommits(12.03);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("take-a");
+
+    applyDueCommits(14);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-a");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
+  });
+
   it("clears a queued Drop when performance stops", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("print");

@@ -40,6 +40,7 @@ export interface BoundaryQueue {
   armDrop(active: boolean, boundaryTime: number, now: number): void;
   dueAt(now: number): BoundaryQueueEvent[];
   lockedSelectionsAt(now: number): BoundarySelectionEvent[];
+  pendingSelections(): BoundarySelectionEvent[];
 }
 
 const BOUNDARY_EVENT_ORDER: Record<BoundaryQueueEvent["type"], number> = {
@@ -137,6 +138,12 @@ export function createBoundaryQueue(): BoundaryQueue {
     if (event && event.boundaryTime <= now) ripe.push(event);
   };
 
+  // Every queued selection, held or pending, in boundary order.
+  const pendingSelections = (): BoundarySelectionEvent[] =>
+    [...ripe, ...selections.values()]
+      .filter((event): event is BoundarySelectionEvent => event.type === "selection")
+      .sort(compareBoundaryEvents);
+
   return {
     armSelection(commit, boundaryTime, now) {
       assertFiniteSeconds("boundaryTime", boundaryTime);
@@ -195,12 +202,9 @@ export function createBoundaryQueue(): BoundaryQueue {
     lockedSelectionsAt(now) {
       assertFiniteSeconds("now", now);
 
-      const locked = [...ripe, ...selections.values()].filter(
-        (event): event is BoundarySelectionEvent =>
-          event.type === "selection" && event.boundaryTime <= now,
-      );
-      return locked.sort(compareBoundaryEvents);
+      return pendingSelections().filter((event) => event.boundaryTime <= now);
     },
+    pendingSelections,
   };
 }
 

@@ -42,6 +42,7 @@ vi.mock("../../lib/moodTransport", () => ({
   armMoodSelectionCommit: moodTransportMocks.armMoodSelectionCommit,
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
   lockedSelectionCommits: () => [],
+  pendingSelectionCommits: () => [],
   registerMoodPerformanceInterrupt: () => () => undefined,
   startMoodPerformance: moodTransportMocks.startMoodPerformance,
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,

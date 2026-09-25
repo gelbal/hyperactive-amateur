@@ -4,7 +4,7 @@ import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodSelectionCommit } from "../types";
 import type { BoundaryDropEvent } from "./moodClock";
 import { scheduleLockedPlayerSwaps, syncCommittedMoodEngines } from "./moodPerformance";
-import { consumeDueCommits } from "./moodTransport";
+import { consumeDueCommits, pendingSelectionCommits } from "./moodTransport";
 import { restartVideosAtPeriodBoundary } from "./moodVideoPool";
 
 export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
@@ -27,6 +27,12 @@ export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
   const actions = useAppStore.getState().actions;
   if (selections.length > 0) {
     actions.commitMoodSelections(selections);
+    // A re-arm made after its boundary locked waits for the next one: the
+    // committed mic stays armed with it.
+    const committedMics = new Set(selections.map((commit) => commit.micId));
+    for (const event of pendingSelectionCommits()) {
+      if (committedMics.has(event.micId)) actions.armMoodSelection(event.micId, event.entry);
+    }
   }
   if (lens !== null) {
     actions.setMoodLens(lens);

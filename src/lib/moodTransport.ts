@@ -203,6 +203,11 @@ export function lockedSelectionCommits(): BoundarySelectionEvent[] {
   return boundaryQueue.lockedSelectionsAt(Tone.now());
 }
 
+// Selection commits still queued after the latest drain.
+export function pendingSelectionCommits(): BoundarySelectionEvent[] {
+  return boundaryQueue.pendingSelections();
+}
+
 export function consumeDueCommits(audioTime: number): BoundaryQueueEvent[] {
   return boundaryQueue.dueAt(audioTime);
 }
