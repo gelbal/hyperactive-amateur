@@ -192,6 +192,57 @@ describe("moodVideoPool", () => {
     expect(playback.play).not.toHaveBeenCalled();
   });
 
+  it("moves a synced take's video with its audio: positive syncOffsetMs starts it later", () => {
+    // Started 250 ms late, a 2 s-period take restarts at 2.25, not 2.
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 2, syncOffsetMs: 250 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    restartVideosAtPeriodBoundary(2.1, 0);
+    // 1.85 s into its period: past its 1 s of content, so the last frame.
+    expect(playback.seek).toHaveBeenLastCalledWith(1.125);
+    playback.seek.mockClear();
+
+    restartVideosAtPeriodBoundary(2.2, 0);
+    expect(playback.seek).not.toHaveBeenCalled();
+
+    restartVideosAtPeriodBoundary(2.25, 0);
+    expect(playback.seek).toHaveBeenLastCalledWith(0.125);
+  });
+
+  it("shows a later-synced take's previous pass before its first period starts", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 2, syncOffsetMs: 250 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    // 0.1 s after the epoch the take (started 250 ms later) is 1.85 s into
+    // its previous pass, in the rest after its 1 s of content.
+    restartVideosAtPeriodBoundary(0.1, 0);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(1.125);
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-seeks a live video when its take's sync offset changes", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 8.125, loopPeriod: 8, cycleMultiple: 2 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+    restartVideosAtPeriodBoundary(4.5, 0);
+    expect(playback.seek).toHaveBeenLastCalledWith(4.625);
+
+    syncPool([
+      poolTake({ loopStart: 0.125, loopEnd: 8.125, loopPeriod: 8, cycleMultiple: 2, syncOffsetMs: 100 }),
+    ]);
+    restartVideosAtPeriodBoundary(4.8, 0);
+
+    // 4.8 s, started 100 ms later: 4.7 s into the period.
+    expect(playback.seek).toHaveBeenLastCalledWith(4.825);
+    expect(videoForTake("take-a")).toBe(video);
+  });
+
   it("holds the last content frame at content end and restarts only on the period boundary", () => {
     syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 2 })]);
     const video = videoForTake("take-a");

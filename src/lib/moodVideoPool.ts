@@ -16,6 +16,8 @@ export interface MoodVideoPoolTake {
   loopPeriod?: number;
   cycleMultiple?: MoodTake["cycleMultiple"];
   epoch?: number | null;
+  // Sync Assist's nudge, as for the audio: positive starts the take later.
+  syncOffsetMs?: number;
 }
 
 interface PooledMoodVideo {
@@ -28,6 +30,7 @@ interface PooledMoodVideo {
   loopPeriod: number;
   cycleMultiple: MoodTake["cycleMultiple"];
   epoch: number | null;
+  syncOffsetSeconds: number;
   holdingRest: boolean;
   playing: boolean;
   // Period-lock dedup: the index of the take's own loop period (which can be a
@@ -139,11 +142,17 @@ function holdAtContentEnd(entry: PooledMoodVideo): void {
   pauseVideo(entry);
 }
 
+// How far the take has played at audioTime: phase-locked to the epoch and
+// shifted by its sync offset, exactly as its audio player is.
+function takeTimeAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
+  return audioTime - epoch - entry.syncOffsetSeconds;
+}
+
 // The index of the take's OWN loop period at audioTime, phase-locked to the
 // epoch. loopPeriod = cycleMultiple × cycleSeconds, so this correctly counts
 // half-cycle periods (0.5) as well as multi-cycle ones (2, 4).
 function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
-  return Math.floor((audioTime - epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
+  return Math.floor(takeTimeAt(entry, audioTime, epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
 }
 
 // Seeks to where the take's audio is at audioTime: the same epoch phase in
@@ -156,7 +165,7 @@ function seekToPhase(entry: PooledMoodVideo, audioTime: number, epoch: number | 
     return;
   }
   const periodIndex = periodIndexAt(entry, audioTime, epoch);
-  const phase = Math.max(0, audioTime - epoch - periodIndex * entry.loopPeriod);
+  const phase = Math.max(0, takeTimeAt(entry, audioTime, epoch) - periodIndex * entry.loopPeriod);
   updateEffectiveLoopEnd(entry);
   const position = entry.loopStart + phase;
   if (phase > LOOP_EPSILON_SECONDS && position >= entry.effectiveLoopEnd) {
@@ -213,6 +222,7 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     loopPeriod: take.loopPeriod ?? fallbackLoopPeriod(take),
     cycleMultiple: take.cycleMultiple ?? 1,
     epoch: take.epoch ?? null,
+    syncOffsetSeconds: (take.syncOffsetMs ?? 0) / 1000,
     holdingRest: false,
     playing: false,
     restartEpoch: null,
@@ -268,6 +278,13 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
       existing.loopPeriod = take.loopPeriod ?? fallbackLoopPeriod(take);
       existing.cycleMultiple = take.cycleMultiple ?? 1;
       existing.epoch = take.epoch ?? null;
+      const syncOffsetSeconds = (take.syncOffsetMs ?? 0) / 1000;
+      if (existing.syncOffsetSeconds !== syncOffsetSeconds) {
+        // A re-synced take re-seeks on the next restart check, in step with
+        // its audio.
+        existing.syncOffsetSeconds = syncOffsetSeconds;
+        existing.lastPeriodIndex = null;
+      }
       updateEffectiveLoopEnd(existing);
       applyCapturePolicy(existing);
       continue;
@@ -329,6 +346,7 @@ export function liveTakesFromSelections(
           : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
       cycleMultiple: take.cycleMultiple,
       epoch,
+      syncOffsetMs: take.syncOffsetMs,
     });
   }
   return [...live.values()];
@@ -342,8 +360,8 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
       entry.restartEpoch = epoch;
       entry.lastPeriodIndex = null;
     }
+    // Index -1 is a take synced to start later, still in its previous pass.
     const periodIndex = periodIndexAt(entry, audioTime, epoch);
-    if (periodIndex < 0) continue;
     if (entry.lastPeriodIndex === periodIndex) continue;
     entry.lastPeriodIndex = periodIndex;
     seekToPhase(entry, audioTime, epoch);

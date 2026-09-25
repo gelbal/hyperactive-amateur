@@ -73,6 +73,7 @@ function liveVideoTakesIncludingArmed(
           : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
       cycleMultiple: take.cycleMultiple,
       epoch,
+      syncOffsetMs: take.syncOffsetMs,
     });
   }
 
