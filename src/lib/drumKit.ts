@@ -62,14 +62,35 @@ function noise(options: NoiseOptions): DrumVoice {
   };
 }
 
+// Hats are white noise through a high-pass rather than MetalSynths: a
+// MetalSynth hit starts six FM oscillator pairs, too much DSP for a phone
+// running three hats on 16ths while it records an export.
+function hat(decay: number, highpassHz: number): DrumVoice {
+  const filter = new Tone.Filter({ type: "highpass", frequency: highpassHz }).toDestination();
+  const synth = new Tone.NoiseSynth({
+    noise: { type: "white" },
+    envelope: { decay },
+    volume: VOLUME_DB,
+  }).connect(filter);
+  return {
+    trigger: (when, velocity) => {
+      synth.triggerAttackRelease(DURATION, when, velocity);
+    },
+    dispose: () => {
+      synth.dispose();
+      filter.dispose();
+    },
+  };
+}
+
 // By track position. The second four are the first four's variation.
 export const KIT: readonly KitVoice[] = [
   { name: "kick", tag: "kick", make: () => membrane("A1", { pitchDecay: 0.05, octaves: 6, envelope: { decay: 0.3 } }) },
-  { name: "hat", tag: "hat", make: () => metal(200, { envelope: { decay: 0.05 } }) },
+  { name: "hat", tag: "hat", make: () => hat(0.05, 7000) },
   { name: "snare", tag: "snare", make: () => noise({ noise: { type: "white" }, envelope: { decay: 0.15 } }) },
-  { name: "open hat", tag: "hat", make: () => metal(200, { envelope: { decay: 0.35 } }) },
+  { name: "open hat", tag: "hat", make: () => hat(0.3, 7000) },
   { name: "kick 2", tag: "kick", make: () => membrane("C2", { pitchDecay: 0.08, octaves: 8, envelope: { decay: 0.2 } }) },
-  { name: "hat 2", tag: "hat", make: () => metal(320, { envelope: { decay: 0.08 }, resonance: 6000, octaves: 1 }) },
+  { name: "hat 2", tag: "hat", make: () => hat(0.08, 9000) },
   { name: "clap", tag: "snare", make: () => noise({ noise: { type: "pink" }, envelope: { decay: 0.2 } }) },
   { name: "ride", tag: "hat", make: () => metal(250, { envelope: { decay: 0.8, release: 0.5 }, harmonicity: 3, resonance: 3000 }) },
 ];

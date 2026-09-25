@@ -27,6 +27,7 @@ interface SynthMock {
   triggerAttackRelease: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   toDestination: () => SynthMock;
+  connect: () => SynthMock;
 }
 const synthInstances: SynthMock[] = [];
 function makeSynth(): SynthMock {
@@ -34,6 +35,7 @@ function makeSynth(): SynthMock {
     triggerAttackRelease: vi.fn(),
     dispose: vi.fn(),
     toDestination: () => s,
+    connect: () => s,
   };
   synthInstances.push(s);
   return s;
@@ -74,6 +76,12 @@ vi.mock("tone", () => ({
   }),
   NoiseSynth: vi.fn(function NoiseSynth() {
     return makeSynth();
+  }),
+  // The hats' high-pass; kept out of synthInstances so its indices stay the
+  // track order.
+  Filter: vi.fn(function Filter() {
+    const f = { dispose: vi.fn(), toDestination: () => f };
+    return f;
   }),
   Player: vi.fn(function Player() {
     return makePlayer();
