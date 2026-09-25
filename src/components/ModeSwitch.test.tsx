@@ -7,8 +7,16 @@ const audioMocks = vi.hoisted(() => ({
   stopPlayback: vi.fn(),
 }));
 
+const moodTransportMocks = vi.hoisted(() => ({
+  stopMoodPerformance: vi.fn(),
+}));
+
 vi.mock("../lib/audio", () => ({
   stopPlayback: audioMocks.stopPlayback,
+}));
+
+vi.mock("../lib/moodTransport", () => ({
+  stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
 import { ModeSwitch } from "./ModeSwitch";
@@ -20,6 +28,7 @@ describe("ModeSwitch", () => {
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     audioMocks.stopPlayback.mockReset();
+    moodTransportMocks.stopMoodPerformance.mockReset();
   });
 
   it("renders Chop and Mood segments with the active mode pressed", () => {
@@ -44,6 +53,19 @@ describe("ModeSwitch", () => {
     expect(screen.getByRole("button", { name: "Mood" })).toHaveClass(
       "pointer-coarse:min-h-11",
     );
+  });
+
+  it("stops a running Mood performance before entering Chop", () => {
+    const actions = useAppStore.getState().actions;
+    actions.setAppMode("mood");
+    actions.createMoodPiece("corners", "pocket");
+    actions.setMoodPerforming(true, 4);
+    render(<ModeSwitch />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Chop" }));
+
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().appMode).toBe("chop");
   });
 
   it("switches modes through the store", () => {

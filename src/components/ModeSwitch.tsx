@@ -1,6 +1,7 @@
 // ABOUTME: ModeSwitch — two-segment header control for swapping Chop and Mood.
-// ABOUTME: Stops active Chop playback before entering Mood so only one mode owns sound.
+// ABOUTME: Stops the active Chop playback or Mood performance before switching so only one mode owns sound.
 import { stopPlayback } from "../lib/audio";
+import { stopMoodPerformance } from "../lib/moodTransport";
 import { useAppStore } from "../store/useAppStore";
 import type { AppMode } from "../types";
 
@@ -30,6 +31,14 @@ export function ModeSwitch() {
       state.playback.isPlaying
     ) {
       stopPlayback();
+    }
+    // The loop players and the shared transport outlive the store's stop.
+    if (
+      state.appMode === "mood" &&
+      nextMode === "chop" &&
+      state.mood.performance.isPerforming
+    ) {
+      stopMoodPerformance();
     }
     useAppStore.getState().actions.setAppMode(nextMode);
   };
