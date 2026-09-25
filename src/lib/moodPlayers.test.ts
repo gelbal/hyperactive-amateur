@@ -265,33 +265,35 @@ describe("moodPlayers", () => {
     expect(offset).toBeCloseTo(0.02);
   });
 
-  it("applies syncOffsetMs to the phase offset and wraps inside the loop", () => {
+  it("nudges a take by syncOffsetMs the way Sync Assist is asked: positive starts it later", () => {
     toneHarness.setImmediate(13.9);
-    const take = makeMoodTake({
-      id: "nudged",
+    const later = makeMoodTake({
+      id: "later",
       audioBuffer: defaultAudioBuffer,
       cycleMultiple: 1,
       syncOffsetMs: 250,
     });
 
-    syncMoodPlayers([{ takeId: "nudged", take }], 10, 4);
+    // 3.9 s into the cycle, a take started 250 ms later is 3.65 s in.
+    syncMoodPlayers([{ takeId: "later", take: later }], 10, 4);
     {
       const [startAt, offset] = toneMocks.players[0].start.mock.calls[0];
       expect(startAt).toBe(13.9);
-      expect(offset).toBeCloseTo(0.15);
+      expect(offset).toBeCloseTo(3.65);
     }
 
-    const early = makeMoodTake({
-      id: "early",
+    // Started 250 ms earlier, it has wrapped: 0.15 s into its next pass.
+    const earlier = makeMoodTake({
+      id: "earlier",
       audioBuffer: defaultAudioBuffer,
       cycleMultiple: 1,
       syncOffsetMs: -250,
     });
-    syncMoodPlayers([{ takeId: "early", take: early }], 10, 4);
+    syncMoodPlayers([{ takeId: "earlier", take: earlier }], 10, 4);
     {
       const [startAt, offset] = toneMocks.players[1].start.mock.calls[0];
       expect(startAt).toBe(13.9);
-      expect(offset).toBeCloseTo(3.65);
+      expect(offset).toBeCloseTo(0.15);
     }
   });
 

@@ -77,7 +77,8 @@ function startPhaseOffset(
   loopPeriodSeconds: number,
   syncOffsetMs: number,
 ): number {
-  return positiveModulo(startTime - epoch + syncOffsetMs / 1000, loopPeriodSeconds);
+  // Sync Assist's convention: a positive offset starts the take later.
+  return positiveModulo(startTime - epoch - syncOffsetMs / 1000, loopPeriodSeconds);
 }
 
 function hasPlayableAudio(take: MoodTake): boolean {
