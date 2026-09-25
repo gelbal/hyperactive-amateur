@@ -12,7 +12,10 @@ export const PROJECT_QUARANTINE_KEY = "ha:meta-quarantine";
 export const LEGACY_PROJECT_KEY = "hyperactive-amateur-project";
 export const LEGACY_PROJECT_BACKUP_KEY = "hyperactive-amateur-project:recovery-backup";
 
-const BLOB_KEY_PREFIX = "ha:blob:";
+export const BLOB_KEY_PREFIX = "ha:blob:";
+const MOOD_KEY_FOR_GC = "ha:mood-meta";
+const MOOD_BACKUP_KEY_FOR_GC = "ha:mood-meta-backup";
+const MOOD_QUARANTINE_KEY_FOR_GC = "ha:mood-meta-quarantine";
 
 // idb-keyval's default database and store names, kept so existing projects
 // stay readable. The store is created here rather than left to idb-keyval's
@@ -25,6 +28,12 @@ let store: UseStore = createStore(DB_NAME, STORE_NAME);
 
 export function resetPersistenceStore(): void {
   store = createStore(DB_NAME, STORE_NAME);
+}
+
+// The current store for the other persisted records sharing this database
+// (Mood's metadata), so a reset reopens them too.
+export function persistenceStore(): UseStore {
+  return store;
 }
 
 type BlobField = "clipBlob" | "audioBlob" | "posterBlob";
@@ -151,11 +160,11 @@ type TrackBlobReferenceCache = { blobRevision: number } & Partial<
 
 const blobReferenceCache = new Map<number, TrackBlobReferenceCache>();
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isBlob(value: unknown): value is Blob {
+export function isBlob(value: unknown): value is Blob {
   const maybeBlob = value as unknown as Blob;
   return (
     value instanceof Blob ||
@@ -187,6 +196,22 @@ async function blobKey(blob: Blob): Promise<string> {
 async function storableBlob(blob: Blob): Promise<Blob> {
   const headers = blob.type ? { "content-type": blob.type } : undefined;
   return new Response(new Uint8Array(await blob.arrayBuffer()), { headers }).blob();
+}
+
+export async function storeContentAddressedBlob(
+  blob: Blob,
+  writeMissingBlob: boolean,
+): Promise<string> {
+  const key = await blobKey(blob);
+  if (writeMissingBlob && (await get(key, store)) === undefined) {
+    await set(key, await storableBlob(blob), store);
+  }
+  return key;
+}
+
+export async function loadContentAddressedBlob(ref: string): Promise<Blob | null> {
+  const value = await get(ref, store);
+  return isBlob(value) ? value : null;
 }
 
 function cachedBlobReference(
@@ -228,11 +253,8 @@ async function blobReference(
     nextTrackCache[field] = { blob, ref: cached };
     return cached;
   }
-  const key = await blobKey(blob);
+  const key = await storeContentAddressedBlob(blob, writeMissingBlob);
   referencedBlobKeys.add(key);
-  if (writeMissingBlob && (await get(key, store)) === undefined) {
-    await set(key, await storableBlob(blob), store);
-  }
   nextTrackCache[field] = { blob, ref: key };
   return key;
 }
@@ -360,9 +382,9 @@ async function buildMetadataRecord(
   };
 }
 
-function collectBackupBlobRefs(backup: unknown, refs: Set<string>): void {
-  if (!isRecord(backup) || !Array.isArray(backup.tracks)) return;
-  for (const track of backup.tracks) {
+function collectChopBlobRefs(metadata: unknown, refs: Set<string>): void {
+  if (!isRecord(metadata) || !Array.isArray(metadata.tracks)) return;
+  for (const track of metadata.tracks) {
     if (!isRecord(track)) continue;
     for (const field of ["clipBlobRef", "audioBlobRef", "posterBlobRef"] as const) {
       const ref = track[field];
@@ -371,19 +393,72 @@ function collectBackupBlobRefs(backup: unknown, refs: Set<string>): void {
   }
 }
 
-async function deleteOrphanedBlobRecords(referencedBlobKeys: Set<string>): Promise<void> {
-  // The recovery backup is a GC root too: after a repair drops media from the
-  // live metadata, the backup's references may be the only preserved copy.
-  const rootedBlobKeys = new Set(referencedBlobKeys);
-  collectBackupBlobRefs(await get(PROJECT_BACKUP_KEY, store), rootedBlobKeys);
-  // So is a quarantined record: its refs are rooted when it still names its
-  // tracks by ref; a record with no readable track list holds GC entirely,
-  // because nothing can tell which blobs it meant.
-  const quarantined = await get(PROJECT_QUARANTINE_KEY, store);
-  if (quarantined !== undefined) {
-    if (!isRecord(quarantined) || !Array.isArray(quarantined.tracks)) return;
-    collectBackupBlobRefs(quarantined, rootedBlobKeys);
+function collectMoodBlobRefs(metadata: unknown, refs: Set<string>): void {
+  if (!isRecord(metadata) || !Array.isArray(metadata.mics)) return;
+  for (const mic of metadata.mics) {
+    if (!isRecord(mic) || !Array.isArray(mic.takes)) continue;
+    for (const take of mic.takes) {
+      if (!isRecord(take)) continue;
+      for (const field of ["videoBlobRef", "audioBlobRef", "posterBlobRef"] as const) {
+        const ref = take[field];
+        if (typeof ref === "string" && ref.startsWith(BLOB_KEY_PREFIX)) refs.add(ref);
+      }
+    }
   }
+}
+
+interface BlobGcOptions {
+  excludeKeys?: Iterable<string>;
+}
+
+type BlobRefCollector = (record: unknown, refs: Set<string>) => void;
+
+// Null means GC is held: a quarantined record with no readable track or take
+// list could name any blob.
+async function collectStoredBlobRoots(
+  referencedBlobKeys: Set<string>,
+  options: BlobGcOptions = {},
+): Promise<Set<string> | null> {
+  // Both live metadata records and both recovery backups are GC roots. A save
+  // from either mode must not be able to collect the other mode's live blobs.
+  const rootedBlobKeys = new Set(referencedBlobKeys);
+  const excluded = new Set(options.excludeKeys ?? []);
+  const rootRecords: Array<[string, BlobRefCollector]> = [
+    [PROJECT_KEY, collectChopBlobRefs],
+    [PROJECT_BACKUP_KEY, collectChopBlobRefs],
+    [MOOD_KEY_FOR_GC, collectMoodBlobRefs],
+    [MOOD_BACKUP_KEY_FOR_GC, collectMoodBlobRefs],
+  ];
+
+  for (const [key, collectRefs] of rootRecords) {
+    if (excluded.has(key)) continue;
+    collectRefs(await get(key, store), rootedBlobKeys);
+  }
+
+  // So is a quarantined record: its refs are rooted when it still names its
+  // tracks (or takes) by ref; a record with no readable list holds GC
+  // entirely, because nothing can tell which blobs it meant.
+  const quarantines: Array<[string, string, BlobRefCollector]> = [
+    [PROJECT_QUARANTINE_KEY, "tracks", collectChopBlobRefs],
+    [MOOD_QUARANTINE_KEY_FOR_GC, "mics", collectMoodBlobRefs],
+  ];
+  for (const [key, listField, collectRefs] of quarantines) {
+    if (excluded.has(key)) continue;
+    const quarantined = await get(key, store);
+    if (quarantined === undefined) continue;
+    if (!isRecord(quarantined) || !Array.isArray(quarantined[listField])) return null;
+    collectRefs(quarantined, rootedBlobKeys);
+  }
+
+  return rootedBlobKeys;
+}
+
+export async function deleteOrphanedBlobRecords(
+  referencedBlobKeys: Set<string>,
+  options: BlobGcOptions = {},
+): Promise<void> {
+  const rootedBlobKeys = await collectStoredBlobRoots(referencedBlobKeys, options);
+  if (!rootedBlobKeys) return;
   const allKeys = await keys(store);
   await Promise.all(
     allKeys
@@ -620,10 +695,14 @@ export async function clearProject(): Promise<void> {
     del(LEGACY_PROJECT_KEY, store),
     del(LEGACY_PROJECT_BACKUP_KEY, store),
   ]);
-  const allKeys = await keys(store);
-  await Promise.all(
-    allKeys
-      .filter((key): key is string => typeof key === "string" && key.startsWith(BLOB_KEY_PREFIX))
-      .map((key) => del(key, store)),
-  );
+  // Only Chop's records go; Mood's records still root the blobs they name.
+  await deleteOrphanedBlobRecords(new Set(), {
+    excludeKeys: [
+      PROJECT_KEY,
+      PROJECT_BACKUP_KEY,
+      PROJECT_QUARANTINE_KEY,
+      LEGACY_PROJECT_KEY,
+      LEGACY_PROJECT_BACKUP_KEY,
+    ],
+  });
 }

@@ -128,7 +128,7 @@ export interface MoodPerformanceState {
   cycleCount: number;
 }
 
-export type MoodHydrationState = "cold" | "hydrating" | "ready";
+export type MoodHydrationState = "cold" | "hydrating" | "ready" | "failed";
 
 export interface MoodSlice {
   piece: MoodPiece | null;

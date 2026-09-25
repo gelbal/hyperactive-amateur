@@ -46,7 +46,7 @@ export interface RehydrateOptions {
 // there is no per-attempt timeout, because an abandoned attempt keeps
 // reading and would contend with the next one (a slow but healthy load of
 // eight clips must never end with autosave off).
-const DEFAULT_RETRY_DELAYS_MS = [300, 900];
+export const DEFAULT_RETRY_DELAYS_MS = [300, 900];
 
 const TRACK_COUNT = 8;
 const CUT_SUBDIVISIONS: CutSubdivision[] = ["16n", "8n", "4n", "2n", "1m"];

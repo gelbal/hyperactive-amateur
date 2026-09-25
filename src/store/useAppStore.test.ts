@@ -22,7 +22,7 @@ import {
   AUDIO_DEVICE_STORAGE_KEY,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
-import { MAX_TAKES_PER_MIC } from "../lib/moodStages";
+import { createEmptyMoodPiece, MAX_TAKES_PER_MIC } from "../lib/moodStages";
 import type { Clip, MoodPart, MoodTake } from "../types";
 import { selectEditorOpen, useAppStore } from "./useAppStore";
 
@@ -311,6 +311,23 @@ describe("useAppStore", () => {
     expect(get().project.bpm).toBe(90);
     expect(get().project.tracks[0].clip).toBeNull();
     revoke.mockRestore();
+  });
+
+  it("Chop scratch leaves the Mood piece, the mode and the Mood revision alone", () => {
+    get().actions.setAppMode("mood");
+    get().actions.setMoodHydration("ready");
+    get().actions.createMoodPiece("row", "pocket");
+    const mood = get().mood;
+    const { moodRevision } = get().session;
+    expect(mood.piece).not.toBeNull();
+
+    get().actions.scratch();
+
+    // Scratch is Chop's; a new Mood slice would make autosave clear the saved
+    // Mood piece and collect its takes.
+    expect(get().mood).toBe(mood);
+    expect(get().appMode).toBe("mood");
+    expect(get().session.moodRevision).toBe(moodRevision);
   });
 
   it("scratch releases a held stream through the lifecycle owner", () => {
@@ -803,6 +820,41 @@ describe("useAppStore", () => {
         cycleCount: 0,
       });
       expect(get().session.moodRevision).toBe(revision + 1);
+    });
+
+    it("hydrates a decoded Mood piece and records scoped recovery warnings", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const take = makeMoodTake({ id: "take-1", audioStatus: "unavailable", audioBuffer: null });
+      const hydratedPiece = {
+        ...piece,
+        cycleSeconds: 1.5,
+        oneMicId: "mic-0",
+        oneTakeId: "take-1",
+        mics: piece.mics.map((mic, index) =>
+          index === 0 ? { ...mic, takes: [take] } : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece(hydratedPiece);
+
+      expect(get().mood.hydration).toBe("ready");
+      expect(get().mood.piece).toBe(hydratedPiece);
+      expect(get().mood.performance.selections).toEqual({
+        "mic-0": "off",
+        "mic-1": "off",
+      });
+    });
+
+    it("keeps a failed Mood load failed through a new piece and a scratch", () => {
+      get().actions.setMoodHydration("failed");
+
+      get().actions.createMoodPiece("row", "pocket");
+      expect(get().mood.piece).not.toBeNull();
+      expect(get().mood.hydration).toBe("failed");
+
+      get().actions.scratchMoodPiece();
+      expect(get().mood.piece).toBeNull();
+      expect(get().mood.hydration).toBe("failed");
     });
 
     it("rejects a Click piece without positive bpm and logs an HA event", () => {
