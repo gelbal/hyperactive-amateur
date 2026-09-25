@@ -2,7 +2,7 @@
 // ABOUTME: Owns per-track Tone.Players for recorded clips plus the drum kit that plays on empty tracks.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
+import { canStartAudibleAction, claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
@@ -168,13 +168,10 @@ function syncPlayers(tracks: Track[]): void {
 // went hidden must not start sound in the background once audio resumes, nor
 // on return when the frozen unlock settles only then.
 function canStartAfterPendingAudible(): boolean {
-  const { playback, recording } = useAppStore.getState();
   return (
     isPendingAudibleCurrent() &&
     !(typeof document !== "undefined" && document.hidden) &&
-    !playback.isPlaying &&
-    !playback.isExporting &&
-    recording.state === "idle"
+    canStartAudibleAction(useAppStore.getState())
   );
 }
 
