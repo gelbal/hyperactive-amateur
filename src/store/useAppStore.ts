@@ -782,6 +782,7 @@ export const useAppStore = create<AppStore>((set, get) => {
           ...next.session,
           projectRevision: state.session.projectRevision + 1,
           moodRevision: state.session.moodRevision,
+          moodSessionId: state.session.moodSessionId,
         },
       });
       // Wipe the persisted record; subsequent edits will write a fresh one.

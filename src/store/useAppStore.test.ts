@@ -323,12 +323,12 @@ describe("useAppStore", () => {
     revoke.mockRestore();
   });
 
-  it("Chop scratch leaves the Mood piece, the mode and the Mood revision alone", () => {
+  it("Chop scratch leaves the Mood piece, the mode and the Mood session counters alone", () => {
     get().actions.setAppMode("mood");
     get().actions.setMoodHydration("ready");
     get().actions.createMoodPiece("row", "pocket");
     const mood = get().mood;
-    const { moodRevision } = get().session;
+    const { moodRevision, moodSessionId } = get().session;
     expect(mood.piece).not.toBeNull();
 
     get().actions.scratch();
@@ -338,6 +338,8 @@ describe("useAppStore", () => {
     expect(get().mood).toBe(mood);
     expect(get().appMode).toBe("mood");
     expect(get().session.moodRevision).toBe(moodRevision);
+    // The AI appliers key on the session id; a reset would drop their results.
+    expect(get().session.moodSessionId).toBe(moodSessionId);
   });
 
   it("scratch releases a held stream through the lifecycle owner", () => {
