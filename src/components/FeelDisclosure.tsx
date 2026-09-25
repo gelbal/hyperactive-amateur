@@ -101,7 +101,7 @@ export function FeelDisclosure() {
             <RetagAllControl clipsCount={clipsCount} onBusyChange={setRetagBusy} />
           </div>
           <div className="border-t border-zinc-800 pt-3">
-            <ScratchControl onScratched={() => setOpen(false)} />
+            <ScratchControl onScratched={close} />
           </div>
         </div>
       )}

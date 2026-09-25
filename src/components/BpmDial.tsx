@@ -34,9 +34,19 @@ function indexOfNearest(value: number): number {
   return bestIdx;
 }
 
+// Clock angle of a stop on the arc.
+function angleAtIndex(index: number): number {
+  return ARC_START_DEG + (index / (STOPS.length - 1)) * ARC_RANGE_DEG;
+}
+
 function angleFor(value: number): number {
-  const idx = indexOfNearest(value);
-  return ARC_START_DEG + (idx / (STOPS.length - 1)) * ARC_RANGE_DEG;
+  return angleAtIndex(indexOfNearest(value));
+}
+
+// SVG point at a clock angle (0 at 12 o'clock, clockwise) around the centre.
+function polar(radius: number, angleDeg: number): { x: number; y: number } {
+  const r = (angleDeg * Math.PI) / 180;
+  return { x: CENTER + radius * Math.sin(r), y: CENTER - radius * Math.cos(r) };
 }
 
 function stepBy(value: number, delta: number): number {
@@ -104,22 +114,14 @@ export function BpmDial() {
   }, []);
 
   const angleDeg = angleFor(bpm);
-  const angleRad = (angleDeg * Math.PI) / 180;
-  const notchX1 = CENTER + NOTCH_INNER * Math.sin(angleRad);
-  const notchY1 = CENTER - NOTCH_INNER * Math.cos(angleRad);
-  const notchX2 = CENTER + NOTCH_OUTER * Math.sin(angleRad);
-  const notchY2 = CENTER - NOTCH_OUTER * Math.cos(angleRad);
+  const notchFrom = polar(NOTCH_INNER, angleDeg);
+  const notchTo = polar(NOTCH_OUTER, angleDeg);
 
   // Subtle tick marks at each stop for visual structure.
   const ticks = STOPS.map((_, i) => {
-    const a = ARC_START_DEG + (i / (STOPS.length - 1)) * ARC_RANGE_DEG;
-    const r = (a * Math.PI) / 180;
-    return {
-      x1: CENTER + (RADIUS - 1) * Math.sin(r),
-      y1: CENTER - (RADIUS - 1) * Math.cos(r),
-      x2: CENTER + (RADIUS + 2) * Math.sin(r),
-      y2: CENTER - (RADIUS + 2) * Math.cos(r),
-    };
+    const from = polar(RADIUS - 1, angleAtIndex(i));
+    const to = polar(RADIUS + 2, angleAtIndex(i));
+    return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
   });
 
   return (
@@ -218,10 +220,10 @@ export function BpmDial() {
             />
           ))}
           <line
-            x1={notchX1}
-            y1={notchY1}
-            x2={notchX2}
-            y2={notchY2}
+            x1={notchFrom.x}
+            y1={notchFrom.y}
+            x2={notchTo.x}
+            y2={notchTo.y}
             stroke="#fb923c"
             strokeWidth={3}
             strokeLinecap="round"
