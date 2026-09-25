@@ -15,7 +15,7 @@ const BOUNDARY_EPSILON_SECONDS = 1e-9;
 
 type MoodCycleMultiple = MoodTake["cycleMultiple"];
 
-interface BoundarySelectionEvent extends MoodSelectionCommit {
+export interface BoundarySelectionEvent extends MoodSelectionCommit {
   type: "selection";
   boundaryTime: number;
 }
@@ -39,6 +39,7 @@ export interface BoundaryQueue {
   armLens(lens: MoodLens, boundaryTime: number, now: number): void;
   armDrop(active: boolean, boundaryTime: number, now: number): void;
   dueAt(now: number): BoundaryQueueEvent[];
+  lockedSelectionsAt(now: number): BoundarySelectionEvent[];
 }
 
 const BOUNDARY_EVENT_ORDER: Record<BoundaryQueueEvent["type"], number> = {
@@ -187,6 +188,18 @@ export function createBoundaryQueue(): BoundaryQueue {
       }
 
       return due.sort(compareBoundaryEvents);
+    },
+    // Selections whose boundary the arm clock has reached are final: a
+    // re-arm now lands on a later boundary and this one is held. Listing
+    // them does not drain them.
+    lockedSelectionsAt(now) {
+      assertFiniteSeconds("now", now);
+
+      const locked = [...ripe, ...selections.values()].filter(
+        (event): event is BoundarySelectionEvent =>
+          event.type === "selection" && event.boundaryTime <= now,
+      );
+      return locked.sort(compareBoundaryEvents);
     },
   };
 }

@@ -3,11 +3,12 @@
 import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodSelectionCommit } from "../types";
 import type { BoundaryDropEvent } from "./moodClock";
-import { syncCommittedMoodEngines } from "./moodPerformance";
+import { scheduleLockedPlayerSwaps, syncCommittedMoodEngines } from "./moodPerformance";
 import { consumeDueCommits } from "./moodTransport";
 import { restartVideosAtPeriodBoundary } from "./moodVideoPool";
 
 export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
+  scheduleLockedPlayerSwaps();
   const due = consumeDueCommits(audioTime);
 
   const selections: MoodSelectionCommit[] = [];

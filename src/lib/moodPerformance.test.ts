@@ -14,6 +14,7 @@ const audioLifecycleMocks = vi.hoisted(() => ({
 }));
 
 const moodPlayersMocks = vi.hoisted(() => ({
+  scheduleMoodPlayerSwap: vi.fn(),
   stopAllMoodPlayers: vi.fn(),
   syncMoodPlayers: vi.fn(),
 }));
@@ -42,6 +43,7 @@ vi.mock("./audioLifecycle", () => ({
 }));
 
 vi.mock("./moodPlayers", () => ({
+  scheduleMoodPlayerSwap: moodPlayersMocks.scheduleMoodPlayerSwap,
   stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
   syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
 }));
@@ -138,6 +140,7 @@ describe("moodPerformance", () => {
     __resetMoodVideoPoolForTesting();
     audioLifecycleMocks.ensureAudioRunning.mockReset();
     audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
+    moodPlayersMocks.scheduleMoodPlayerSwap.mockReset();
     moodPlayersMocks.stopAllMoodPlayers.mockReset();
     moodPlayersMocks.syncMoodPlayers.mockReset();
     moodFxMocks.resetMoodDropFilter.mockReset();
@@ -194,6 +197,56 @@ describe("moodPerformance", () => {
       2,
     );
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
+  });
+
+  it("schedules a locked swap on the audio clock once, ahead of the paint commit", async () => {
+    const { takeB } = createMoodWithStack(2);
+    armSelection("mic-0", "take-a");
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(9.9);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+
+    // The lookahead clock (11.95) is short of the boundary at 12: a re-arm
+    // could still replace the swap, so nothing is scheduled.
+    toneHarness.setImmediate(11.85);
+    applyDueCommits(11.85);
+    expect(moodPlayersMocks.scheduleMoodPlayerSwap).not.toHaveBeenCalled();
+
+    for (const audibleTime of [11.92, 11.95]) {
+      toneHarness.setImmediate(audibleTime);
+      applyDueCommits(audibleTime);
+    }
+    expect(moodPlayersMocks.scheduleMoodPlayerSwap).toHaveBeenCalledTimes(1);
+    expect(moodPlayersMocks.scheduleMoodPlayerSwap).toHaveBeenCalledWith(
+      "take-a",
+      { takeId: "take-b", take: takeB },
+      12,
+      10,
+      2,
+    );
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-a");
+
+    toneHarness.setImmediate(12);
+    applyDueCommits(12);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(moodPlayersMocks.scheduleMoodPlayerSwap).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules an Off swap with no incoming take", async () => {
+    createMoodWithStack(2);
+    armSelection("mic-0", "take-a");
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "off");
+
+    toneHarness.setImmediate(12);
+    applyDueCommits(12);
+
+    expect(moodPlayersMocks.scheduleMoodPlayerSwap).toHaveBeenCalledWith("take-a", null, 12, 10, 2);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
   });
 
   it("commits immediately while stopped and syncs only the visible pool", () => {

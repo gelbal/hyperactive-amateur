@@ -7,6 +7,7 @@ const moodTransportMocks = vi.hoisted(() => ({
 }));
 
 const moodPerformanceMocks = vi.hoisted(() => ({
+  scheduleLockedPlayerSwaps: vi.fn(),
   syncCommittedMoodEngines: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ vi.mock("./moodTransport", () => ({
 }));
 
 vi.mock("./moodPerformance", () => ({
+  scheduleLockedPlayerSwaps: moodPerformanceMocks.scheduleLockedPlayerSwaps,
   syncCommittedMoodEngines: moodPerformanceMocks.syncCommittedMoodEngines,
 }));
 
@@ -56,6 +58,7 @@ describe("moodCommits", () => {
     useAppStore.getState().actions.reset();
     moodTransportMocks.consumeDueCommits.mockReset();
     moodTransportMocks.consumeDueCommits.mockReturnValue([]);
+    moodPerformanceMocks.scheduleLockedPlayerSwaps.mockReset();
     moodPerformanceMocks.syncCommittedMoodEngines.mockReset();
     moodVideoPoolMocks.restartVideosAtPeriodBoundary.mockReset();
 
@@ -79,6 +82,15 @@ describe("moodCommits", () => {
     expect(moodTransportMocks.consumeDueCommits).toHaveBeenCalledWith(4);
     expect(useAppStore.getState().mood.performance.selections["mic-1"]).toBe("take-b");
     expect(moodPerformanceMocks.syncCommittedMoodEngines).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules locked audio swaps before draining, so a late frame still swaps on the audio clock", () => {
+    applyDueCommits(4);
+
+    expect(moodPerformanceMocks.scheduleLockedPlayerSwaps).toHaveBeenCalledTimes(1);
+    expect(
+      moodPerformanceMocks.scheduleLockedPlayerSwaps.mock.invocationCallOrder[0],
+    ).toBeLessThan(moodTransportMocks.consumeDueCommits.mock.invocationCallOrder[0]);
   });
 
   it("applies lens and drop commits without engine churn", () => {

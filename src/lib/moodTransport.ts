@@ -18,6 +18,7 @@ import {
   cycleIndexAt,
   type BoundaryQueue,
   type BoundaryQueueEvent,
+  type BoundarySelectionEvent,
 } from "./moodClock";
 
 let boundaryQueue: BoundaryQueue = createBoundaryQueue();
@@ -195,6 +196,11 @@ export function armMoodLensCommit(lens: MoodLens, boundaryTime: number, now: num
 
 export function armMoodDropCommit(active: boolean, boundaryTime: number, now: number): void {
   boundaryQueue.armDrop(active, boundaryTime, now);
+}
+
+// Selection commits the arm clock (Tone.now()) has locked; not drained.
+export function lockedSelectionCommits(): BoundarySelectionEvent[] {
+  return boundaryQueue.lockedSelectionsAt(Tone.now());
 }
 
 export function consumeDueCommits(audioTime: number): BoundaryQueueEvent[] {

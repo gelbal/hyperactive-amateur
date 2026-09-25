@@ -11,11 +11,16 @@ import {
   takeLoopPeriod,
 } from "./moodClock";
 import { scheduleMoodDropFilter } from "./moodFx";
-import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
+import {
+  scheduleMoodPlayerSwap,
+  syncMoodPlayers,
+  type MoodPlayerLiveTake,
+} from "./moodPlayers";
 import {
   armMoodDropCommit,
   armMoodLensCommit,
   armMoodSelectionCommit,
+  lockedSelectionCommits,
 } from "./moodTransport";
 import {
   liveTakesFromSelections,
@@ -110,6 +115,50 @@ export function syncCommittedMoodEngines(
     performanceState.epoch,
     piece.cycleSeconds,
   );
+}
+
+// Swaps already handed to the audio clock, by performance epoch, mic,
+// boundary and entry, so each locked swap is scheduled once.
+let scheduledSwapKeys = new Set<string>();
+
+// Audio swaps run on the audio clock, not the paint path: once a swap is
+// locked (the arm clock passed its boundary, so no re-arm can change it)
+// its players are scheduled to swap exactly at the boundary, about a
+// lookahead before the paint-path commit adopts them. Runs every frame.
+export function scheduleLockedPlayerSwaps(): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const { performance: performanceState } = state.mood;
+  if (
+    !piece ||
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
+    scheduledSwapKeys = new Set();
+    return;
+  }
+
+  const epoch = performanceState.epoch;
+  const projected: SelectionMap = { ...performanceState.selections };
+  const lockedKeys = new Set<string>();
+  for (const event of lockedSelectionCommits()) {
+    const outgoing = projected[event.micId] ?? "off";
+    projected[event.micId] = event.entry;
+    const key = `${epoch}|${event.micId}|${event.boundaryTime}|${event.entry}`;
+    lockedKeys.add(key);
+    if (scheduledSwapKeys.has(key)) continue;
+
+    const incomingTake = takeForEntry(piece, event.micId, event.entry);
+    scheduleMoodPlayerSwap(
+      outgoing === "off" ? null : outgoing,
+      incomingTake ? { takeId: incomingTake.id, take: incomingTake } : null,
+      event.boundaryTime,
+      epoch,
+      piece.cycleSeconds,
+    );
+  }
+  scheduledSwapKeys = lockedKeys;
 }
 
 export function armSelection(micId: string, entry: MoodSelectionEntry): void {

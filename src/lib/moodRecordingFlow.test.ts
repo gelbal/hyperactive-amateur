@@ -103,6 +103,7 @@ vi.mock("tone", () => {
 });
 
 vi.mock("./moodPlayers", () => ({
+  scheduleMoodPlayerSwap: vi.fn(),
   setCaptureGain: vi.fn(),
   stopAllMoodPlayers: vi.fn(),
   syncMoodPlayers: vi.fn(),
