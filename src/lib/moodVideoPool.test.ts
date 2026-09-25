@@ -152,6 +152,46 @@ describe("moodVideoPool", () => {
     expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
+  it("pre-seeks a multi-cycle take joining mid-period to where its audio will be", () => {
+    // An 8 s (2x) period at epoch 0 joining on the cycle boundary at 4 is
+    // halfway through its period, like its audio player.
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 8.125, loopPeriod: 8, cycleMultiple: 2 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming("take-a", 4);
+    toneHarness.draw.advanceTo(4 - VIDEO_SEEK_LEAD_SECONDS);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(4.125);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a take first seen mid-period at its phase, not its loop start", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 8.125, loopPeriod: 8, cycleMultiple: 2 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    restartVideosAtPeriodBoundary(4.5, 0);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(4.625);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the last frame when a mid-period join lands in the period's rest", () => {
+    syncPool([poolTake({ loopStart: 0.125, loopEnd: 3.125, loopPeriod: 8, cycleMultiple: 2 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    restartVideosAtPeriodBoundary(4, 0);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(3.125);
+    expect(playback.pause).toHaveBeenCalledTimes(1);
+    expect(playback.play).not.toHaveBeenCalled();
+  });
+
   it("holds the last content frame at content end and restarts only on the period boundary", () => {
     syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125, loopPeriod: 2 })]);
     const video = videoForTake("take-a");

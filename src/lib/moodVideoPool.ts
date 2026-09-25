@@ -146,6 +146,32 @@ function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number)
   return Math.floor((audioTime - epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
 }
 
+// Seeks to where the take's audio is at audioTime: the same epoch phase in
+// its loop period. A multi-cycle take can join mid-period; past its content
+// the period rests, so the video holds its last frame.
+function seekToPhase(entry: PooledMoodVideo, audioTime: number, epoch: number | null): void {
+  if (epoch === null) {
+    seekToLoopStart(entry);
+    playVideo(entry);
+    return;
+  }
+  const periodIndex = periodIndexAt(entry, audioTime, epoch);
+  const phase = Math.max(0, audioTime - epoch - periodIndex * entry.loopPeriod);
+  updateEffectiveLoopEnd(entry);
+  const position = entry.loopStart + phase;
+  if (phase > LOOP_EPSILON_SECONDS && position >= entry.effectiveLoopEnd) {
+    holdAtContentEnd(entry);
+    return;
+  }
+  entry.holdingRest = false;
+  try {
+    entry.video.currentTime = position;
+  } catch {
+    // currentTime can throw before metadata loads; later boundary seeks retry.
+  }
+  playVideo(entry);
+}
+
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
   updateEffectiveLoopEnd(entry);
   if (entry.effectiveLoopEnd <= entry.loopStart) {
@@ -320,8 +346,7 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
     if (periodIndex < 0) continue;
     if (entry.lastPeriodIndex === periodIndex) continue;
     entry.lastPeriodIndex = periodIndex;
-    seekToLoopStart(entry);
-    playVideo(entry);
+    seekToPhase(entry, audioTime, epoch);
   }
 }
 
@@ -329,10 +354,7 @@ export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
 
-  const seekAndPlay = () => {
-    seekToLoopStart(entry);
-    playVideo(entry);
-  };
+  const seekAndPlay = () => seekToPhase(entry, atAudioTime, entry.epoch);
 
   if (atAudioTime - Tone.now() <= VIDEO_SEEK_LEAD_SECONDS) {
     seekAndPlay();
