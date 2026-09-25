@@ -175,7 +175,7 @@ function MoodCreditsControl({ piece }: { piece: MoodPiece }) {
               onChange={(event) =>
                 setMoodCredits({ names: { [mic.id]: event.currentTarget.value } })
               }
-              className="min-h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
+              className="min-h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:text-base"
             />
           ))}
           <CreditCycleRow
@@ -262,7 +262,10 @@ export function MoodOptionsControl({ piece }: { piece: MoodPiece }) {
       : undefined;
 
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    // Static below lg so the absolute panel resolves against the sticky
+    // header (as the Feel and Export panels do): it opens right under the
+    // header on a phone in either orientation, capped to the visible height.
+    <div ref={rootRef} className="static lg:relative shrink-0">
       <button
         type="button"
         aria-label="Mood options"
@@ -283,7 +286,7 @@ export function MoodOptionsControl({ piece }: { piece: MoodPiece }) {
         <div
           role="dialog"
           aria-label="Mood options"
-          className="fixed inset-x-3 z-50 mt-2 mx-auto flex max-h-[calc(100dvh-1.5rem)] w-auto max-w-[18rem] flex-col gap-3 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 p-3 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mx-0 sm:w-72 sm:max-w-none"
+          className="absolute inset-x-3 top-full z-30 mt-2 mx-auto flex max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] w-auto max-w-[18rem] flex-col gap-3 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 p-3 shadow-xl lg:inset-x-auto lg:right-0 lg:mx-0 lg:w-72 lg:max-w-none lg:max-h-none lg:overflow-visible"
         >
           {moodPieceHasAnyTakes(piece) ? <MoodHeadphonesControl /> : null}
           <MoodCreditsControl piece={piece} />

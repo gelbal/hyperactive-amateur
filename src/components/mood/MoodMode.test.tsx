@@ -564,6 +564,28 @@ describe("MoodMode", () => {
     expect(screen.getByRole("button", { name: "Scratch this mood" })).not.toBeDisabled();
   });
 
+  it("anchors the Mood options popover under the sticky header below lg and under its button at lg", () => {
+    renderMoodMode();
+    fireEvent.click(screen.getByRole("button", { name: /Corners/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Mood options" }));
+
+    const popover = screen.getByRole("dialog", { name: "Mood options" });
+    // A static wrapper hands the absolute panel to the sticky header, so it
+    // opens right under the header on a phone in either orientation.
+    expect(popover.parentElement).toHaveClass("static", "lg:relative");
+    expect(popover).toHaveClass(
+      "absolute",
+      "inset-x-3",
+      "top-full",
+      "max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]",
+      "overflow-y-auto",
+      "lg:inset-x-auto",
+      "lg:right-0",
+      "lg:max-h-none",
+    );
+    expect(popover.className.split(/\s+/)).not.toContain("fixed");
+  });
+
   it("disables stage picker controls while exporting", () => {
     const createMoodPiece = vi.spyOn(useAppStore.getState().actions, "createMoodPiece");
     renderMoodMode();
@@ -1234,6 +1256,8 @@ describe("MoodMode", () => {
     const firstName = within(dialog).getByLabelText("credit name for mic 1");
     expect(firstName).toHaveAttribute("placeholder", "name mic 1");
     expect(firstName).toHaveAttribute("maxlength", "24");
+    // iOS zooms the page on focus of a control under 16 px.
+    expect(firstName).toHaveClass("pointer-coarse:text-base");
     expect(within(dialog).getAllByPlaceholderText(/name mic \d/)).toHaveLength(4);
 
     fireEvent.change(firstName, { target: { value: "Bass" } });
