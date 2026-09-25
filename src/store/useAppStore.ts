@@ -15,6 +15,7 @@ import type {
   MoodStageId,
   MoodTake,
   MoodTimeFeel,
+  MoodVibeId,
   RecordingState,
   StorageDurability,
   Subgenre,
@@ -133,6 +134,7 @@ function stopMoodPerformanceState(
     // pulse forever with no boundary to commit at. Clear armed, keep selections.
     armed: Object.fromEntries(Object.keys(performance.selections).map((micId) => [micId, null])),
     armedLens: null,
+    armedDropActive: null,
   };
 }
 
@@ -207,7 +209,9 @@ export interface AppActions {
   ) => void;
   scratchMoodPiece: () => void;
   setMoodLens: (lens: MoodLens) => void;
+  setMoodVibe: (vibe: MoodVibeId) => void;
   setMoodArmedLens: (lens: MoodLens | null) => void;
+  setMoodArmedDrop: (dropActive: boolean | null) => void;
   setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
   setMonitorWithHeadphones: (enabled: boolean) => void;
   armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
@@ -416,6 +420,29 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    setMoodVibe: (vibe) =>
+      set((state) => {
+        if (
+          state.playback.isExporting ||
+          state.mood.performance.isPerforming ||
+          state.recording.state !== "idle"
+        ) {
+          return state;
+        }
+        const piece = state.mood.piece;
+        if (!piece || piece.vibe === vibe) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: {
+              ...piece,
+              vibe,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      }),
+
     setMoodArmedLens: (lens) =>
       set((state) => ({
         mood: {
@@ -436,7 +463,8 @@ export const useAppStore = create<AppStore>((set) => ({
                 ...state.mood.performance,
                 isPerforming: true,
                 epoch,
-                dropActive: false,
+                dropActive: state.mood.piece?.vibe !== "clean",
+                armedDropActive: null,
                 hotMicId: null,
                 cycleCount: 0,
               }
@@ -493,6 +521,13 @@ export const useAppStore = create<AppStore>((set) => ({
         mood: {
           ...state.mood,
           performance: { ...state.mood.performance, dropActive },
+        },
+      })),
+    setMoodArmedDrop: (dropActive) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          performance: { ...state.mood.performance, armedDropActive: dropActive },
         },
       })),
 

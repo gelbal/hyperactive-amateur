@@ -11,21 +11,28 @@ export function applyDueCommits(audioTime: number): void {
 
   const selections: MoodSelectionCommit[] = [];
   let lens: MoodLens | null = null;
+  let dropActive: boolean | null = null;
   for (const commit of due) {
     if (commit.type === "selection") {
       selections.push({ micId: commit.micId, entry: commit.entry });
     } else if (commit.type === "lens") {
       lens = commit.lens;
+    } else if (commit.type === "drop") {
+      dropActive = commit.active;
     }
   }
 
+  const actions = useAppStore.getState().actions;
   if (selections.length > 0) {
-    useAppStore.getState().actions.commitMoodSelections(selections);
+    actions.commitMoodSelections(selections);
   }
   if (lens !== null) {
-    const actions = useAppStore.getState().actions;
     actions.setMoodLens(lens);
     actions.setMoodArmedLens(null);
+  }
+  if (dropActive !== null) {
+    actions.setMoodDrop(dropActive);
+    actions.setMoodArmedDrop(null);
   }
   if (selections.length > 0) {
     syncCommittedMoodEngines();
