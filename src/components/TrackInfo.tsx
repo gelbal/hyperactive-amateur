@@ -76,17 +76,26 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
 
   // A new or deleted clip, playback starting or an export closes Re-record /
   // Delete. Focus inside them goes back to the thumbnail instead of the page.
+  // Keyed on the recording, not the clip object: the poster frame landing
+  // replaces the object, and closing then would slide the tag chips under
+  // a finger reaching for Delete.
+  const recording = clip?.blob;
   useEffect(() => {
     if (actionsRef.current?.contains(document.activeElement)) thumbRef.current?.focus();
     setClipActionsOpen(false);
     setClipActionsFocused(false);
-  }, [clip, isPlaying, isExporting]);
+  }, [recording, isPlaying, isExporting]);
 
   useEffect(() => {
-    if (clip || !focusSoundOnEmptyRef.current) return;
+    if (recording) return;
+    // A take that is gone has no tagging status left to show.
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setAutoTagState({ kind: "idle" });
+    if (!focusSoundOnEmptyRef.current) return;
     focusSoundOnEmptyRef.current = false;
     soundButtonRef.current?.focus();
-  }, [clip]);
+  }, [recording]);
 
   useEffect(() => {
     if (recordingState === "preparing" && activeTrackId !== trackId) {

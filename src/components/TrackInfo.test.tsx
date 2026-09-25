@@ -308,6 +308,34 @@ describe("TrackInfo clip actions", () => {
     act(() => useAppStore.getState().actions.setIsExporting(false));
   });
 
+  it("stays open when the poster frame lands on the same recording", () => {
+    renderWithClip();
+    fireEvent.click(screen.getByRole("button", { name: "clip actions for track 1" }));
+
+    act(() => useAppStore.getState().actions.setTrackPoster(0, new Blob([new Uint8Array([9])], { type: "image/jpeg" })));
+
+    expect(screen.getByRole("button", { name: "delete clip on track 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "tags for track 1" })).not.toBeInTheDocument();
+  });
+
+  it("clears a pending \"tagging…\" when the clip is deleted", async () => {
+    recordingFlowMocks.recordIntoTrack.mockImplementation(
+      async (trackId: number, options?: { onAutoTag?: (event: { kind: "tagging" }) => void }) => {
+        useAppStore.getState().actions.setTrackClip(trackId, makeClip());
+        options?.onAutoTag?.({ kind: "tagging" });
+        return true;
+      },
+    );
+    render(<TrackInfo trackId={0} />);
+    fireEvent.click(screen.getByLabelText("record clip for track 1"));
+    await waitFor(() => expect(screen.getByText("tagging…")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "clip actions for track 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "delete clip on track 1" }));
+
+    expect(screen.queryByText("tagging…")).not.toBeInTheDocument();
+  });
+
   it("closes on a second tap, after 5 seconds, and when playback starts", () => {
     vi.useFakeTimers();
     renderWithClip();

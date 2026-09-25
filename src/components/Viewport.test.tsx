@@ -443,6 +443,7 @@ describe("Viewport", () => {
     });
     render(<Viewport />);
     expect(screen.queryByText(/record a sound on any track/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /record more/i })).toBeInTheDocument();
   });
 
   it("after the recording station is dismissed and no clips exist, shows an actionable first-record affordance", () => {

@@ -360,6 +360,9 @@ async function runAutoTag(
 ): Promise<void> {
   onEvent?.({ kind: "tagging" });
   const result = await autoTag(audioBuffer);
+  // The take was deleted or re-recorded while the classifier ran: nothing
+  // to report about it (a newer take reports its own status).
+  if (useAppStore.getState().project.tracks[trackId]?.clip?.blob !== clip.blob) return;
   if (result && "kind" in result) {
     onEvent?.({ kind: "offline" });
     return;

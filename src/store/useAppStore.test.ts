@@ -470,7 +470,7 @@ describe("useAppStore", () => {
       actions.setTrackVoice(1, "rim");
       actions.toggleStep(1, 3);
       actions.setTrackVolume(1, 0.5);
-      actions.setTrackShowVideo(1, false);
+      actions.setTrackShowVideo(1, false, "user");
       actions.setTrackMuted(1, true);
       const revision = get().session.projectRevision;
       const blobRevision = get().project.tracks[1].blobRevision ?? 0;
@@ -504,14 +504,29 @@ describe("useAppStore", () => {
       expect(get().session.recordingStationDismissed).toBe(true);
     });
 
-    it("deleteTrackClip keeps an already-open station open", () => {
+    it("deleteTrackClip closes an open station, so the freed track is not its next target", () => {
       const actions = get().actions;
       actions.setTrackClip(0, makeClip({ url: "blob:test/0" }));
       actions.setTrackClip(1, makeClip({ url: "blob:test/1" }));
       expect(get().session.recordingStationDismissed).toBe(false);
 
       actions.deleteTrackClip(0);
-      expect(get().session.recordingStationDismissed).toBe(false);
+      expect(get().session.recordingStationDismissed).toBe(true);
+    });
+
+    it("deleteTrackClip resets an audio-only setting auto-tag made, and keeps one the user made", () => {
+      const actions = get().actions;
+      actions.setTrackClip(0, makeClip({ url: "blob:test/0" }));
+      actions.setTrackShowVideo(0, false, "system");
+      actions.setTrackClip(1, makeClip({ url: "blob:test/1" }));
+      actions.setTrackShowVideo(1, false, "user");
+
+      actions.deleteTrackClip(0);
+      actions.deleteTrackClip(1);
+
+      // The next take on track 1 starts fresh; track 2 keeps the user's choice.
+      expect(get().project.tracks[0].showVideo).toBe(true);
+      expect(get().project.tracks[1].showVideo).toBe(false);
     });
 
     it("deleteTrackClip releases a repair mute", () => {

@@ -223,7 +223,8 @@ export function Viewport() {
           </button>
         )}
       </div>
-      {showRecordMore && <RecordMoreButton hasClips={hasClips} />}
+      {/* A drums-only project (its clips deleted) already has a beat. */}
+      {showRecordMore && <RecordMoreButton hasClips={hasClips || editorOpen} />}
     </div>
   );
 }

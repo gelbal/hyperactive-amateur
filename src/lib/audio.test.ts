@@ -225,6 +225,19 @@ describe("audio: per-step trigger logic", () => {
     }
   });
 
+  it("two tracks on the same sound get their own voices, so a shared synth is never started twice at once", () => {
+    initTransport();
+    const a = useAppStore.getState().actions;
+    a.setTrackVoice(0, "snare");
+    // Track 2 plays the snare by default; track 0 now does too.
+    expect(synthInstances).toHaveLength(9);
+    a.toggleStep(0, 0);
+    a.toggleStep(2, 0);
+    transportMock.scheduleRepeat.mock.calls[0]?.[0](0);
+    expect(synthInstances[8].triggerAttackRelease).toHaveBeenCalledTimes(1);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledTimes(1);
+  });
+
   it("does not create a player or fallback click for clips with unavailable audio", () => {
     initTransport();
     const a = useAppStore.getState().actions;

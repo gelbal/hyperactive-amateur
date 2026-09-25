@@ -442,9 +442,11 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     // Frees a track for its drum voice. Unlike clearTrackClip (Re-record),
-    // it never opens the recording station, and it drops the clip's tag,
-    // reasoning and manual-tag ownership: the next clip on this track starts
-    // fresh. The voice, steps, volume, showVideo and a user mute stay.
+    // it closes the recording station rather than opening it (an open
+    // station would target the freed track next), and it drops the clip's
+    // tag, reasoning, manual-tag ownership and an audio-only setting auto-tag
+    // made: the next clip on this track starts fresh. The voice, steps,
+    // volume, a video toggle the user made and a user mute stay.
     deleteTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -452,10 +454,6 @@ export const useAppStore = create<AppStore>((set) => ({
         if (!previous) return state;
         if (previous.url) URL.revokeObjectURL(previous.url);
         if (previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
-        // Recording every track without pressing Done leaves the station
-        // undismissed but hidden (no empty track); the first empty track
-        // would open it. Dismiss it in that case; an open station stays.
-        const hadEmptyTrack = state.project.tracks.some((track) => !track.clip);
         return {
           project: {
             ...state.project,
@@ -469,6 +467,9 @@ export const useAppStore = create<AppStore>((set) => ({
                     ...track,
                     clip: null,
                     tag: null,
+                    showVideo: state.session.manuallyToggledShowVideo.includes(trackId)
+                      ? track.showVideo
+                      : true,
                     blobRevision: (track.blobRevision ?? 0) + 1,
                     // A mute the audio repair set was for the broken clip.
                     muted: track.mutedByRepair ? false : track.muted,
@@ -480,7 +481,7 @@ export const useAppStore = create<AppStore>((set) => ({
           session: {
             ...bumpProjectRevision(state.session),
             manuallyTagged: state.session.manuallyTagged.filter((id) => id !== trackId),
-            recordingStationDismissed: hadEmptyTrack ? state.session.recordingStationDismissed : true,
+            recordingStationDismissed: true,
           },
         };
       }),
