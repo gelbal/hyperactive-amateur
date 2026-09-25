@@ -67,4 +67,14 @@ describe("applyClassifiedTag", () => {
     expect(applyClassifiedTag(0, "snare", "crack", classified).applied).toBe(true);
     expect(useAppStore.getState().project.tracks[0].tag).toBe("snare");
   });
+
+  it("still applies after the poster frame attached to the same recording", () => {
+    // setTrackPoster replaces the clip object but keeps the recording.
+    const classified = makeClip("blob:test/classified");
+    useAppStore.getState().actions.setTrackClip(0, classified);
+    useAppStore.getState().actions.setTrackPoster(0, new Blob([new Uint8Array([9])], { type: "image/jpeg" }));
+    expect(useAppStore.getState().project.tracks[0].clip).not.toBe(classified);
+
+    expect(applyClassifiedTag(0, "hat", "tick", classified).applied).toBe(true);
+  });
 });

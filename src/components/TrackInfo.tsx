@@ -1,6 +1,6 @@
 // ABOUTME: TrackInfo — left-side per-track panel: sound button or tag label, mic/clip thumbnail, eye toggle, tag picker or clip actions, auto-tag status.
 // ABOUTME: Sticky in the StepGrid left column so the cells can scroll horizontally while track info stays visible.
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { Mic, Eye, EyeOff, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { nextVoiceId, voiceFor } from "../lib/drumKit";
@@ -34,6 +34,15 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const [clipActionsOpen, setClipActionsOpen] = useState(false);
+  // Keyboard focus on Re-record / Delete holds them open, so a keyboard
+  // user deciding between them does not lose their place.
+  const [clipActionsFocused, setClipActionsFocused] = useState(false);
+  const thumbRef = useRef<HTMLButtonElement | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const soundButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Set by Re-record / Delete: the sound button that replaces the thumbnail
+  // takes focus once the clip is gone.
+  const focusSoundOnEmptyRef = useRef(false);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const recordingError = useAppStore((s) => s.recording.error);
@@ -60,15 +69,24 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   );
 
   useEffect(() => {
-    if (!clipActionsOpen) return;
+    if (!clipActionsOpen || clipActionsFocused) return;
     const id = window.setTimeout(() => setClipActionsOpen(false), CLIP_ACTIONS_MS);
     return () => window.clearTimeout(id);
-  }, [clipActionsOpen]);
+  }, [clipActionsOpen, clipActionsFocused]);
 
-  // A new or deleted clip, or playback starting, closes Re-record / Delete.
+  // A new or deleted clip, playback starting or an export closes Re-record /
+  // Delete. Focus inside them goes back to the thumbnail instead of the page.
   useEffect(() => {
+    if (actionsRef.current?.contains(document.activeElement)) thumbRef.current?.focus();
     setClipActionsOpen(false);
-  }, [clip, isPlaying]);
+    setClipActionsFocused(false);
+  }, [clip, isPlaying, isExporting]);
+
+  useEffect(() => {
+    if (clip || !focusSoundOnEmptyRef.current) return;
+    focusSoundOnEmptyRef.current = false;
+    soundButtonRef.current?.focus();
+  }, [clip]);
 
   useEffect(() => {
     if (recordingState === "preparing" && activeTrackId !== trackId) {
@@ -143,6 +161,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
         </span>
       ) : (
         <button
+          ref={soundButtonRef}
           type="button"
           aria-label={`Change sound for track ${trackId + 1}, now ${voice.name}`}
           title="Tap to change the sound"
@@ -160,9 +179,11 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       <div className="w-12 h-12 flex items-center justify-center">
         {clip ? (
           <ClipThumbnail
+            ref={thumbRef}
             clip={clip}
             trackId={trackId}
             actionsOpen={clipActionsOpen}
+            disabled={isExporting}
             onToggleActions={() => setClipActionsOpen((open) => !open)}
           />
         ) : (
@@ -185,12 +206,17 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
       {clip ? (
         clipActionsOpen ? (
           <ClipActions
+            ref={actionsRef}
             trackId={trackId}
+            disabled={isExporting}
+            onFocusChange={setClipActionsFocused}
             onReRecord={() => {
+              focusSoundOnEmptyRef.current = true;
               setClipActionsOpen(false);
               useAppStore.getState().actions.clearTrackClip(trackId);
             }}
             onDelete={() => {
+              focusSoundOnEmptyRef.current = true;
               setClipActionsOpen(false);
               useAppStore.getState().actions.deleteTrackClip(trackId);
             }}
@@ -311,19 +337,25 @@ interface ClipThumbnailProps {
   clip: Clip;
   trackId: number;
   actionsOpen: boolean;
+  disabled: boolean;
   onToggleActions: () => void;
 }
 
 // A tap opens Re-record / Delete beside it, so no single tap destroys a take.
-function ClipThumbnail({ clip, trackId, actionsOpen, onToggleActions }: ClipThumbnailProps) {
+const ClipThumbnail = forwardRef<HTMLButtonElement, ClipThumbnailProps>(function ClipThumbnail(
+  { clip, trackId, actionsOpen, disabled, onToggleActions },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       type="button"
       aria-label={`clip actions for track ${trackId + 1}`}
       aria-expanded={actionsOpen}
+      disabled={disabled}
       onClick={onToggleActions}
       className={
-        "relative group w-12 h-12 rounded " +
+        "relative group w-12 h-12 rounded disabled:opacity-50 disabled:cursor-not-allowed " +
         (actionsOpen ? "ring-2 ring-orange-500" : "")
       }
     >
@@ -356,24 +388,37 @@ function ClipThumbnail({ clip, trackId, actionsOpen, onToggleActions }: ClipThum
       </span>
     </button>
   );
-}
+});
 
 interface ClipActionsProps {
   trackId: number;
+  disabled: boolean;
+  onFocusChange: (focused: boolean) => void;
   onReRecord: () => void;
   onDelete: () => void;
 }
 
 // Sits where the tag chips are while open: two 44 px targets inside the
 // 48 px row, no popover to clip or position.
-function ClipActions({ trackId, onReRecord, onDelete }: ClipActionsProps) {
+const ClipActions = forwardRef<HTMLDivElement, ClipActionsProps>(function ClipActions(
+  { trackId, disabled, onFocusChange, onReRecord, onDelete },
+  ref,
+) {
   return (
-    <div className="w-24 shrink-0 flex gap-1">
+    <div
+      ref={ref}
+      className="w-24 shrink-0 flex gap-1"
+      onFocus={() => onFocusChange(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onFocusChange(false);
+      }}
+    >
       <button
         type="button"
         aria-label={`re-record track ${trackId + 1}`}
+        disabled={disabled}
         onClick={onReRecord}
-        className="flex-1 h-11 rounded border border-zinc-600 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
+        className="disabled:opacity-50 flex-1 h-11 rounded border border-zinc-600 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
       >
         <RotateCcw size={14} aria-hidden />
         redo
@@ -381,12 +426,13 @@ function ClipActions({ trackId, onReRecord, onDelete }: ClipActionsProps) {
       <button
         type="button"
         aria-label={`delete clip on track ${trackId + 1}`}
+        disabled={disabled}
         onClick={onDelete}
-        className="flex-1 h-11 rounded border border-red-700 bg-red-950 hover:bg-red-900 text-red-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
+        className="disabled:opacity-50 flex-1 h-11 rounded border border-red-700 bg-red-950 hover:bg-red-900 text-red-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
       >
         <Trash2 size={14} aria-hidden />
         delete
       </button>
     </div>
   );
-}
+});

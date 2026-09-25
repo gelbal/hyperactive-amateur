@@ -550,6 +550,8 @@ describe("useAppStore", () => {
         tracks: empty.tracks.map((t) => (t.id === 2 ? { ...t, steps: t.steps.map((_, i) => i === 0) } : t)),
       });
       expect(selectEditorOpen(get())).toBe(true);
+      // A drums-only beat reloads into the editor, not the recording walkthrough.
+      expect(get().session.recordingStationDismissed).toBe(true);
     });
   });
 

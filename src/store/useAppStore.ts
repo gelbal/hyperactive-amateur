@@ -660,10 +660,11 @@ export const useAppStore = create<AppStore>((set) => ({
     hydrateProject: (project, manuallyTagged) =>
       set((state) => {
         if (state.playback.isExporting) return state;
-        // If the rehydrated project has any recorded clip, the user is past
-        // the first-recording walkthrough; suppress the in-viewport station
-        // (and its permission gate) on reload until they explicitly opt back
-        // in via "Record more" or "Re-record".
+        // If the rehydrated project has anything to play (a recorded clip, or
+        // steps on the drum kit alone), the user is past the first-recording
+        // walkthrough; suppress the in-viewport station (and its permission
+        // gate) on reload until they explicitly opt back in via "Record more"
+        // or "Re-record".
         const hasAnyClip = project.tracks.some((t) => t.clip);
         const hasAnything = hasAnyClip || project.tracks.some((t) => t.steps.some(Boolean));
         const normalizedProject = {
@@ -680,7 +681,9 @@ export const useAppStore = create<AppStore>((set) => ({
           session: {
             ...bumpProjectRevision(state.session),
             ...(manuallyTagged ? { manuallyTagged: [...manuallyTagged] } : {}),
-            ...(hasAnyClip ? { recordingStationDismissed: true } : {}),
+            // Past the walkthrough once there is anything to play: clips, or
+            // steps on the drum kit alone.
+            ...(hasAnything ? { recordingStationDismissed: true } : {}),
             editorUnlocked: hasAnything,
           },
         };

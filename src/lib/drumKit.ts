@@ -3,8 +3,8 @@
 import * as Tone from "tone";
 import type { Tag } from "../types";
 
-// Every voice but the cowbell triggers for a sixteenth; a voice's length is
-// its envelope, not this.
+// Most voices trigger for a sixteenth and their length is their envelope;
+// the shaker and the cowbell hold a fixed time instead.
 const DURATION = "16n";
 // The level the original kit plays at; newer voices set their own, since
 // the ones in a phone speaker's loudest range would drown the kicks.
@@ -73,12 +73,16 @@ function noise(options: NoiseOptions): DrumVoice {
 // Hats and the shaker are white noise through a filter rather than
 // MetalSynths: a MetalSynth hit starts six FM oscillator pairs, too much DSP
 // for a phone running several of them on 16ths while it records an export.
-function filteredNoise(options: NoiseOptions, filterOptions: FilterOptions): DrumVoice {
+function filteredNoise(
+  options: NoiseOptions,
+  filterOptions: FilterOptions,
+  duration: Tone.Unit.Time = DURATION,
+): DrumVoice {
   const filter = new Tone.Filter(filterOptions).toDestination();
   const synth = new Tone.NoiseSynth({ noise: { type: "white" }, volume: VOLUME_DB, ...options }).connect(filter);
   return {
     trigger: (when, velocity) => {
-      synth.triggerAttackRelease(DURATION, when, velocity);
+      synth.triggerAttackRelease(duration, when, velocity);
     },
     dispose: () => {
       synth.dispose();
@@ -141,6 +145,8 @@ export const KIT: readonly KitVoice[] = [
       filteredNoise(
         { envelope: { attack: 0.03, decay: 0.08, sustain: 0, release: 0.02 }, volume: -12 },
         { type: "bandpass", frequency: 5000, Q: 1.5 },
+        // Held a fixed time: attack plus decay outlast a fast sixteenth.
+        0.12,
       ),
   },
   { id: "ride", name: "ride", tag: "hat", make: () => metal(250, { envelope: { decay: 0.8, release: 0.5 }, harmonicity: 3, resonance: 3000 }) },

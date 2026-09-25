@@ -276,6 +276,38 @@ describe("TrackInfo clip actions", () => {
     expect(useAppStore.getState().session.recordingStationDismissed).toBe(false);
   });
 
+  it("stays open while focus is on Re-record or Delete; after Delete, focus lands on the track's sound", () => {
+    vi.useFakeTimers();
+    renderWithClip();
+    fireEvent.click(screen.getByRole("button", { name: "clip actions for track 1" }));
+    const del = screen.getByRole("button", { name: "delete clip on track 1" });
+    act(() => del.focus());
+    act(() => vi.advanceTimersByTime(6000));
+    expect(screen.getByRole("button", { name: "delete clip on track 1" })).toBe(del);
+
+    fireEvent.click(del);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Change sound for track 1/ }));
+  });
+
+  it("when playback starts with focus on the actions, focus returns to the thumbnail", () => {
+    renderWithClip();
+    const thumb = screen.getByRole("button", { name: "clip actions for track 1" });
+    fireEvent.click(thumb);
+    act(() => screen.getByRole("button", { name: "re-record track 1" }).focus());
+
+    act(() => useAppStore.getState().actions.setIsPlaying(true));
+
+    expect(screen.queryByRole("button", { name: "re-record track 1" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(thumb);
+  });
+
+  it("the thumbnail is frozen while exporting", () => {
+    renderWithClip();
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+    expect(screen.getByRole("button", { name: "clip actions for track 1" })).toBeDisabled();
+    act(() => useAppStore.getState().actions.setIsExporting(false));
+  });
+
   it("closes on a second tap, after 5 seconds, and when playback starts", () => {
     vi.useFakeTimers();
     renderWithClip();

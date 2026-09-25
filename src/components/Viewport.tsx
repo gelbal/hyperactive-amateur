@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import * as Tone from "tone";
 import { Camera, Maximize2, Mic, Minimize2, Video } from "lucide-react";
 import { drawCurrentFrame, initVideoEngine, setActiveCanvas, hasLiveFrame } from "../lib/videoEngine";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, selectEditorOpen } from "../store/useAppStore";
 import type { MediaStatus } from "../types";
 import { isAcquireInFlight, requestMedia } from "../lib/media";
 import { ensureAudioRunning, noteMicAcquireStarted } from "../lib/audioLifecycle";
@@ -27,6 +27,7 @@ export function Viewport() {
   const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [displayCanvasSize, setDisplayCanvasSize] = useState(RENDER_CANVAS_SIZE);
   const hasClips = useAppStore((s) => s.project.tracks.some((t) => t.clip));
+  const editorOpen = useAppStore(selectEditorOpen);
   const emptyTrackCount = useAppStore(
     (s) => s.project.tracks.filter((t) => !t.clip).length,
   );
@@ -205,7 +206,9 @@ export function Viewport() {
             )}
           </div>
         )}
-        {mediaStatus === "granted" && !hasClips && stationDismissed && !isPlaying && (
+        {/* Only before the editor opens: a drums-only project (its last clip
+            deleted) already has the grid below and a beat to play. */}
+        {mediaStatus === "granted" && !editorOpen && stationDismissed && !isPlaying && (
           <RecordPrompt />
         )}
         <RecordCountdown />

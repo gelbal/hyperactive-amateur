@@ -30,7 +30,9 @@ export function applyClassifiedTag(
   if (state.playback.isExporting || !track) {
     return { applied: false, hatAudioOnly: false };
   }
-  if (classifiedClip && track.clip !== classifiedClip) {
+  // Compared by recording, not by object: attaching the poster frame or
+  // healing the audio replaces the clip object but keeps its blob.
+  if (classifiedClip && track.clip?.blob !== classifiedClip.blob) {
     return { applied: false, hatAudioOnly: false };
   }
   if (state.session.manuallyTagged.includes(trackId)) {

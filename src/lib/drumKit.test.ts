@@ -131,14 +131,15 @@ describe("drumKit", () => {
   // Hats are filtered noise, not MetalSynths: a MetalSynth hit starts six FM
   // oscillator pairs, too much DSP for a phone with several hats on 16ths.
   it.each([
-    ["hat", { noise: { type: "white" }, envelope: { decay: 0.05 }, volume: -10 }, { type: "highpass", frequency: 7000 }],
-    ["tick", { noise: { type: "white" }, envelope: { decay: 0.08 }, volume: -10 }, { type: "highpass", frequency: 9000 }],
-    ["open-hat", { noise: { type: "white" }, envelope: { decay: 0.3 }, volume: -10 }, { type: "highpass", frequency: 7000 }],
-    // A slower attack through a band-pass: a soft "chk", not a hat.
-    ["shaker", { noise: { type: "white" }, envelope: { attack: 0.03, decay: 0.08, sustain: 0, release: 0.02 }, volume: -12 }, { type: "bandpass", frequency: 5000, Q: 1.5 }],
+    ["hat", { noise: { type: "white" }, envelope: { decay: 0.05 }, volume: -10 }, { type: "highpass", frequency: 7000 }, "16n"],
+    ["tick", { noise: { type: "white" }, envelope: { decay: 0.08 }, volume: -10 }, { type: "highpass", frequency: 9000 }, "16n"],
+    ["open-hat", { noise: { type: "white" }, envelope: { decay: 0.3 }, volume: -10 }, { type: "highpass", frequency: 7000 }, "16n"],
+    // A slower attack through a band-pass: a soft "chk", not a hat. It holds
+    // a fixed 0.12 s, so a fast tempo's short sixteenth never cuts it off.
+    ["shaker", { noise: { type: "white" }, envelope: { attack: 0.03, decay: 0.08, sustain: 0, release: 0.02 }, volume: -12 }, { type: "bandpass", frequency: 5000, Q: 1.5 }, 0.12],
   ] as const)(
     "%s is filtered noise, triggered and disposed with its filter",
-    (id, noiseOptions, filterOptions) => {
+    (id, noiseOptions, filterOptions, duration) => {
       const voice = KIT.find((v) => v.id === id)!.make();
 
       expect(Tone.NoiseSynth).toHaveBeenCalledWith(noiseOptions);
@@ -149,7 +150,7 @@ describe("drumKit", () => {
       expect(filterInstances[0].toDestination).toHaveBeenCalledTimes(1);
 
       voice.trigger(0.25, 0.5);
-      expect(synthInstances[0].triggerAttackRelease).toHaveBeenCalledWith("16n", 0.25, 0.5);
+      expect(synthInstances[0].triggerAttackRelease).toHaveBeenCalledWith(duration, 0.25, 0.5);
 
       voice.dispose();
       expect(synthInstances[0].dispose).toHaveBeenCalledTimes(1);
