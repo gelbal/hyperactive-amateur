@@ -35,6 +35,7 @@ export function createToneHarness() {
   let lookahead = 0.1;
   let transportPosition: number | string = 0;
   let transportSeconds = 0;
+  let transportSwing = 0;
   let nextId = 1;
   let nextOrder = 1;
   const drawTasks: DrawTask[] = [];
@@ -112,6 +113,12 @@ export function createToneHarness() {
     set seconds(value: number) {
       transportSeconds = value;
     },
+    get swing() {
+      return transportSwing;
+    },
+    set swing(value: number) {
+      transportSwing = value;
+    },
     get onceCallbacks() {
       return onceTasks.map((task) => task.callback);
     },
@@ -137,6 +144,7 @@ export function createToneHarness() {
       onceTasks.length = 0;
       repeatTasks.length = 0;
       transportPosition = 0;
+      transportSwing = 0;
       transportSeconds = 0;
       clear.mockClear();
       scheduleOnce.mockClear();
@@ -197,6 +205,12 @@ export function createToneHarness() {
           },
           set seconds(value: number) {
             transportSeconds = value;
+          },
+          get swing() {
+            return transportSwing;
+          },
+          set swing(value: number) {
+            transportSwing = value;
           },
         }),
       };

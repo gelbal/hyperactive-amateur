@@ -201,6 +201,20 @@ describe("moodTransport", () => {
     expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 
+  it("runs Mood on an unswung transport and hands Chop's swing back on stop", async () => {
+    createMoodWithCycle();
+    useAppStore.getState().actions.setSwing(0.5);
+    toneHarness.transport.swing = 0.5;
+
+    await startMoodPerformance();
+    // Tone delays off-grid events under swing: count-in ticks and the GATE
+    // repeat would land late.
+    expect(toneHarness.transport.swing).toBe(0);
+
+    stopMoodPerformance();
+    expect(toneHarness.transport.swing).toBe(0.5);
+  });
+
   it("lets a hide or an interruption stop a running performance once registered", async () => {
     createMoodWithCycle();
     const unregister = registerMoodPerformanceInterrupt();

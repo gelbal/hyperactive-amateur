@@ -109,6 +109,10 @@ async function startMoodPerformanceTransport(): Promise<boolean> {
   useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
   const { syncCommittedMoodEngines } = await import("./moodPerformance");
   syncCommittedMoodEngines();
+  // The transport is shared and carries Chop's swing, which Tone applies by
+  // delaying off-grid events: Mood's count-in ticks and GATE repeat would
+  // land late. Mood runs unswung; stop hands Chop its swing back.
+  transport.swing = 0;
   transport.start();
   return true;
 }
@@ -166,6 +170,7 @@ export function stopMoodPerformance(): void {
   const transport = Tone.getTransport();
   transport.stop();
   transport.position = 0;
+  transport.swing = useAppStore.getState().project.swing;
   stopAllMoodPlayers();
   useAppStore.getState().actions.setMoodPerforming(false);
 }
