@@ -138,7 +138,10 @@ export function MicStrip({ piece }: MicStripProps) {
               : "off";
         const open = openMicId === mic.id;
         const hotActionLabel = recordingState === "recording" ? "Stop take" : "Cancel take";
-        const spokenState = stateDescription(state, mic, liveEntry, armedEntry);
+        const liveAudioUnavailable = liveTake?.audioStatus === "unavailable";
+        const spokenState = `${stateDescription(state, mic, liveEntry, armedEntry)}${
+          liveAudioUnavailable && !isHot ? ", audio unavailable" : ""
+        }`;
 
         const onChipClick = () => {
           if (isHot) {
@@ -188,6 +191,10 @@ export function MicStrip({ piece }: MicStripProps) {
                       {recordingState === "countdown" ? hotCount : "REC"}
                     </span>
                     <Square size={9} fill="currentColor" aria-hidden="true" />
+                  </span>
+                ) : liveAudioUnavailable ? (
+                  <span className="text-[10px] font-semibold uppercase text-amber-300">
+                    NO AUDIO
                   </span>
                 ) : (
                   <span className="text-[10px] font-semibold uppercase text-zinc-500">

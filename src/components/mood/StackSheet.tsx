@@ -118,6 +118,8 @@ function TakeEntry({
   const rowState = selected
     ? "border-orange-500 bg-orange-500/10 text-orange-100"
     : "border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900";
+  // The one visible trace of a take that plays silent: the loop skips it.
+  const audioUnavailable = take.audioStatus === "unavailable";
   const aiSuggested = take.partSource === "ai";
   const checkingPart = checking && take.part === null;
   const partAriaLabel = checkingPart
@@ -134,7 +136,9 @@ function TakeEntry({
       >
         <button
           type="button"
-          aria-label={`Take ${takeNumber} ${formatDuration(take.durationSeconds)}`}
+          aria-label={`Take ${takeNumber} ${formatDuration(take.durationSeconds)}${
+            audioUnavailable ? ", audio unavailable" : ""
+          }`}
           onClick={onSelect}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded px-2 text-left pointer-coarse:min-h-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
         >
@@ -147,6 +151,9 @@ function TakeEntry({
                 <span className="font-mono text-zinc-500">×{take.cycleMultiple}</span>
               ) : null}
             </span>
+            {audioUnavailable ? (
+              <span className="text-[10px] text-amber-300">audio unavailable — re-record</span>
+            ) : null}
           </span>
         </button>
         <button

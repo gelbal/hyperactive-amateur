@@ -178,6 +178,23 @@ describe("StackSheet", () => {
     expect(screen.getByText("×2")).toHaveClass("font-mono", "text-zinc-500");
   });
 
+  it("marks a take whose audio is unavailable so a silent take says why", () => {
+    useAppStore.getState().actions.reset();
+    useAppStore.getState().actions.setAppMode("mood");
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeTake("take-silent", { audioStatus: "unavailable", audioBuffer: null }),
+    );
+    const mic = useAppStore.getState().mood.piece!.mics[0];
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    expect(screen.getByText("audio unavailable — re-record")).toHaveClass("text-amber-300");
+    expect(
+      screen.getByRole("button", { name: /^Take 1 .*, audio unavailable$/ }),
+    ).toBeInTheDocument();
+  });
+
   it("opens one row part picker, then closes and updates its compact chip after a pick", () => {
     const mic = setupMood();
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
