@@ -448,21 +448,26 @@ describe("App autosave gating", () => {
   });
 
   it("keeps the app and shows one reload line when the Mood screen fails to load", async () => {
-    // After a deploy an open app's lazy Mood chunk can 404; React reports the
-    // caught error on the console, which this test captures.
+    // After a deploy an open app's lazy Mood chunk can 404. React reports the
+    // caught error on the console and, in development, rethrows it to the
+    // window; this test captures both.
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const swallowWindowError = (event: ErrorEvent) => event.preventDefault();
+    window.addEventListener("error", swallowWindowError);
     moodModeHarness.crash = true;
     useAppStore.getState().actions.setAppMode("mood");
 
     await renderApp();
 
-    expect(screen.getByText("Couldn't open Mood — reload to try again.")).toBeInTheDocument();
+    // The lazy screen resolves on its own schedule; wait for it.
+    expect(await screen.findByText("Couldn't open Mood — reload to try again.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Mode" })).toBeInTheDocument();
     const failed = getLogs().find((entry) => entry.event === LOG_EVENTS.MOOD_LOAD_FAILED);
     expect(failed?.payload).toMatchObject({ message: expect.stringContaining("dynamically imported") });
     expect(consoleError).toHaveBeenCalled();
+    window.removeEventListener("error", swallowWindowError);
     consoleError.mockRestore();
   });
 
@@ -591,7 +596,8 @@ describe("App autosave gating", () => {
       screen.getByRole("group", { name: "Mode" }),
     );
     expect(within(controlRow).queryByRole("group", { name: "Mode" })).not.toBeInTheDocument();
-    expect(within(controlRow).getByTestId("mood-transport-cluster")).toBeInTheDocument();
+    // The lazy screen resolves on its own schedule; wait for its portal.
+    expect(await within(controlRow).findByTestId("mood-transport-cluster")).toBeInTheDocument();
     expect(within(controlRow).queryByTestId("mood-recording-bar")).not.toBeInTheDocument();
     expect(within(controlRow).getByTestId("export-button")).toBeInTheDocument();
 
