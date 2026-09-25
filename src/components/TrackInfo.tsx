@@ -148,7 +148,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
           title="Tap to change the sound"
           disabled={isExporting}
           onClick={changeSound}
-          className="w-14 h-12 shrink-0 px-1 rounded border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono leading-tight text-zinc-300 flex items-center justify-center text-center disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-14 h-12 shrink-0 px-0.5 rounded border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono tracking-tight leading-tight text-zinc-300 flex items-center justify-center text-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {voice.name}
         </button>
