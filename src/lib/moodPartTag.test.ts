@@ -116,8 +116,8 @@ describe("classifyPart", () => {
     const result = await classifyPart(makeTake(), false, client);
 
     expect(result).toEqual({ part: "beatbox", confidence: 0.86 });
-    expect(MOOD_PART_MODEL).toBe("gemini-3.1-flash-lite");
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(MOOD_PART_MODEL).toBe("gemini-3.5-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     expect(Object.keys(captured.config ?? {}).sort()).toEqual([
       "responseMimeType",
       "responseSchema",

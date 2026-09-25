@@ -208,7 +208,7 @@ describe("mood AI proxy contract", () => {
     };
     const inlineData = parsed.contents[0].parts[0].inlineData?.data;
     expect(body).toBe(JSON.stringify({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash-lite",
       contents: [{
         role: "user",
         parts: [
@@ -251,7 +251,7 @@ describe("mood AI proxy contract", () => {
     const half = Math.floor(MOOD_SYNC_TOTAL_BYTES_MAX / 2);
     const inline = "A".repeat(half - 1024);
     const body = JSON.stringify({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash-lite",
       contents: [
         {
           role: "user",

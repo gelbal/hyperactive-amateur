@@ -1,5 +1,6 @@
 // ABOUTME: moodSyncAssist — asks Gemini to refine Mood take alignment against the One.
 // ABOUTME: Slices inline WAV windows and fails open with quiet logger events on any AI issue.
+import { GEMINI_MODEL } from "./aiModel";
 import type { MoodTake } from "../types";
 import { GeminiOfflineError, MissingApiKeyError } from "./aiErrors";
 import { SchemaType } from "./aiSchemaConstants";
@@ -14,7 +15,7 @@ import { sliceAudioBuffer } from "./audioBufferSlice";
 import { logger, LOG_EVENTS } from "./logger";
 import { audioBufferToWav } from "./wavEncoder";
 
-export const MOOD_SYNC_MODEL = "gemini-3.1-flash-lite";
+export const MOOD_SYNC_MODEL = GEMINI_MODEL;
 export const MOOD_SYNC_CONFIDENCE_THRESHOLD = 0.6;
 export const MOOD_SYNC_OFFSET_LIMIT_MS = 250;
 export const MOOD_SYNC_INLINE_BYTES_MAX = 3 * 1024 * 1024;

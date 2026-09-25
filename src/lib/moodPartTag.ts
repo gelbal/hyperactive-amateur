@@ -1,5 +1,6 @@
 // ABOUTME: moodPartTag — asks Gemini to classify Mood takes into vocal part roles.
 // ABOUTME: Sends one trimmed inline WAV and fails open with quiet logger events.
+import { GEMINI_MODEL } from "./aiModel";
 import {
   MOOD_CREDIT_PALETTE_IDS,
   MOOD_FX_PRESET_IDS,
@@ -20,7 +21,7 @@ import { audioBufferToWav } from "./wavEncoder";
 
 const MOOD_PARTS = ["lead", "harmony", "bass", "beatbox", "adlib"] as const satisfies readonly MoodPart[];
 
-export const MOOD_PART_MODEL = "gemini-3.1-flash-lite";
+export const MOOD_PART_MODEL = GEMINI_MODEL;
 export const MOOD_PART_CONFIDENCE_THRESHOLD = 0.6;
 export const MOOD_KEY_CONFIDENCE_THRESHOLD = 0.6;
 export const MOOD_PART_INLINE_BYTES_MAX = 3 * 1024 * 1024;
