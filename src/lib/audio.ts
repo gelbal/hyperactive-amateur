@@ -118,14 +118,10 @@ export async function triggerTrackNow(trackId: number): Promise<void> {
   try {
     await ensureAudioRunning();
     if (!canStartAfterPendingAudible()) return;
-    triggerTrack(trackId, nowSeconds(), Tone.immediate());
+    triggerTrack(trackId, Tone.now(), Tone.immediate());
   } finally {
     release();
   }
-}
-
-export function nowSeconds(): number {
-  return Tone.now();
 }
 
 function linearVolumeToDb(volume: number): number {
@@ -179,12 +175,17 @@ async function startPlaybackAfterAudioRunning(): Promise<boolean> {
   await ensureAudioRunning();
   if (!canStartAfterPendingAudible()) return false;
 
-  stepCounter = 0;
-  Tone.getTransport().position = 0;
-  videoEngine.resetPlaybackState();
-  useAppStore.getState().actions.setCurrentStep(0);
+  rewindTransport();
   Tone.getTransport().start();
   return true;
+}
+
+// Back to step 0 with no staged or displayed cut, for both start and stop.
+function rewindTransport(): void {
+  Tone.getTransport().position = 0;
+  stepCounter = 0;
+  videoEngine.resetPlaybackState();
+  useAppStore.getState().actions.setCurrentStep(0);
 }
 
 export function stopPlayback(options: { allowExportStop?: boolean } = {}): void {
@@ -192,10 +193,7 @@ export function stopPlayback(options: { allowExportStop?: boolean } = {}): void 
     abortActiveExport("Export was interrupted by a playback stop.");
   }
   Tone.getTransport().stop();
-  Tone.getTransport().position = 0;
-  stepCounter = 0;
-  videoEngine.resetPlaybackState();
-  useAppStore.getState().actions.setCurrentStep(0);
+  rewindTransport();
   useAppStore.getState().actions.setIsPlaying(false);
 }
 
