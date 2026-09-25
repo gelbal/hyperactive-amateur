@@ -365,17 +365,15 @@ function readTrackContexts(): Map<number, TrackContext> {
 // instead of flashing through stale ones.
 function onCutBoundary(boundaryTime: number): void {
   const interval = subdivisionToSeconds(cutSubdivision);
-  const windowStart = boundaryTime - interval;
-  const windowEnd = boundaryTime;
-  const contexts = readTrackContexts();
-  const result = quantizeToBoundary(pendingTriggers, windowStart, windowEnd, contexts);
+  const result = quantizeToBoundary(
+    pendingTriggers,
+    boundaryTime - interval,
+    boundaryTime,
+    readTrackContexts(),
+  );
   pendingTriggers = result.remaining;
-
-  const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const effectiveCurrent = pendingCommit ? pendingCommit.event : currentlyDisplayed;
-  const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
-  pendingCommit = { event: next, boundaryTime, consumed: result.consumed, priorCurrent: effectiveCurrent };
-  prepareUpcoming(boundaryTime, next, effectiveCurrent);
+  stageBoundary(boundaryTime, result.consumed, effectiveCurrent);
 }
 
 // Re-decide a staged boundary with one more hit in its window. The new hit is
@@ -384,12 +382,20 @@ function onCutBoundary(boundaryTime: number): void {
 // staged winner — which is a sibling from the same window, not the clip on
 // screen.
 function foldIntoStagedBoundary(staged: PendingCommit, event: TriggerEvent): void {
-  const contexts = readTrackContexts();
+  stageBoundary(staged.boundaryTime, [...staged.consumed, event], staged.priorCurrent);
+}
+
+// Decide a boundary from its window's hits against the clip it follows, stage
+// the decision for the paint loop, and pre-seek the winner.
+function stageBoundary(
+  boundaryTime: number,
+  consumed: TriggerEvent[],
+  priorCurrent: TriggerEvent | null,
+): void {
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
-  const consumed = [...staged.consumed, event];
-  const next = pickWithDucking(consumed, staged.priorCurrent, staged.boundaryTime, holdMs, contexts);
-  pendingCommit = { event: next, boundaryTime: staged.boundaryTime, consumed, priorCurrent: staged.priorCurrent };
-  prepareUpcoming(staged.boundaryTime, next, staged.priorCurrent);
+  const next = pickWithDucking(consumed, priorCurrent, boundaryTime, holdMs, readTrackContexts());
+  pendingCommit = { event: next, boundaryTime, consumed, priorCurrent };
+  prepareUpcoming(boundaryTime, next, priorCurrent);
 }
 
 // Promote the staged boundary decision once the audible clock reaches its
