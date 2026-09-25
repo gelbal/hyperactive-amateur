@@ -24,12 +24,21 @@ const PART_LABELS: Record<MoodPart, string> = {
   adlib: "Adlib",
 };
 
+const PART_OPTIONS: Array<{ value: MoodPart | null; label: string }> = [
+  { value: "lead", label: "lead" },
+  { value: "harmony", label: "harm" },
+  { value: "bass", label: "bass" },
+  { value: "beatbox", label: "beat" },
+  { value: "adlib", label: "adlib" },
+  { value: null, label: "none" },
+];
+
 function formatDuration(seconds: number): string {
   return `${seconds.toFixed(1)}s`;
 }
 
-function partLabel(take: MoodTake): string {
-  return take.part ? PART_LABELS[take.part] : "No part yet";
+function partLabel(take: MoodTake): string | null {
+  return take.part ? PART_LABELS[take.part] : null;
 }
 
 function recordDisabledReason({
@@ -45,6 +54,58 @@ function recordDisabledReason({
   if (recordingState !== "idle") return "another recording active";
   if (takeCount >= MAX_TAKES_PER_MIC) return "stack full";
   return null;
+}
+
+function PartPicker({
+  disabled,
+  micId,
+  take,
+  takeNumber,
+}: {
+  disabled: boolean;
+  micId: string;
+  take: MoodTake;
+  takeNumber: number;
+}) {
+  const choosePart = (part: MoodPart | null) => {
+    if (disabled) return;
+    const expectedRevision = useAppStore.getState().session.moodRevision;
+    useAppStore
+      .getState()
+      .actions.applyMoodPartIfCurrent(micId, take.id, part, "user", expectedRevision);
+  };
+
+  return (
+    <div
+      className="grid w-24 shrink-0 grid-cols-2 gap-0.5 self-center"
+      role="group"
+      aria-label={`parts for take ${takeNumber}`}
+    >
+      {PART_OPTIONS.map((option) => {
+        const isSelected = take.part === option.value;
+        const accessiblePart = option.value ?? "none";
+        return (
+          <button
+            key={accessiblePart}
+            type="button"
+            aria-label={`part ${accessiblePart} for take ${takeNumber}`}
+            aria-pressed={isSelected}
+            data-selected={isSelected}
+            disabled={disabled}
+            onClick={() => choosePart(option.value)}
+            className={
+              "rounded px-1 py-0.5 text-[10px] uppercase leading-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-50 " +
+              (isSelected
+                ? "bg-orange-500 text-zinc-950"
+                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200")
+            }
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function TakeThumb({ take }: { take: MoodTake }) {
@@ -140,6 +201,7 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
                   ? "exporting"
                   : null;
           const confirmingDelete = confirmDeleteId === take.id && deleteDisabledReason === null;
+          const label = partLabel(take);
           return (
             <div key={take.id} className="flex items-stretch gap-1">
               <button
@@ -153,11 +215,17 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
                   <span className="font-mono text-xs tabular-nums text-zinc-500">
                     {formatDuration(take.durationSeconds)}
                   </span>
-                  <span className="ml-auto truncate text-xs text-zinc-400">
-                    {partLabel(take)}
-                  </span>
+                  {label ? (
+                    <span className="ml-auto truncate text-xs text-zinc-400">{label}</span>
+                  ) : null}
                 </span>
               </button>
+              <PartPicker
+                disabled={isExporting}
+                micId={mic.id}
+                take={take}
+                takeNumber={index + 1}
+              />
               <div className="flex min-h-11 shrink-0 items-center gap-1 pointer-coarse:min-h-12">
                 {confirmingDelete ? (
                   <>
