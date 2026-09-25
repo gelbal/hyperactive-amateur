@@ -782,7 +782,8 @@ describe("recordingFlow", () => {
 
     expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
-    expect(useAppStore.getState().recording.state).toBe("reviewing");
+    // Recording holds until the flow ends, so the overlay and its Esc stay up.
+    expect(useAppStore.getState().recording.state).toBe("recording");
     await expect(observeResolution(promise)).resolves.toEqual({ status: "pending" });
     expect(posterMocks.captureFirstFrame).not.toHaveBeenCalled();
 

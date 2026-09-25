@@ -215,7 +215,6 @@ async function runFlow(
     actions.setRecordingState("recording", trackId);
     const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
     throwIfFlowAborted(signal, "Aborted after capture");
-    actions.setRecordingState("reviewing", trackId);
     const trim = autoTrim(result.audioBuffer);
     const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
     const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
