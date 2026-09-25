@@ -210,6 +210,17 @@ export function countInBeatSeconds(
   return 60 / countInBpm(piece.timeFeel, piece.bpm);
 }
 
+// The cycle a take snaps against: the piece's own, or for a first Click take
+// the one its BPM and bars establish, so a first take may span up to four
+// cycles like any overdub.
+function snapCycleSeconds(piece: MoodPiece): number | null {
+  if (piece.cycleSeconds !== null) return piece.cycleSeconds;
+  if (piece.timeFeel === "click" && piece.bpm !== null && piece.cycleBars !== null) {
+    return establishCycleFromClick(piece.bpm, piece.cycleBars);
+  }
+  return null;
+}
+
 function firstTakeCaptureCapSeconds(
   timeFeel: MoodTimeFeel,
   bpm: number | null,
@@ -668,7 +679,7 @@ async function runFlow(
       Math.min(trim.trimEndMs, bufferDurationMs),
     );
     const contentSeconds = Math.max(0, (trimEndFromContent - trimStartMs) / 1000);
-    const snap = snapTake(contentSeconds, startingPiece.cycleSeconds);
+    const snap = snapTake(contentSeconds, snapCycleSeconds(startingPiece));
     if (!snap.ok) {
       actions.setLastTakeReceipt({ kind: "too-short" });
       return false;

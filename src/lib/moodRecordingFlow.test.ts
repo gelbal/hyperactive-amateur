@@ -609,6 +609,31 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
   });
 
+  it("snaps a first Click take longer than one cycle to the cycles it spans", async () => {
+    vi.useFakeTimers();
+    const { snapTake } =
+      await vi.importActual<typeof import("./moodTakeSnap")>("./moodTakeSnap");
+    snapMocks.snapTake.mockImplementation(snapTake);
+    useAppStore.getState().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
+    recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 8000 }));
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 8000 });
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(promise).resolves.toBe(true);
+
+    expect(snapMocks.snapTake).toHaveBeenCalledWith(8, 4);
+    const piece = useAppStore.getState().mood.piece;
+    expect(piece).toMatchObject({ cycleSeconds: 4, oneMicId: "mic-0" });
+    expect(piece?.mics[0].takes[0]).toMatchObject({
+      id: piece?.oneTakeId,
+      durationSeconds: 8,
+      cycleMultiple: 2,
+      trimEndMs: 8000,
+    });
+  });
+
   it("schedules a 3-beat first-take count-in on the audio clock and accents beat 1", async () => {
     vi.useFakeTimers();
     useAppStore.getState().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
