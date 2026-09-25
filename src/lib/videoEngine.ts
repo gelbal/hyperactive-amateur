@@ -5,7 +5,7 @@ import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { LOG_EVENTS, logger } from "./logger";
 
-export type TagOrUntagged = Tag | "untagged";
+type TagOrUntagged = Tag | "untagged";
 
 // Higher number wins. Vocal/fx are loud-statement clips; hats are filler.
 const TAG_PRIORITY: Record<TagOrUntagged, number> = {
@@ -209,7 +209,8 @@ function resolveBoundaryWinner(boundaryTime: number): TriggerEvent | null {
     holdMs,
     contexts,
   );
-  return isSameEvent(winner, currentlyDisplayed) ? null : winner;
+  // prepareUpcoming skips a winner that is already on screen.
+  return winner;
 }
 
 export function prepareUpcoming(
@@ -365,17 +366,15 @@ function readTrackContexts(): Map<number, TrackContext> {
 // instead of flashing through stale ones.
 function onCutBoundary(boundaryTime: number): void {
   const interval = subdivisionToSeconds(cutSubdivision);
-  const windowStart = boundaryTime - interval;
-  const windowEnd = boundaryTime;
-  const contexts = readTrackContexts();
-  const result = quantizeToBoundary(pendingTriggers, windowStart, windowEnd, contexts);
+  const result = quantizeToBoundary(
+    pendingTriggers,
+    boundaryTime - interval,
+    boundaryTime,
+    readTrackContexts(),
+  );
   pendingTriggers = result.remaining;
-
-  const holdMs = useAppStore.getState().project.sameTierHoldMs;
   const effectiveCurrent = pendingCommit ? pendingCommit.event : currentlyDisplayed;
-  const next = pickWithDucking(result.consumed, effectiveCurrent, boundaryTime, holdMs, contexts);
-  pendingCommit = { event: next, boundaryTime, consumed: result.consumed, priorCurrent: effectiveCurrent };
-  prepareUpcoming(boundaryTime, next, effectiveCurrent);
+  stageBoundary(boundaryTime, result.consumed, effectiveCurrent);
 }
 
 // Re-decide a staged boundary with one more hit in its window. The new hit is
@@ -384,12 +383,20 @@ function onCutBoundary(boundaryTime: number): void {
 // staged winner — which is a sibling from the same window, not the clip on
 // screen.
 function foldIntoStagedBoundary(staged: PendingCommit, event: TriggerEvent): void {
-  const contexts = readTrackContexts();
+  stageBoundary(staged.boundaryTime, [...staged.consumed, event], staged.priorCurrent);
+}
+
+// Decide a boundary from its window's hits against the clip it follows, stage
+// the decision for the paint loop, and pre-seek the winner.
+function stageBoundary(
+  boundaryTime: number,
+  consumed: TriggerEvent[],
+  priorCurrent: TriggerEvent | null,
+): void {
   const holdMs = useAppStore.getState().project.sameTierHoldMs;
-  const consumed = [...staged.consumed, event];
-  const next = pickWithDucking(consumed, staged.priorCurrent, staged.boundaryTime, holdMs, contexts);
-  pendingCommit = { event: next, boundaryTime: staged.boundaryTime, consumed, priorCurrent: staged.priorCurrent };
-  prepareUpcoming(staged.boundaryTime, next, staged.priorCurrent);
+  const next = pickWithDucking(consumed, priorCurrent, boundaryTime, holdMs, readTrackContexts());
+  pendingCommit = { event: next, boundaryTime, consumed, priorCurrent };
+  prepareUpcoming(boundaryTime, next, priorCurrent);
 }
 
 // Promote the staged boundary decision once the audible clock reaches its
@@ -481,16 +488,10 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const displayed = currentlyDisplayed;
+  // videos and trims are written together (setClipForTrack), so a displayed
+  // track has both or neither.
   const video = displayed ? videos.get(displayed.trackId) : null;
   const trim = displayed ? trims.get(displayed.trackId) : null;
-
-  if (displayed && trim) {
-    const elapsedMs = (audioTime - displayed.startTime) * 1000;
-    if (elapsedMs < 0) {
-      clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
-      return;
-    }
-  }
 
   if (!displayed || !video || !trim) {
     clearCanvas(ctx, w, h);
@@ -498,8 +499,13 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
     return;
   }
 
-  const trimDurationMs = trim.endMs - trim.startMs;
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
+  if (elapsedMs < 0) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+    return;
+  }
+
+  const trimDurationMs = trim.endMs - trim.startMs;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
     if (lastDrawn && trimDurationMs > 0 && holdsFrameAtTrimEnd()) {
       holdFrame(lastDrawn);

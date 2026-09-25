@@ -64,8 +64,8 @@ describe("audible claim and the controls that read the gate", () => {
         <PadGrid />
       </>,
     );
-    const pad1 = screen.getByRole("button", { name: "pad 1" });
-    const pad2 = screen.getByRole("button", { name: "pad 2" });
+    const pad1 = screen.getByRole("button", { name: "pad 1, kick" });
+    const pad2 = screen.getByRole("button", { name: "pad 2, hat" });
     const play = screen.getByRole("button", { name: "Start playback" });
     expect(pad2).toBeEnabled();
 

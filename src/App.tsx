@@ -39,7 +39,12 @@ export function App() {
   const [hydrating, setHydrating] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const clipCount = useAppStore(selectClipCount);
+  const isPlaying = useAppStore((s) => s.playback.isPlaying);
   const hasAnyClips = clipCount > 0;
+  // Play (and Space) stay until playback stops: Re-record is live while
+  // playing and clearTrackClip only freezes for export, so the last clip
+  // can go with the transport running.
+  const showControls = hasAnyClips || isPlaying;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
 
   useEffect(() => {
@@ -89,12 +94,13 @@ export function App() {
     <div className="min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white">
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
-        {/* One wrapping row. Below lg the full-width breaker after Play forces
-            Export, Feel and Suggest onto their own right-aligned line, so a
-            phone spends two rows: title + Play, then controls. At lg the
-            breaker is gone and title, Play and every control share one row. */}
+        {/* One wrapping row. Below lg the wrapper is display: contents, so
+            Play and the full-width controls row are the row's own items:
+            title + Play on one line, the controls on the next. At lg the
+            wrapper is a right-aligned column: Play above the controls,
+            beside the title. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-3 sm:px-6 sm:py-4 lg:gap-x-3">
-          <div className="mr-auto lg:mr-0">
+          <div className="mr-auto">
             {/* 5xl only from lg: a phone in landscape is wider than sm and
                 must keep the phone-sized header. */}
             <h1 className="text-2xl min-[360px]:text-3xl lg:text-5xl font-black tracking-tight leading-[1.05] text-zinc-200">
@@ -123,22 +129,23 @@ export function App() {
               </a>
             </p>
           </div>
-          <div className="shrink-0 lg:ml-auto">
-            <PlayButton />
-          </div>
-          {/* Before the first clip the header is the title and Play; the
-              tempo dial lives in the Feel panel, so nothing else is worth a
-              row until there is something to play. While a saved project
-              hydrates the row is reserved empty at the buttons' height, so
-              the page does not jump when the clips arrive. */}
-          {(hasAnyClips || hydrating) && (
-            <>
-              <div className="basis-full h-0 lg:hidden" aria-hidden="true" />
-              {/* The zero-height breaker sits on its own flex line, so a row
-                  gap would count twice; the controls carry the 12 px
-                  themselves. */}
-              <div className="ml-auto lg:ml-0 mt-3 lg:mt-0 min-h-[2.375rem] pointer-coarse:min-h-11 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
-                {hasAnyClips && (
+          {/* Before the first clip the header is the title alone: nothing
+              here is usable until there is something to play. While a saved
+              project hydrates the controls row is reserved empty at the
+              buttons' height, so the page does not jump when the clips
+              arrive; Play needs no reservation, the title block is taller
+              than it at every width. */}
+          {(showControls || hydrating) && (
+            <div className="contents lg:flex lg:flex-col lg:items-end lg:gap-3 lg:ml-auto">
+              {showControls && (
+                <div className="shrink-0">
+                  <PlayButton />
+                </div>
+              )}
+              {/* The controls carry the 12 px between the lines themselves
+                  (gap-y-0 on the row); at lg the column's gap does it. */}
+              <div className="w-full lg:w-auto mt-3 lg:mt-0 min-h-[2.375rem] pointer-coarse:min-h-11 flex flex-wrap items-center gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
+                {showControls && (
                   <>
                     <ExportButton />
                     <FeelDisclosure />
@@ -146,7 +153,7 @@ export function App() {
                   </>
                 )}
               </div>
-            </>
+            </div>
           )}
         </div>
       </header>

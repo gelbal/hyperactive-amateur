@@ -53,10 +53,11 @@ describe("PlayButton silent-switch hint", () => {
     expect(screen.queryByText("No sound? Check your phone's silent switch.")).not.toBeInTheDocument();
   });
 
-  it("anchors the silent-switch hint under the sticky header on phones, below the header panels", () => {
+  it("anchors the silent-switch hint under the sticky header on phones, below the header panels; beside Play at lg", () => {
     // A 224px hint centered under the play button ran off the screen edge on
-    // phones. Below sm the wrapper is not positioned, so the hint spans the
-    // header's width under it; sm+ keeps the anchored, centred popover.
+    // phones. Below lg the wrapper is not positioned, so the hint spans the
+    // header's width under it. At lg the controls sit under Play, so the
+    // hint sits to its left, vertically centred on it.
     hintState.shouldShow.mockReturnValue(true);
     useAppStore.getState().actions.setAudioState("running");
 
@@ -84,6 +85,11 @@ describe("PlayButton silent-switch hint", () => {
     // (display: none), so its Dismiss button leaves the tab order and the
     // accessibility tree instead of sitting reachable behind the panel.
     expect(classes).toContain("ha-silent-hint");
+    expect(classes).toEqual(
+      expect.arrayContaining(["lg:right-full", "lg:top-1/2", "lg:-translate-y-1/2", "lg:mt-0", "lg:mr-3"]),
+    );
+    expect(classes).not.toContain("lg:left-1/2");
+    expect(classes).not.toContain("lg:-translate-x-1/2");
   });
 
   it("names the keyboard shortcut in its title instead of a hint beside it", () => {

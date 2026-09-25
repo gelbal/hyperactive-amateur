@@ -1,6 +1,10 @@
 // ABOUTME: FeelDisclosure test — Scratch is a destructive action; it must take a second click to confirm.
 import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
-import { afterEach, describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+
+const audioMocks = vi.hoisted(() => ({ stopPlayback: vi.fn() }));
+vi.mock("../lib/audio", () => ({ stopPlayback: audioMocks.stopPlayback }));
+
 import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
@@ -55,17 +59,22 @@ describe("FeelDisclosure", () => {
     expect(screen.queryByLabelText("Flow")).not.toBeInTheDocument();
   });
 
-  it("trigger: 44px on coarse pointers, icon + word on phones, the tempo · cut · swing · hold summary only from lg", () => {
+  it("trigger: 44px on coarse pointers, fills its share of the phone row, the BPM at every width, cut · swing · hold only from lg", () => {
     useAppStore.getState().actions.setBpm(110);
     render(<FeelDisclosure />);
 
     const button = screen.getByLabelText(FEEL_LABEL);
-    expect(button).toHaveClass("pointer-coarse:min-h-11");
+    expect(button).toHaveClass("pointer-coarse:min-h-11", "w-full", "lg:w-auto", "justify-center", "px-2", "lg:px-3", "gap-1.5", "lg:gap-2");
+    expect(button.parentElement).toHaveClass("static", "lg:relative", "grow", "lg:grow-0");
     expect(button).toHaveTextContent("Feel");
-    const summary = screen.getByText(/BPM · 1\/8 · 0% · 400ms/);
-    expect(summary).toHaveClass("hidden", "lg:inline");
-    expect(summary).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
-    // Three digit slots, so the button (and the right-packed row with it)
+    const tail = screen.getByText(/· 1\/8 · 0% · 400ms/);
+    expect(tail).toHaveClass("hidden", "lg:inline");
+    const readout = screen.getByText("110").parentElement as HTMLElement;
+    expect(readout).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
+    expect(readout.className.split(/\s+/)).not.toContain("hidden");
+    // Essential on phones now, so readable: zinc-400 on the button's zinc-900.
+    expect(readout).toHaveClass("text-zinc-400");
+    // Three digit slots, so the button (and the two sharing the row with it)
     // keeps its width when a turn crosses 100 BPM under a captured pointer.
     expect(screen.getByText("110")).toHaveClass("inline-block", "w-[3ch]", "text-right");
   });
@@ -134,5 +143,17 @@ describe("FeelDisclosure", () => {
     fireEvent.click(screen.getByLabelText("Confirm scratch"));
     expect(useAppStore.getState().project.bpm).toBe(90);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+  });
+
+  it("Scratch while playing stops the transport first, so no loop keeps running with Play gone", () => {
+    audioMocks.stopPlayback.mockClear();
+    act(() => useAppStore.getState().actions.setIsPlaying(true));
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    fireEvent.click(screen.getByLabelText("Scratch: start fresh"));
+    fireEvent.click(screen.getByLabelText("Confirm scratch"));
+
+    expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
   });
 });

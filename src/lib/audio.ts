@@ -1,19 +1,18 @@
 // ABOUTME: Tone.js bootstrap, Transport scheduling, and play/stop control for Hyperactive Amateur.
-// ABOUTME: Owns per-track Tone.Players for recorded clips plus a fallback metronome.
+// ABOUTME: Owns per-track Tone.Players for recorded clips plus the drum kit that plays on empty tracks.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
+import { canStartAudibleAction, claimPendingAudible, isPendingAudibleCurrent } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
+import { KIT, type DrumVoice } from "./drumKit";
 import type { Clip, Track } from "../types";
 
-// Per-track pitches let you hear which tracks are firing while a track has no
-// recorded clip. They keep the sequencer audible during build-up phases.
-const TRACK_PITCHES = ["C2", "D2", "E2", "F2", "G2", "A2", "B2", "C3"];
-
+// The kit keeps the sequencer audible while a track has no recorded clip:
+// each track position plays one fixed drum voice (drumKit.ts).
 let initialized = false;
-let metronomeSynths: Tone.MembraneSynth[] = [];
+let kit: DrumVoice[] = [];
 let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
@@ -35,9 +34,7 @@ export function initTransport(): void {
   const transport = Tone.getTransport();
   transport.bpm.value = useAppStore.getState().project.bpm;
 
-  metronomeSynths = TRACK_PITCHES.map(
-    () => new Tone.MembraneSynth({ volume: -10 }).toDestination(),
-  );
+  kit = KIT.map((voice) => voice.make());
 
   // Build any Tone.Players for clips that already exist (rehydrate path).
   syncPlayers(useAppStore.getState().project.tracks);
@@ -77,7 +74,7 @@ export function initTransport(): void {
 }
 
 // Per-step trigger logic. If the track has a Tone.Player, fire that with the
-// trim offsets; otherwise fall back to the placeholder synth.
+// trim offsets; otherwise play its kit voice.
 function onStep(stepIndex: number, time: number): void {
   const tracks = useAppStore.getState().project.tracks;
   for (const track of tracks) {
@@ -92,28 +89,25 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
   const track = useAppStore.getState().project.tracks[trackId];
   if (!track || track.muted) return;
 
-  const player = players.get(trackId);
-  if (player && player.loaded && track.clip) {
-    const offset = track.clip.trimStartMs / 1000;
-    const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
-    try {
-      player.start(when, offset, duration);
-    } catch {
-      // Player can reject restart-too-soon at the same time slot; safe to swallow.
+  if (track.clip) {
+    // A player exists only for a clip with decoded audio; a clip whose audio
+    // is unavailable still cuts to its video.
+    const player = players.get(trackId);
+    if (player?.loaded) {
+      const offset = track.clip.trimStartMs / 1000;
+      const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
+      try {
+        player.start(when, offset, duration);
+      } catch {
+        // Player can reject restart-too-soon at the same time slot; safe to swallow.
+      }
     }
     if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
-    useAppStore.getState().actions.markTriggered(trackId);
-    return;
+  } else {
+    // No clip: the track's kit voice. Optional because render tests use this
+    // module without initTransport, so the kit is not built there.
+    kit[trackId]?.trigger(when, track.volume);
   }
-
-  if (track.clip) {
-    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
-    useAppStore.getState().actions.markTriggered(trackId);
-    return;
-  }
-
-  const synth = metronomeSynths[trackId];
-  if (synth) synth.triggerAttackRelease(TRACK_PITCHES[trackId], "16n", when, track.volume);
   useAppStore.getState().actions.markTriggered(trackId);
 }
 
@@ -124,14 +118,10 @@ export async function triggerTrackNow(trackId: number): Promise<void> {
   try {
     await ensureAudioRunning();
     if (!canStartAfterPendingAudible()) return;
-    triggerTrack(trackId, nowSeconds(), Tone.immediate());
+    triggerTrack(trackId, Tone.now(), Tone.immediate());
   } finally {
     release();
   }
-}
-
-export function nowSeconds(): number {
-  return Tone.now();
 }
 
 function linearVolumeToDb(volume: number): number {
@@ -174,13 +164,10 @@ function syncPlayers(tracks: Track[]): void {
 // went hidden must not start sound in the background once audio resumes, nor
 // on return when the frozen unlock settles only then.
 function canStartAfterPendingAudible(): boolean {
-  const { playback, recording } = useAppStore.getState();
   return (
     isPendingAudibleCurrent() &&
     !(typeof document !== "undefined" && document.hidden) &&
-    !playback.isPlaying &&
-    !playback.isExporting &&
-    recording.state === "idle"
+    canStartAudibleAction(useAppStore.getState())
   );
 }
 
@@ -188,12 +175,17 @@ async function startPlaybackAfterAudioRunning(): Promise<boolean> {
   await ensureAudioRunning();
   if (!canStartAfterPendingAudible()) return false;
 
-  stepCounter = 0;
-  Tone.getTransport().position = 0;
-  videoEngine.resetPlaybackState();
-  useAppStore.getState().actions.setCurrentStep(0);
+  rewindTransport();
   Tone.getTransport().start();
   return true;
+}
+
+// Back to step 0 with no staged or displayed cut, for both start and stop.
+function rewindTransport(): void {
+  Tone.getTransport().position = 0;
+  stepCounter = 0;
+  videoEngine.resetPlaybackState();
+  useAppStore.getState().actions.setCurrentStep(0);
 }
 
 export function stopPlayback(options: { allowExportStop?: boolean } = {}): void {
@@ -201,10 +193,7 @@ export function stopPlayback(options: { allowExportStop?: boolean } = {}): void 
     abortActiveExport("Export was interrupted by a playback stop.");
   }
   Tone.getTransport().stop();
-  Tone.getTransport().position = 0;
-  stepCounter = 0;
-  videoEngine.resetPlaybackState();
-  useAppStore.getState().actions.setCurrentStep(0);
+  rewindTransport();
   useAppStore.getState().actions.setIsPlaying(false);
 }
 
@@ -248,7 +237,8 @@ export function __resetAudioForTesting(): void {
   for (const player of players.values()) player.dispose();
   players = new Map();
   lastClips = new Map();
-  metronomeSynths = [];
+  for (const voice of kit) voice.dispose();
+  kit = [];
   initialized = false;
   stepCounter = 0;
 }

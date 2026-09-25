@@ -2,6 +2,7 @@
 // ABOUTME: Each pad subscribes to playback.triggerSeq[trackId] and flashes briefly on every fire.
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
+import { KIT } from "../lib/drumKit";
 import { triggerTrackNow } from "../lib/audio";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { runAudibleAction } from "../lib/audibleActionRunner";
@@ -30,7 +31,9 @@ function Pad({ trackId }: PadProps) {
   return (
     <button
       type="button"
-      aria-label={`pad ${trackId + 1}`}
+      // An empty pad plays its kit voice; the name says which, for a screen
+      // reader too.
+      aria-label={clip ? `pad ${trackId + 1}` : `pad ${trackId + 1}, ${KIT[trackId].name}`}
       data-flashing={flashing}
       disabled={!canStart}
       onClick={() => runAudibleAction(triggerTrackNow(trackId))}
@@ -58,14 +61,17 @@ function Pad({ trackId }: PadProps) {
           />
         )
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-600">
-          empty
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">
+          {/* An empty pad plays its kit voice, so it says which. */}
+          {KIT[trackId].name}
         </div>
       )}
       <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-white">
         {trackId + 1}
       </span>
-      {tag && (
+      {/* The corner is for a tag set on a clip; clearing the clip keeps the
+          tag in the store, and the centre names the kit voice again. */}
+      {clip && tag && (
         <span className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-orange-300">
           {tag}
         </span>

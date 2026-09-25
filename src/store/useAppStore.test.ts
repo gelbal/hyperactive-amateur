@@ -457,6 +457,25 @@ describe("useAppStore", () => {
     expect(get().project.tracks[0].muted).toBe(false);
   });
 
+  it("clearing a repair-muted clip releases the repair mute, so the track plays its kit voice", () => {
+    hydrateRepairMutedTrack(0);
+
+    get().actions.clearTrackClip(0);
+
+    expect(get().project.tracks[0].clip).toBeNull();
+    expect(get().project.tracks[0].muted).toBe(false);
+    expect(get().project.tracks[0].mutedByRepair).toBe(false);
+  });
+
+  it("clearing a clip keeps a mute the user set", () => {
+    get().actions.setTrackClip(0, makeClip());
+    get().actions.setTrackMuted(0, true);
+
+    get().actions.clearTrackClip(0);
+
+    expect(get().project.tracks[0].muted).toBe(true);
+  });
+
   it("keeps a user's re-mute on a repaired track when re-recording", () => {
     hydrateRepairMutedTrack(0);
     // The user toggles the mute themselves — their intent now owns the state.

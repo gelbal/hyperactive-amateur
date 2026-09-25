@@ -109,12 +109,12 @@ describe("ExportButton format picker", () => {
     vi.restoreAllMocks();
   });
 
-  it("sizes the export trigger to 44px on coarse pointers", () => {
+  it("sizes the export trigger to 44px on coarse pointers and fills its share of the phone row", () => {
     render(<ExportButton />);
 
-    expect(screen.getByRole("button", { name: /export/i })).toHaveClass(
-      "pointer-coarse:min-h-11",
-    );
+    const button = screen.getByRole("button", { name: /export/i });
+    expect(button).toHaveClass("pointer-coarse:min-h-11", "w-full", "lg:w-auto", "justify-center", "px-2", "lg:px-3", "gap-1.5", "lg:gap-2");
+    expect(button.parentElement).toHaveClass("grow", "lg:grow-0");
   });
 
   it("anchors the popover under the sticky header below lg and right-aligned under the button at lg", () => {

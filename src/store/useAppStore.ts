@@ -411,7 +411,15 @@ export const useAppStore = create<AppStore>((set) => ({
             tagReasoning,
             tracks: state.project.tracks.map((track) =>
               track.id === trackId
-                ? { ...track, clip: null, blobRevision: (track.blobRevision ?? 0) + 1 }
+                ? {
+                    ...track,
+                    clip: null,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                    // A mute the audio repair set was for the broken clip; the
+                    // empty track plays its kit voice. A user's own mute stays.
+                    muted: track.mutedByRepair ? false : track.muted,
+                    mutedByRepair: false,
+                  }
                 : track,
             ),
           },

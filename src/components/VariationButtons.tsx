@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { suggestTracks } from "../lib/suggestTracks";
 import { AI_UNLOCK_CLIPS, varyPattern, type Variation } from "../lib/aiSuggest";
 import { aiErrorMessage, aiOfflineHint } from "../lib/aiOffline";
 
@@ -67,11 +68,7 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
         subgenre,
         vibe,
         stepCount,
-        tracks: requestTracks.map((t) => ({
-          id: t.id,
-          tag: t.tag,
-          reasoning: tagReasoning[t.id] ?? null,
-        })),
+        tracks: suggestTracks(requestTracks, tagReasoning),
         currentPattern: before,
         variation,
       });

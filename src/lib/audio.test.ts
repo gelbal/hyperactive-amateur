@@ -1,4 +1,4 @@
-// ABOUTME: Tests for audio.ts trigger gating — showVideo gate, mute respected, fallback synth.
+// ABOUTME: Tests for audio.ts trigger gating — showVideo gate, mute respected, kit voice on empty tracks.
 // ABOUTME: Tone is fully mocked so JSDOM never touches a real audio context.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAudioContextStub, type AudioContextStub } from "../test-utils/audioContextStub";
@@ -25,13 +25,17 @@ let audioContextStub: AudioContextStub;
 
 interface SynthMock {
   triggerAttackRelease: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
   toDestination: () => SynthMock;
+  connect: () => SynthMock;
 }
 const synthInstances: SynthMock[] = [];
 function makeSynth(): SynthMock {
   const s: SynthMock = {
     triggerAttackRelease: vi.fn(),
+    dispose: vi.fn(),
     toDestination: () => s,
+    connect: () => s,
   };
   synthInstances.push(s);
   return s;
@@ -64,6 +68,20 @@ vi.mock("tone", () => ({
   getContext: vi.fn(() => ({ rawContext: audioContextStub })),
   MembraneSynth: vi.fn(function MembraneSynth() {
     return makeSynth();
+  }),
+  // All three push into synthInstances in construction order, which is the
+  // kit's track order.
+  MetalSynth: vi.fn(function MetalSynth() {
+    return makeSynth();
+  }),
+  NoiseSynth: vi.fn(function NoiseSynth() {
+    return makeSynth();
+  }),
+  // The hats' high-pass; kept out of synthInstances so its indices stay the
+  // track order.
+  Filter: vi.fn(function Filter() {
+    const f = { dispose: vi.fn(), toDestination: () => f };
+    return f;
   }),
   Player: vi.fn(function Player() {
     return makePlayer();
@@ -154,12 +172,28 @@ describe("audio: per-step trigger logic", () => {
     expect(playerInstances[2].start).not.toHaveBeenCalled();
   });
 
-  it("falls back to a synth click for tracks without a clip", () => {
+  it("plays the track's kit voice for a step without a clip", () => {
     initTransport();
     useAppStore.getState().actions.toggleStep(2, 0);
     const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
     cb?.(0);
-    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+    // Track 2 is the snare, a NoiseSynth: (duration, time, velocity).
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
+  });
+
+  it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {
+    initTransport();
+    expect(synthInstances).toHaveLength(8);
+    const a = useAppStore.getState().actions;
+    a.setTrackVolume(0, 0.5);
+    a.toggleStep(0, 0);
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+    cb?.(0);
+    expect(synthInstances[0].triggerAttackRelease).toHaveBeenCalledWith(expect.anything(), "16n", 0, 0.5);
+
+    const built = [...synthInstances];
+    __resetAudioForTesting();
+    for (const synth of built) expect(synth.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("does not create a player or fallback click for clips with unavailable audio", () => {
@@ -309,7 +343,7 @@ describe("audio: per-step trigger logic", () => {
     await promise;
 
     expect(Tone.start).toHaveBeenCalledTimes(1);
-    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("E2", "16n", 0, 1);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
     expect(claimPendingAudible()).toEqual(expect.any(Function));
   });
 

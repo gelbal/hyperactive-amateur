@@ -147,8 +147,10 @@ async function waitForServiceWorkerControl(page: Page): Promise<void> {
   });
 }
 
-async function seedOneClipProject(page: Page): Promise<void> {
-  await page.evaluate(async () => {
+// Seeds a saved project with clips on the first clipCount tracks (track 0
+// tagged kick), then reloads so the app hydrates it.
+async function seedOneClipProject(page: Page, clipCount = 1): Promise<void> {
+  await page.evaluate(async (clipCount) => {
     const silentWavBlob = () => {
       const sampleRate = 8_000;
       const sampleCount = 1_600;
@@ -191,12 +193,12 @@ async function seedOneClipProject(page: Page): Promise<void> {
       updatedAt: Date.now(),
       tracks: Array.from({ length: 8 }, (_, id) => ({
         id,
-        clipBlob: id === 0 ? clipBlob : null,
-        audioBlob: id === 0 ? audioBlob : null,
+        clipBlob: id < clipCount ? clipBlob : null,
+        audioBlob: id < clipCount ? audioBlob : null,
         posterBlob: null,
         trimStartMs: id === 0 ? 0 : 0,
-        trimEndMs: id === 0 ? 200 : 0,
-        durationMs: id === 0 ? 200 : 0,
+        trimEndMs: id < clipCount ? 200 : 0,
+        durationMs: id < clipCount ? 200 : 0,
         tag: id === 0 ? "kick" : null,
         steps: id === 0 ? steps : Array.from({ length: 16 }, () => false),
         volume: 1,
@@ -222,7 +224,7 @@ async function seedOneClipProject(page: Page): Promise<void> {
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
       };
     });
-  });
+  }, clipCount);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByLabel("trigger pads")).toBeVisible();
@@ -309,7 +311,7 @@ test("boots production app and reloads offline from the service worker", async (
   await expect(page.getByRole("button", { name: "Enable camera & mic" })).toBeVisible();
 });
 
-test("blocks keyboard playback while recording and suspends camera on hide", async ({
+test("shows no transport before the first clip and suspends camera on hide", async ({
   page,
   context,
 }) => {
@@ -323,12 +325,29 @@ test("blocks keyboard playback while recording and suspends camera on hide", asy
   await page.getByRole("button", { name: "Record clip for track 1" }).click();
   await expect(page.getByRole("status", { name: "recording countdown" })).toBeVisible();
   await page.keyboard.press("Space");
-  await expect(page.getByRole("button", { name: "Start playback" })).toBeVisible();
+  // Before the first clip there is no transport; the recording gate on
+  // Space is covered by the useSpacebarPlayToggle unit tests.
+  await expect(page.getByRole("button", { name: /playback/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("status", { name: "recording countdown" })).toHaveCount(0);
 
   await hidePage(context, page);
   await expect(page.getByText(/Camera disconnected/i)).toBeVisible();
+});
+
+test("blocks keyboard playback during a recording countdown once Play exists", async ({ page }) => {
+  await installBrowserMocks(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await seedOneClipProject(page);
+
+  await page.getByRole("button", { name: "record clip for track 2", exact: true }).click();
+  await expect(page.getByRole("status", { name: "recording countdown" })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Start playback" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop playback" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("status", { name: "recording countdown" })).toHaveCount(0);
 });
 
 test("surfaces export MediaRecorder failures without camera permission", async ({ page }) => {
@@ -349,4 +368,38 @@ test("surfaces export MediaRecorder failures without camera permission", async (
   await page.getByRole("button", { name: "Render" }).click();
 
   await expect(page.getByText("smoke encoder failed")).toBeVisible();
+});
+
+test("fills the controls row on a phone and stacks Play above it on desktop", async ({ page }) => {
+  await installBrowserMocks(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await seedOneClipProject(page, 4);
+
+  const box = async (name: string | RegExp) => {
+    const b = await page.getByRole("button", { name }).first().boundingBox();
+    if (!b) throw new Error(`no box for ${String(name)}`);
+    return b;
+  };
+  const feel = page.getByRole("button", { name: /^Feel:/ });
+  const exportBox = await box("Export");
+  const suggestBox = await box("Suggest a beat");
+  // Edge to edge inside the 12 px gutters, one line, BPM on the phone.
+  expect(Math.round(exportBox.x)).toBe(12);
+  expect(Math.round(suggestBox.x + suggestBox.width)).toBe(390 - 12);
+  expect(Math.round((await feel.boundingBox())!.y)).toBe(Math.round(exportBox.y));
+  expect(Math.round(suggestBox.y)).toBe(Math.round(exportBox.y));
+  // innerText: the cut · swing · hold tail is in the DOM but hidden below lg.
+  await expect(feel).toHaveText(/^Feel\s*90 BPM$/, { useInnerText: true });
+  // An empty pad names the kit voice it plays.
+  await expect(page.getByRole("button", { name: "pad 5, kick 2" })).toBeVisible();
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const play = await box("Start playback");
+  const exportDesktop = await box("Export");
+  const suggestDesktop = await box("Suggest a beat");
+  // Play sits above the controls, right edges aligned.
+  expect(Math.round(exportDesktop.y - (play.y + play.height))).toBe(12);
+  expect(Math.round(play.x + play.width)).toBe(Math.round(suggestDesktop.x + suggestDesktop.width));
 });
