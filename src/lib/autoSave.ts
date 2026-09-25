@@ -19,6 +19,9 @@ const dirtyScopes: ScopeFlags = { chop: false, mood: false };
 const dirtyWhileRecording: ScopeFlags = { chop: false, mood: false };
 const queuedScopes: ScopeFlags = { chop: false, mood: false };
 const pausedScopes: ScopeFlags = { chop: false, mood: false };
+// Set only when a loaded Mood piece goes away (a Mood scratch): the one case
+// in which a Mood save with no piece clears the saved record.
+let moodClearRequested = false;
 
 function reportSaveError(err: unknown): void {
   logger.error(LOG_EVENTS.AUTOSAVE_ERROR, {
@@ -39,11 +42,12 @@ function clearFlags(flags: ScopeFlags): void {
 }
 
 // Chop never pauses: its autosave only starts once the Chop load resolved.
-// Mood loads lazily, so a Mood record that could not be opened pauses the
-// Mood scope for the session; a write would replace it with a new piece.
+// Mood loads lazily, so the Mood scope saves only once its record is loaded:
+// before that there is nothing of Mood's to write, and after a load that
+// failed a write would replace the record that could not be read.
 function syncPausedScopes(): void {
   pausedScopes.chop = false;
-  pausedScopes.mood = useAppStore.getState().mood.hydration === "failed";
+  pausedScopes.mood = useAppStore.getState().mood.hydration !== "ready";
 }
 
 function unpausedScopes(scopes: AutoSaveScope[]): AutoSaveScope[] {
@@ -80,12 +84,19 @@ function savedMoodSelectionsSnapshot(
 
 function persistScope(scope: AutoSaveScope): Promise<void> {
   const state = useAppStore.getState();
-  const write =
-    scope === "chop"
-      ? saveProject(state)
-      : state.mood.piece
-        ? saveMoodPiece(state.mood.piece, savedMoodSelectionsSnapshot(state))
-        : clearMoodPiece();
+  let write: Promise<void>;
+  if (scope === "chop") {
+    write = saveProject(state);
+  } else if (state.mood.piece) {
+    moodClearRequested = false;
+    write = saveMoodPiece(state.mood.piece, savedMoodSelectionsSnapshot(state));
+  } else if (moodClearRequested) {
+    moodClearRequested = false;
+    write = clearMoodPiece();
+  } else {
+    // No piece and no scratch: nothing of Mood's to write.
+    write = Promise.resolve();
+  }
   return write.catch((err: unknown) => {
     reportSaveError(err);
     throw err;
@@ -192,10 +203,18 @@ export function startAutoSave(): void {
   unsubscribe = useAppStore.subscribe((state, prev) => {
     syncPausedScopes();
     if (state.project !== prev.project) markDirty("chop");
+    const moodPiece = state.mood.piece;
+    // Only a loaded piece going away is a scratch. Having no piece while
+    // Mood loads, after a quarantined or failed load, or across a mode switch
+    // must never clear the saved record.
+    if (prev.mood.piece !== null && moodPiece === null && state.mood.hydration === "ready") {
+      moodClearRequested = true;
+    }
     const stoppedMoodSelectionChanged =
+      moodPiece !== null &&
       !state.mood.performance.isPerforming &&
       state.mood.performance.selections !== prev.mood.performance.selections;
-    if (state.mood.piece !== prev.mood.piece || stoppedMoodSelectionChanged) {
+    if (moodPiece !== prev.mood.piece || stoppedMoodSelectionChanged) {
       markDirty("mood");
     }
     if (prev.recording.state !== "idle" && state.recording.state === "idle") {
@@ -215,7 +234,10 @@ export function stopAutoSave(): void {
   // (flushPending -> stopAutoSave) queues a last change behind an in-flight
   // save; that drain must still write it to disk. When a save is in flight
   // the running drain owns queuedScopes and clears each as it persists it.
-  if (!saveInProgress) clearFlags(queuedScopes);
+  if (!saveInProgress) {
+    clearFlags(queuedScopes);
+    moodClearRequested = false;
+  }
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
