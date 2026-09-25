@@ -220,7 +220,17 @@ export function startAutoSave(): void {
       moodPiece !== null &&
       !state.mood.performance.isPerforming &&
       state.mood.performance.selections !== prev.mood.performance.selections;
-    if (moodPiece !== prev.mood.piece || stoppedMoodSelectionChanged) {
+    // Selections committed while performing are saved when it stops, on
+    // every stop path (Stop, a mode switch, a hide, an interruption).
+    const moodPerformanceStopped =
+      moodPiece !== null &&
+      prev.mood.performance.isPerforming &&
+      !state.mood.performance.isPerforming;
+    if (
+      moodPiece !== prev.mood.piece ||
+      stoppedMoodSelectionChanged ||
+      moodPerformanceStopped
+    ) {
       markDirty("mood");
     }
     if (prev.recording.state !== "idle" && state.recording.state === "idle") {

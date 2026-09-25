@@ -186,6 +186,32 @@ describe("autoSave", () => {
     expect(saveMoodSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["Stop", () => useAppStore.getState().actions.setMoodPerforming(false)],
+    ["a switch to Chop", () => useAppStore.getState().actions.setAppMode("chop")],
+  ])("stopping a performance through %s saves the mix it committed", async (_label, stop) => {
+    vi.useRealTimers();
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.setAppMode("mood");
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+    await __flushAutoSaveForTesting();
+
+    actions.setMoodPerforming(true, 4);
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "off" }]);
+    stop();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    await __flushAutoSaveForTesting();
+    stopAutoSave();
+    actions.reset();
+
+    const loaded = await rehydrateMoodFromStorage();
+    if (!loaded.ok || !loaded.piece) throw new Error("Expected a saved Mood piece");
+    expect(loaded.piece.savedSelections?.["mic-0"]).toBe("off");
+  });
+
   it("round-trips an off mic through the real Mood save and rehydrate path", async () => {
     vi.useRealTimers();
     startAutoSave();

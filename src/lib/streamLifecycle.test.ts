@@ -51,7 +51,10 @@ import { __resetRecordingInterruptHandlersForTesting } from "./recordingInterrup
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 import { startAutoSave, stopAutoSave } from "./autoSave";
-import { clearProject, loadProject } from "./persistence";
+import { clearProject, loadProject, persistenceStore } from "./persistence";
+import { clearMoodPiece, MOOD_KEY, saveMoodPiece } from "./moodPersistence";
+import { makeMoodTake } from "../test-utils/moodFixtures";
+import { get } from "idb-keyval";
 
 class FakeTrack extends EventTarget {
   kind: "video" | "audio";
@@ -831,6 +834,45 @@ describe("streamLifecycle", () => {
       });
       expect(getLogs().some((entry) => entry.event === LOG_EVENTS.AUTOSAVE_FLUSH)).toBe(true);
       detach();
+    });
+
+    it("on pagehide: flushes the mix a stopped Mood performance committed", async () => {
+      vi.mocked(Tone.getTransport).mockReturnValue({
+        stop: vi.fn(),
+      } as unknown as ReturnType<typeof Tone.getTransport>);
+      const actions = useAppStore.getState().actions;
+      actions.createMoodPiece("row", "pocket");
+      actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+      actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+      await saveMoodPiece(
+        useAppStore.getState().mood.piece!,
+        useAppStore.getState().mood.performance.selections,
+      );
+      startAutoSave();
+      actions.setMoodPerforming(true, 4);
+      actions.commitMoodSelections([{ micId: "mic-0", entry: "off" }]);
+      const unregister = registerPerformanceInterruptHandler({
+        isActive: () => useAppStore.getState().mood.performance.isPerforming,
+        interrupt: () => actions.setMoodPerforming(false),
+      });
+      const detach = installVisibilityListener();
+
+      window.dispatchEvent(new Event("pagehide"));
+
+      // Well inside the 500 ms debounce: only a flush can have written it.
+      await vi.waitFor(
+        async () => {
+          const saved = (await get(MOOD_KEY, persistenceStore())) as {
+            savedSelections?: Record<string, string>;
+          };
+          expect(saved.savedSelections?.["mic-0"]).toBe("off");
+        },
+        { timeout: 300 },
+      );
+      detach();
+      unregister();
+      __resetPerformanceInterruptHandlersForTesting();
+      await clearMoodPiece();
     });
 
     it("on pagehide: flushes a pending autosave and suspends held media like hidden", async () => {
