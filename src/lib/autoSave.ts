@@ -92,7 +92,13 @@ function persistScope(scope: AutoSaveScope): Promise<void> {
     write = saveMoodPiece(state.mood.piece, savedMoodSelectionsSnapshot(state));
   } else if (moodClearRequested) {
     moodClearRequested = false;
-    write = clearMoodPiece();
+    write = clearMoodPiece().catch((err: unknown) => {
+      // The clear stays owed, or the scratched piece comes back on reload;
+      // the next save of any scope carries it.
+      moodClearRequested = true;
+      dirtyScopes.mood = true;
+      throw err;
+    });
   } else {
     // No piece and no scratch: nothing of Mood's to write.
     write = Promise.resolve();

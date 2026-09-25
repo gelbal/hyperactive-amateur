@@ -214,6 +214,26 @@ describe("autoSave", () => {
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
   });
 
+  it("retries a failed Mood scratch clear on the next save", async () => {
+    vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    const clearMoodSpy = vi
+      .spyOn(moodPersistence, "clearMoodPiece")
+      .mockRejectedValueOnce(new Error("database connection is closing"))
+      .mockResolvedValue(undefined);
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+    startAutoSave();
+
+    useAppStore.getState().actions.scratchMoodPiece();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(clearMoodSpy).toHaveBeenCalledTimes(1);
+
+    // Any later save carries the owed clear.
+    useAppStore.getState().actions.setBpm(130);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(clearMoodSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("Chop and Mood dirty scopes coalesce independently", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
     const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
