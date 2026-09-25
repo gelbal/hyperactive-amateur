@@ -1,7 +1,7 @@
 // ABOUTME: applyClassifiedTag — single point of "AI says this track is tag X" → store mutation.
 // ABOUTME: Honors manual tag picks and manual showVideo toggles so an auto-tag result never silently steamrolls a user choice.
 import { useAppStore } from "../store/useAppStore";
-import type { Tag } from "../types";
+import type { Clip, Tag } from "../types";
 
 export interface ApplyClassifiedTagOutcome {
   applied: boolean;
@@ -16,13 +16,21 @@ export interface ApplyClassifiedTagOutcome {
 // category — without it, a track previously system-flipped to audio-only
 // as a hat would stay hidden after being re-classified as
 // kick / snare / vocal / fx.
+// classifiedClip: the clip the result describes. A classification takes
+// seconds, and the clip may be deleted or re-recorded meanwhile; the late
+// result must not tag the empty track or the newer take.
 export function applyClassifiedTag(
   trackId: number,
   tag: Tag,
   reasoning?: string | null,
+  classifiedClip?: Clip,
 ): ApplyClassifiedTagOutcome {
   const state = useAppStore.getState();
-  if (state.playback.isExporting || !state.project.tracks[trackId]) {
+  const track = state.project.tracks[trackId];
+  if (state.playback.isExporting || !track) {
+    return { applied: false, hatAudioOnly: false };
+  }
+  if (classifiedClip && track.clip !== classifiedClip) {
     return { applied: false, hatAudioOnly: false };
   }
   if (state.session.manuallyTagged.includes(trackId)) {

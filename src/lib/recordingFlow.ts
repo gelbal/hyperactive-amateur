@@ -333,7 +333,7 @@ async function runFlow(
       trimStartMs,
       trimEndMs,
     );
-    void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
+    void runAutoTag(trackId, newClip, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {
@@ -354,6 +354,7 @@ async function runFlow(
 
 async function runAutoTag(
   trackId: number,
+  clip: Clip,
   audioBuffer: AudioBuffer,
   onEvent?: (event: AutoTagEvent) => void,
 ): Promise<void> {
@@ -381,6 +382,7 @@ async function runAutoTag(
     trackId,
     result.tag,
     result.reasoning,
+    clip,
   );
   if (!applied) {
     // User picked a tag while we were thinking — keep their choice and

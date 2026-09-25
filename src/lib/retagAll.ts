@@ -11,7 +11,7 @@ import {
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { logger, LOG_EVENTS } from "./logger";
 import { applyClassifiedTag } from "./applyClassifiedTag";
-import type { Tag } from "../types";
+import type { Clip, Tag } from "../types";
 
 export interface RetagResult {
   ok: boolean;
@@ -39,6 +39,9 @@ const defaultDeps: RetagDeps = {
 interface PopulatedTrack {
   trackId: number;
   audioBuffer: AudioBuffer;
+  // The clip classified, so a result that lands after it was deleted or
+  // re-recorded is dropped.
+  clip: Clip;
 }
 
 function populatedTracks(): PopulatedTrack[] {
@@ -49,6 +52,7 @@ function populatedTracks(): PopulatedTrack[] {
       if (!clip?.audioBuffer) return [];
       return [{
         trackId: t.id,
+        clip,
         // Trim around the actual sound — silence on either side dilutes the
         // classifier and inflates the inline payload size estimate.
         audioBuffer: sliceAudioBuffer(
@@ -72,7 +76,8 @@ interface Classification {
   reasoning?: string;
 }
 
-function applyAcceptedTags(items: Classification[]): number {
+function applyAcceptedTags(items: Classification[], tracks: PopulatedTrack[]): number {
+  const clips = new Map(tracks.map((t) => [t.trackId, t.clip]));
   let tagged = 0;
   for (const item of items) {
     if (item.confidence < AUTO_TAG_CONFIDENCE_THRESHOLD) {
@@ -84,7 +89,7 @@ function applyAcceptedTags(items: Classification[]): number {
       });
       continue;
     }
-    const { applied } = applyClassifiedTag(item.trackId, item.tag, item.reasoning);
+    const { applied } = applyClassifiedTag(item.trackId, item.tag, item.reasoning, clips.get(item.trackId));
     if (applied) tagged++;
   }
   return tagged;
@@ -119,7 +124,7 @@ export async function retagAllClipsWith(
   const batchResult = await deps.batch(tracks, signal);
   if (signal?.aborted) return cancelled(tracks.length);
   if (batchResult) {
-    return completion("batch", applyAcceptedTags(batchResult), tracks.length);
+    return completion("batch", applyAcceptedTags(batchResult, tracks), tracks.length);
   }
 
   logger.warn(LOG_EVENTS.RETAG_FALLBACK, { mode: "per-clip", count: tracks.length });
@@ -148,7 +153,7 @@ export async function retagAllClipsWith(
     });
     return { ok: false, tagged: 0, reason: "offline" };
   }
-  return completion("per-clip", applyAcceptedTags(accepted), tracks.length);
+  return completion("per-clip", applyAcceptedTags(accepted, tracks), tracks.length);
 }
 
 export function retagAllClips(signal?: AbortSignal): Promise<RetagResult> {
