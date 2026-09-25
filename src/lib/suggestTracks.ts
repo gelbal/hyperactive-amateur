@@ -13,6 +13,8 @@ export function suggestTracks(
     // clearTrackClip keeps the tag, so the clip decides: a cleared track
     // plays a kit voice again and is described as one.
     tag: t.clip ? t.tag : KIT[t.id].tag,
-    reasoning: tagReasoning[t.id] ?? null,
+    // An empty row says it is a built-in drum with no video, so the model
+    // does not carry the groove on rows that never cut the picture.
+    reasoning: t.clip ? (tagReasoning[t.id] ?? null) : `built-in ${KIT[t.id].name}, no video`,
   }));
 }

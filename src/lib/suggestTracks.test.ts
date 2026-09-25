@@ -39,8 +39,10 @@ describe("suggestTracks", () => {
     // A clip without a tag is still untagged.
     expect(rows[1]).toEqual({ id: 1, tag: null, reasoning: null });
     // Clearing kept "fx" in the store; the track plays the snare voice again.
-    expect(rows[2]).toEqual({ id: 2, tag: "snare", reasoning: null });
-    expect(rows[4]).toEqual({ id: 4, tag: "kick", reasoning: null });
+    // Empty rows say what they are, so the model does not carry the groove
+    // on drums that never cut the video.
+    expect(rows[2]).toEqual({ id: 2, tag: "snare", reasoning: "built-in snare, no video" });
+    expect(rows[4]).toEqual({ id: 4, tag: "kick", reasoning: "built-in kick 2, no video" });
     expect(rows).toHaveLength(8);
     expect(useAppStore.getState().project.tracks[2].tag).toBe("fx");
   });

@@ -153,6 +153,9 @@ describe("App autosave gating", () => {
     // are the row's own items; at lg it is a right-aligned column.
     const wrapper = playWrapper.parentElement as HTMLElement;
     expect(wrapper).toHaveClass("contents", "lg:flex", "lg:flex-col", "lg:items-end", "lg:gap-3");
+    // If a wide Suggest error wraps the column under the title, it stays
+    // right-aligned instead of dropping to the left edge.
+    expect(wrapper).toHaveClass("lg:ml-auto");
     expect(wrapper.parentElement).toBe(row);
     // A full-width controls row is its own line: no breaker needed.
     expect(row.querySelector(".basis-full")).toBeNull();

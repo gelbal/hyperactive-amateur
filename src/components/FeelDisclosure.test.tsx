@@ -1,6 +1,10 @@
 // ABOUTME: FeelDisclosure test — Scratch is a destructive action; it must take a second click to confirm.
 import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
-import { afterEach, describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+
+const audioMocks = vi.hoisted(() => ({ stopPlayback: vi.fn() }));
+vi.mock("../lib/audio", () => ({ stopPlayback: audioMocks.stopPlayback }));
+
 import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
@@ -139,5 +143,17 @@ describe("FeelDisclosure", () => {
     fireEvent.click(screen.getByLabelText("Confirm scratch"));
     expect(useAppStore.getState().project.bpm).toBe(90);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+  });
+
+  it("Scratch while playing stops the transport first, so no loop keeps running with Play gone", () => {
+    audioMocks.stopPlayback.mockClear();
+    act(() => useAppStore.getState().actions.setIsPlaying(true));
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    fireEvent.click(screen.getByLabelText("Scratch: start fresh"));
+    fireEvent.click(screen.getByLabelText("Confirm scratch"));
+
+    expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
   });
 });

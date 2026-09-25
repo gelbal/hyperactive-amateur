@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Sliders, Trash2 } from "lucide-react";
 import { useAppStore, selectClipCount } from "../store/useAppStore";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
+import { stopPlayback } from "../lib/audio";
 import { BpmDial } from "./BpmDial";
 import { SwingSlider } from "./SwingSlider";
 import { CutSubdivisionSelect } from "./CutSubdivisionSelect";
@@ -148,6 +149,10 @@ function ScratchControl({ onScratched }: ScratchControlProps) {
         <button
           type="button"
           onClick={() => {
+            // Scratch clears every clip, which takes Play away; a running
+            // transport would keep looping with no button left to stop it.
+            const { isPlaying, isExporting } = useAppStore.getState().playback;
+            if (isPlaying && !isExporting) stopPlayback();
             useAppStore.getState().actions.scratch();
             setArmed(false);
             onScratched();

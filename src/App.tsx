@@ -136,7 +136,7 @@ export function App() {
               arrive; Play needs no reservation, the title block is taller
               than it at every width. */}
           {(showControls || hydrating) && (
-            <div className="contents lg:flex lg:flex-col lg:items-end lg:gap-3">
+            <div className="contents lg:flex lg:flex-col lg:items-end lg:gap-3 lg:ml-auto">
               {showControls && (
                 <div className="shrink-0">
                   <PlayButton />
