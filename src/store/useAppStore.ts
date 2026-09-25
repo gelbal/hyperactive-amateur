@@ -78,6 +78,8 @@ export interface AppActions {
     expectedClip?: Clip,
   ) => void;
   clearTrackClip: (trackId: number) => void;
+  deleteTrackClip: (trackId: number) => void;
+  setTrackVoice: (trackId: number, voice: string) => void;
   setTrackTag: (
     trackId: number,
     tag: Tag | null,
@@ -115,6 +117,11 @@ export type AppStore = AppState & { actions: AppActions };
 
 export const selectClipCount = (s: AppStore): number =>
   s.project.tracks.reduce((n, t) => (t.clip ? n + 1 : n), 0);
+
+// Pads, grid and transport show once the project has had something to play,
+// and stay after the last clip is deleted (the drum kit still plays).
+export const selectEditorOpen = (s: Pick<AppState, "project" | "session">): boolean =>
+  s.session.editorUnlocked || s.project.tracks.some((t) => t.clip);
 
 export const useAppStore = create<AppStore>((set) => ({
   ...createInitialState(),
@@ -324,7 +331,7 @@ export const useAppStore = create<AppStore>((set) => ({
                 : track,
             ),
           },
-          session: bumpProjectRevision(state.session),
+          session: { ...bumpProjectRevision(state.session), editorUnlocked: true },
         };
       }),
 
@@ -431,6 +438,64 @@ export const useAppStore = create<AppStore>((set) => ({
             ...bumpProjectRevision(state.session),
             recordingStationDismissed: false,
           },
+        };
+      }),
+
+    // Frees a track for its drum voice. Unlike clearTrackClip (Re-record),
+    // it never opens the recording station, and it drops the clip's tag,
+    // reasoning and manual-tag ownership: the next clip on this track starts
+    // fresh. The voice, steps, volume, showVideo and a user mute stay.
+    deleteTrackClip: (trackId) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const previous = state.project.tracks[trackId]?.clip;
+        if (!previous) return state;
+        if (previous.url) URL.revokeObjectURL(previous.url);
+        if (previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
+        // Recording every track without pressing Done leaves the station
+        // undismissed but hidden (no empty track); the first empty track
+        // would open it. Dismiss it in that case; an open station stays.
+        const hadEmptyTrack = state.project.tracks.some((track) => !track.clip);
+        return {
+          project: {
+            ...state.project,
+            tagReasoning:
+              trackId in state.project.tagReasoning
+                ? omitKey(state.project.tagReasoning, trackId)
+                : state.project.tagReasoning,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId
+                ? {
+                    ...track,
+                    clip: null,
+                    tag: null,
+                    blobRevision: (track.blobRevision ?? 0) + 1,
+                    // A mute the audio repair set was for the broken clip.
+                    muted: track.mutedByRepair ? false : track.muted,
+                    mutedByRepair: false,
+                  }
+                : track,
+            ),
+          },
+          session: {
+            ...bumpProjectRevision(state.session),
+            manuallyTagged: state.session.manuallyTagged.filter((id) => id !== trackId),
+            recordingStationDismissed: hadEmptyTrack ? state.session.recordingStationDismissed : true,
+          },
+        };
+      }),
+
+    setTrackVoice: (trackId, voice) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        return {
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === trackId ? { ...track, voice } : track,
+            ),
+          },
+          session: bumpProjectRevision(state.session),
         };
       }),
 
@@ -600,6 +665,7 @@ export const useAppStore = create<AppStore>((set) => ({
         // (and its permission gate) on reload until they explicitly opt back
         // in via "Record more" or "Re-record".
         const hasAnyClip = project.tracks.some((t) => t.clip);
+        const hasAnything = hasAnyClip || project.tracks.some((t) => t.steps.some(Boolean));
         const normalizedProject = {
           ...project,
           tracks: project.tracks.map((track) => ({
@@ -615,6 +681,7 @@ export const useAppStore = create<AppStore>((set) => ({
             ...bumpProjectRevision(state.session),
             ...(manuallyTagged ? { manuallyTagged: [...manuallyTagged] } : {}),
             ...(hasAnyClip ? { recordingStationDismissed: true } : {}),
+            editorUnlocked: hasAnything,
           },
         };
       }),

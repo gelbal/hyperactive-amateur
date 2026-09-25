@@ -1,15 +1,19 @@
-// ABOUTME: TrackInfo — left-side per-track panel: label, mic/clip thumbnail, eye toggle, tag picker, auto-tag status.
+// ABOUTME: TrackInfo — left-side per-track panel: sound button or tag label, mic/clip thumbnail, eye toggle, tag picker or clip actions, auto-tag status.
 // ABOUTME: Sticky in the StepGrid left column so the cells can scroll horizontally while track info stays visible.
 import { useEffect, useRef, useState } from "react";
-import { Mic, Eye, EyeOff } from "lucide-react";
+import { Mic, Eye, EyeOff, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
-import { KIT } from "../lib/drumKit";
+import { nextVoiceId, voiceFor } from "../lib/drumKit";
+import { triggerTrackNow } from "../lib/audio";
+import { runAudibleAction } from "../lib/audibleActionRunner";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { AI_OFFLINE_COPY } from "../lib/aiOffline";
 import type { Clip, Tag } from "../types";
 
 const AUTO_TAG_TOAST_MS = 3000;
+// Re-record / Delete close on their own after this long.
+const CLIP_ACTIONS_MS = 5000;
 type AutoTagState =
   | { kind: "idle" }
   | { kind: "tagging" }
@@ -26,6 +30,10 @@ interface TrackInfoProps {
 export function TrackInfo({ trackId }: TrackInfoProps) {
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
+  const voiceId = useAppStore((s) => s.project.tracks[trackId].voice);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const isPlaying = useAppStore((s) => s.playback.isPlaying);
+  const [clipActionsOpen, setClipActionsOpen] = useState(false);
   const recordingState = useAppStore((s) => s.recording.state);
   const activeTrackId = useAppStore((s) => s.recording.activeTrackId);
   const recordingError = useAppStore((s) => s.recording.error);
@@ -50,6 +58,17 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!clipActionsOpen) return;
+    const id = window.setTimeout(() => setClipActionsOpen(false), CLIP_ACTIONS_MS);
+    return () => window.clearTimeout(id);
+  }, [clipActionsOpen]);
+
+  // A new or deleted clip, or playback starting, closes Re-record / Delete.
+  useEffect(() => {
+    setClipActionsOpen(false);
+  }, [clip, isPlaying]);
 
   useEffect(() => {
     if (recordingState === "preparing" && activeTrackId !== trackId) {
@@ -98,27 +117,53 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     });
   };
 
-  // clearTrackClip keeps the tag, so the clip decides: an empty track names
-  // the kit voice it plays, lower-case in grey; a tagged clip shows its tag
-  // upper-case in orange.
+  // clearTrackClip keeps the tag, so the clip decides: an empty track shows
+  // the kit voice it plays as a button that changes it; a recorded track
+  // shows its tag upper-case in orange (or Tn).
   const clipTag = clip ? tag : null;
-  const label = !clip ? KIT[trackId].name : clipTag ? clipTag.toUpperCase() : `T${trackId + 1}`;
+  const voice = voiceFor({ id: trackId, voice: voiceId });
+
+  // Read the store fresh, so quick taps each move one sound on. The audition
+  // goes through the audible gate: nothing sounds while playing, recording
+  // or exporting (the next step plays the new sound).
+  const changeSound = () => {
+    const track = useAppStore.getState().project.tracks[trackId];
+    useAppStore.getState().actions.setTrackVoice(trackId, nextVoiceId(voiceFor(track).id));
+    runAudibleAction(triggerTrackNow(trackId));
+  };
 
   return (
     <div className="h-12 flex items-center gap-2 pr-2">
-      <span
-        className={
-          "w-14 text-sm font-mono " + (clipTag ? "text-orange-400" : "text-zinc-400")
-        }
-        title={!clip || clipTag ? `Track ${trackId + 1}` : undefined}
-      >
-        {label}
+      {clip ? (
+        <span
+          className={"w-14 text-sm font-mono " + (clipTag ? "text-orange-400" : "text-zinc-400")}
+          title={clipTag ? `Track ${trackId + 1}` : undefined}
+        >
+          {clipTag ? clipTag.toUpperCase() : `T${trackId + 1}`}
+        </span>
+      ) : (
+        <button
+          type="button"
+          aria-label={`Change sound for track ${trackId + 1}, now ${voice.name}`}
+          title="Tap to change the sound"
+          disabled={isExporting}
+          onClick={changeSound}
+          className="w-14 h-12 shrink-0 px-1 rounded border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono leading-tight text-zinc-300 flex items-center justify-center text-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {voice.name}
+        </button>
+      )}
+      {/* Announces a new sound even when nothing plays (during playback). */}
+      <span className="sr-only" aria-live="polite">
+        {clip ? "" : `track ${trackId + 1} sound: ${voice.name}`}
       </span>
       <div className="w-12 h-12 flex items-center justify-center">
         {clip ? (
           <ClipThumbnail
             clip={clip}
-            onClear={() => useAppStore.getState().actions.clearTrackClip(trackId)}
+            trackId={trackId}
+            actionsOpen={clipActionsOpen}
+            onToggleActions={() => setClipActionsOpen((open) => !open)}
           />
         ) : (
           <button
@@ -137,7 +182,25 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
         )}
       </div>
       <ShowVideoToggle trackId={trackId} />
-      {clip ? <TagPicker trackId={trackId} selected={tag} /> : <div className="w-24 shrink-0" />}
+      {clip ? (
+        clipActionsOpen ? (
+          <ClipActions
+            trackId={trackId}
+            onReRecord={() => {
+              setClipActionsOpen(false);
+              useAppStore.getState().actions.clearTrackClip(trackId);
+            }}
+            onDelete={() => {
+              setClipActionsOpen(false);
+              useAppStore.getState().actions.deleteTrackClip(trackId);
+            }}
+          />
+        ) : (
+          <TagPicker trackId={trackId} selected={tag} />
+        )
+      ) : (
+        <div className="w-24 shrink-0" />
+      )}
       {clip?.audioStatus === "unavailable" ? (
         <span className="w-40 shrink-0 text-[10px] text-amber-300">
           audio unavailable — re-record
@@ -246,12 +309,24 @@ function TagPicker({ trackId, selected }: TagPickerProps) {
 
 interface ClipThumbnailProps {
   clip: Clip;
-  onClear: () => void;
+  trackId: number;
+  actionsOpen: boolean;
+  onToggleActions: () => void;
 }
 
-function ClipThumbnail({ clip, onClear }: ClipThumbnailProps) {
+// A tap opens Re-record / Delete beside it, so no single tap destroys a take.
+function ClipThumbnail({ clip, trackId, actionsOpen, onToggleActions }: ClipThumbnailProps) {
   return (
-    <div className="relative group w-12 h-12">
+    <button
+      type="button"
+      aria-label={`clip actions for track ${trackId + 1}`}
+      aria-expanded={actionsOpen}
+      onClick={onToggleActions}
+      className={
+        "relative group w-12 h-12 rounded " +
+        (actionsOpen ? "ring-2 ring-orange-500" : "")
+      }
+    >
       {clip.posterUrl ? (
         <img
           src={clip.posterUrl}
@@ -267,13 +342,50 @@ function ClipThumbnail({ clip, onClear }: ClipThumbnailProps) {
           <Mic size={18} className="text-zinc-600" />
         </div>
       )}
+      <span
+        aria-hidden
+        data-clip-actions-hint
+        className={
+          "absolute inset-0 rounded bg-black/60 text-white flex items-center justify-center transition-opacity " +
+          (actionsOpen
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100 any-pointer-coarse:opacity-40 any-pointer-coarse:group-hover:opacity-100")
+        }
+      >
+        <MoreHorizontal size={18} />
+      </span>
+    </button>
+  );
+}
+
+interface ClipActionsProps {
+  trackId: number;
+  onReRecord: () => void;
+  onDelete: () => void;
+}
+
+// Sits where the tag chips are while open: two 44 px targets inside the
+// 48 px row, no popover to clip or position.
+function ClipActions({ trackId, onReRecord, onDelete }: ClipActionsProps) {
+  return (
+    <div className="w-24 shrink-0 flex gap-1">
       <button
         type="button"
-        aria-label="re-record"
-        onClick={onClear}
-        className="absolute inset-0 rounded bg-black/60 text-xs text-white opacity-0 group-hover:opacity-100 any-pointer-coarse:opacity-40 any-pointer-coarse:group-hover:opacity-100 transition-opacity"
+        aria-label={`re-record track ${trackId + 1}`}
+        onClick={onReRecord}
+        className="flex-1 h-11 rounded border border-zinc-600 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
       >
-        Re-record
+        <RotateCcw size={14} aria-hidden />
+        redo
+      </button>
+      <button
+        type="button"
+        aria-label={`delete clip on track ${trackId + 1}`}
+        onClick={onDelete}
+        className="flex-1 h-11 rounded border border-red-700 bg-red-950 hover:bg-red-900 text-red-200 text-[10px] flex flex-col items-center justify-center gap-0.5"
+      >
+        <Trash2 size={14} aria-hidden />
+        delete
       </button>
     </div>
   );

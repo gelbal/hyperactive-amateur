@@ -18,7 +18,7 @@ import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { __resetMediaForTesting } from "../lib/media";
 import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
 import type { Clip } from "../types";
-import { useAppStore } from "./useAppStore";
+import { selectEditorOpen, useAppStore } from "./useAppStore";
 
 const get = () => useAppStore.getState();
 
@@ -437,6 +437,121 @@ describe("useAppStore", () => {
     });
     expect(get().project.tracks[trackId].muted).toBe(true);
   }
+
+  describe("sound choice and delete", () => {
+    beforeEach(() => {
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    });
+
+    it("setTrackVoice stores the choice and stales pending AI results; it is frozen while exporting", () => {
+      const before = get().session.projectRevision;
+      get().actions.setTrackVoice(4, "cowbell");
+      expect(get().project.tracks[4].voice).toBe("cowbell");
+      expect(get().session.projectRevision).toBeGreaterThan(before);
+
+      get().actions.setIsExporting(true);
+      get().actions.setTrackVoice(4, "rim");
+      expect(get().project.tracks[4].voice).toBe("cowbell");
+      get().actions.setIsExporting(false);
+    });
+
+    it("a recorded clip keeps the track's sound choice underneath it", () => {
+      get().actions.setTrackVoice(2, "clap");
+      get().actions.setTrackClip(2, makeClip());
+      expect(get().project.tracks[2].voice).toBe("clap");
+    });
+
+    it("deleteTrackClip empties the track for its sound and keeps the user's settings", () => {
+      const actions = get().actions;
+      actions.setTrackClip(0, makeClip({ url: "blob:test/a", posterUrl: "blob:test/a-poster" }));
+      actions.setTrackClip(1, makeClip({ url: "blob:test/b" }));
+      actions.setTrackTag(1, "vocal");
+      actions.setTrackTagReasoning(1, "a breathy ah");
+      actions.setTrackVoice(1, "rim");
+      actions.toggleStep(1, 3);
+      actions.setTrackVolume(1, 0.5);
+      actions.setTrackShowVideo(1, false);
+      actions.setTrackMuted(1, true);
+      const revision = get().session.projectRevision;
+      const blobRevision = get().project.tracks[1].blobRevision ?? 0;
+
+      actions.deleteTrackClip(1);
+
+      const track = get().project.tracks[1];
+      expect(track.clip).toBeNull();
+      expect(track.tag).toBeNull();
+      expect(get().project.tagReasoning[1]).toBeUndefined();
+      expect(get().session.manuallyTagged).not.toContain(1);
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test/b");
+      expect(track.blobRevision).toBe(blobRevision + 1);
+      expect(get().session.projectRevision).toBeGreaterThan(revision);
+      expect(track.voice).toBe("rim");
+      expect(track.steps[3]).toBe(true);
+      expect(track.volume).toBe(0.5);
+      expect(track.showVideo).toBe(false);
+      expect(track.muted).toBe(true);
+      expect(get().project.tracks[0].clip).not.toBeNull();
+    });
+
+    it("deleteTrackClip never opens the recording station", () => {
+      const actions = get().actions;
+      // Every track recorded without pressing Done: the station is not
+      // dismissed, only hidden for lack of an empty track.
+      for (let i = 0; i < 8; i++) actions.setTrackClip(i, makeClip({ url: `blob:test/${i}` }));
+      expect(get().session.recordingStationDismissed).toBe(false);
+
+      actions.deleteTrackClip(5);
+      expect(get().session.recordingStationDismissed).toBe(true);
+    });
+
+    it("deleteTrackClip keeps an already-open station open", () => {
+      const actions = get().actions;
+      actions.setTrackClip(0, makeClip({ url: "blob:test/0" }));
+      actions.setTrackClip(1, makeClip({ url: "blob:test/1" }));
+      expect(get().session.recordingStationDismissed).toBe(false);
+
+      actions.deleteTrackClip(0);
+      expect(get().session.recordingStationDismissed).toBe(false);
+    });
+
+    it("deleteTrackClip releases a repair mute", () => {
+      hydrateRepairMutedTrack(0);
+      get().actions.deleteTrackClip(0);
+      expect(get().project.tracks[0].muted).toBe(false);
+    });
+
+    it("deleteTrackClip is frozen while exporting", () => {
+      get().actions.setTrackClip(0, makeClip());
+      get().actions.setIsExporting(true);
+      get().actions.deleteTrackClip(0);
+      expect(get().project.tracks[0].clip).not.toBeNull();
+      get().actions.setIsExporting(false);
+    });
+
+    it("the editor opens with the first clip and stays open after the last clip is deleted, until reset", () => {
+      expect(selectEditorOpen(get())).toBe(false);
+      get().actions.setTrackClip(0, makeClip());
+      expect(selectEditorOpen(get())).toBe(true);
+
+      get().actions.deleteTrackClip(0);
+      expect(selectEditorOpen(get())).toBe(true);
+
+      get().actions.reset();
+      expect(selectEditorOpen(get())).toBe(false);
+    });
+
+    it("a hydrated project with steps but no clips opens the editor; an empty one does not", () => {
+      const empty = get().project;
+      get().actions.hydrateProject(empty);
+      expect(selectEditorOpen(get())).toBe(false);
+
+      get().actions.hydrateProject({
+        ...empty,
+        tracks: empty.tracks.map((t) => (t.id === 2 ? { ...t, steps: t.steps.map((_, i) => i === 0) } : t)),
+      });
+      expect(selectEditorOpen(get())).toBe(true);
+    });
+  });
 
   it("re-recording over a repair-muted clip clears the repair mute", () => {
     hydrateRepairMutedTrack(0);

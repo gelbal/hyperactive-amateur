@@ -103,6 +103,13 @@ describe("useSpacebarPlayToggle", () => {
     expect(togglePlayback).toHaveBeenCalledTimes(1);
   });
 
+  it("still toggles after the last clip is deleted (the kit keeps playing)", () => {
+    render(<Harness />);
+    useAppStore.getState().actions.deleteTrackClip(0);
+    pressSpace();
+    expect(togglePlayback).toHaveBeenCalledTimes(1);
+  });
+
   it("swallows audio-unavailable Space rejections", async () => {
     togglePlayback.mockRejectedValueOnce(new audioLifecycleMocks.AudioUnavailableError());
     render(<Harness />);

@@ -46,6 +46,10 @@ export interface Track {
   // When false, the track fires audio but does not cause a viewport cut.
   // Hats/ghost notes typically benefit from this. Default true.
   showVideo: boolean;
+  // Id of the drum-kit voice the track plays while it has no clip
+  // (drumKit.ts). Undefined means the default for the track's position.
+  // Kept under a recorded clip, so deleting the clip brings it back.
+  voice?: string;
 }
 
 export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
@@ -160,6 +164,11 @@ export interface SessionSlice {
   // True after the user has clicked "Done" on the in-viewport recording
   // walkthrough; the station goes away until they re-open it. Transient.
   recordingStationDismissed: boolean;
+  // True once the project has had something to play (a clip, or on load a
+  // clip or a step): the pads, grid and transport stay available after the
+  // last clip is deleted, so a drums-only beat remains editable. Cleared by
+  // reset and Scratch. Transient.
+  editorUnlocked: boolean;
 }
 
 export interface AppState {

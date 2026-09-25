@@ -42,8 +42,14 @@ describe("suggestTracks", () => {
     // Empty rows say what they are, so the model does not carry the groove
     // on drums that never cut the video.
     expect(rows[2]).toEqual({ id: 2, tag: "snare", reasoning: "built-in snare, no video" });
-    expect(rows[4]).toEqual({ id: 4, tag: "kick", reasoning: "built-in kick 2, no video" });
+    expect(rows[4]).toEqual({ id: 4, tag: "kick", reasoning: "built-in thump, no video" });
     expect(rows).toHaveLength(8);
     expect(useAppStore.getState().project.tracks[2].tag).toBe("fx");
+  });
+
+  it("describes an empty track by the sound the user picked for it", () => {
+    useAppStore.getState().actions.setTrackVoice(5, "cowbell");
+    const rows = suggestTracks(useAppStore.getState().project.tracks, {});
+    expect(rows[5]).toEqual({ id: 5, tag: "fx", reasoning: "built-in cowbell, no video" });
   });
 });

@@ -30,8 +30,8 @@ vi.mock("./lib/useSpacebarPlayToggle", () => ({ useSpacebarPlayToggle: vi.fn() }
 vi.mock("./lib/useKeyboardTriggers", () => ({ useKeyboardTriggers: vi.fn() }));
 vi.mock("./lib/aiSuggest", () => ({ AI_UNLOCK_CLIPS: 3 }));
 vi.mock("./components/Viewport", () => ({ Viewport: () => null }));
-vi.mock("./components/PadGrid", () => ({ PadGrid: () => null }));
-vi.mock("./components/StepGrid", () => ({ StepGrid: () => null }));
+vi.mock("./components/PadGrid", () => ({ PadGrid: () => <div data-testid="pad-grid" /> }));
+vi.mock("./components/StepGrid", () => ({ StepGrid: () => <div data-testid="step-grid" /> }));
 vi.mock("./components/PlayButton", () => ({ PlayButton: () => <div data-testid="play-button" /> }));
 vi.mock("./components/BpmDial", () => ({ BpmDial: () => <div data-testid="bpm-dial" /> }));
 vi.mock("./components/ExportButton", () => ({ ExportButton: () => <div data-testid="export-button" /> }));
@@ -178,7 +178,19 @@ describe("App autosave gating", () => {
     expect(order).toEqual(["export-button", "feel-button", "suggest-button"]);
   });
 
-  it("keeps Play and the controls while playing after the last clip goes; drops them on stop", async () => {
+  it("keeps Play, the pads and the grid after the last clip is deleted, so a drums-only beat stays editable", async () => {
+    seedClips(1);
+    await renderApp();
+
+    act(() => useAppStore.getState().actions.deleteTrackClip(0));
+
+    expect(screen.getByTestId("play-button")).toBeInTheDocument();
+    expect(screen.getByTestId("pad-grid")).toBeInTheDocument();
+    expect(screen.getByTestId("step-grid")).toBeInTheDocument();
+    expect(screen.queryByText(/Record your first sound/)).not.toBeInTheDocument();
+  });
+
+  it("keeps Play and the controls while playing after the last clip goes, and after stop; reset drops them", async () => {
     seedClips(1);
     await renderApp();
     const actions = useAppStore.getState().actions;
@@ -189,6 +201,10 @@ describe("App autosave gating", () => {
     expect(screen.getByTestId("export-button")).toBeInTheDocument();
 
     act(() => actions.setIsPlaying(false));
+    // The editor stays unlocked after the first clip, so they stay after
+    // stop too; only Scratch returns the header to the title.
+    expect(screen.getByTestId("play-button")).toBeInTheDocument();
+    act(() => actions.reset());
     expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
     expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
   });

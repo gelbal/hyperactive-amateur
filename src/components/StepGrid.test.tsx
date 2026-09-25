@@ -1,4 +1,4 @@
-// ABOUTME: StepGrid tests — cell click toggles store; +4 extends; per-column hover-only minus removes.
+// ABOUTME: StepGrid tests — cell click toggles store; +4 extends; per-column hover-only minus removes; the sound hint shows while a track is empty.
 import { act, render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -30,6 +30,28 @@ describe("StepGrid", () => {
       playback: { ...state.playback, isExporting: false },
     }));
     useAppStore.getState().actions.reset();
+  });
+
+  it("says once, above the rows, that a sound name can be tapped — only while some track is empty", () => {
+    render(<StepGrid />);
+    expect(screen.getByText("tap a sound to change it")).toBeInTheDocument();
+
+    act(() => {
+      for (let i = 0; i < 8; i++) {
+        useAppStore.getState().actions.setTrackClip(i, {
+          blob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+          url: `blob:test/${i}`,
+          audioBuffer: { duration: 1, sampleRate: 48000 } as AudioBuffer,
+          audioStatus: "ok",
+          trimStartMs: 0,
+          trimEndMs: 800,
+          durationMs: 1000,
+          posterBlob: null,
+          posterUrl: null,
+        });
+      }
+    });
+    expect(screen.queryByText("tap a sound to change it")).not.toBeInTheDocument();
   });
 
   it("renders 8 × 16 cells; clicking toggles the store; current step gets highlighted", () => {

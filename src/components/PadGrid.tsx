@@ -2,7 +2,7 @@
 // ABOUTME: Each pad subscribes to playback.triggerSeq[trackId] and flashes briefly on every fire.
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
-import { KIT } from "../lib/drumKit";
+import { voiceFor } from "../lib/drumKit";
 import { triggerTrackNow } from "../lib/audio";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { runAudibleAction } from "../lib/audibleActionRunner";
@@ -18,6 +18,8 @@ function Pad({ trackId }: PadProps) {
   const seq = useAppStore((s) => s.playback.triggerSeq[trackId]);
   const clip = useAppStore((s) => s.project.tracks[trackId].clip);
   const tag = useAppStore((s) => s.project.tracks[trackId].tag);
+  const voice = useAppStore((s) => s.project.tracks[trackId].voice);
+  const voiceName = voiceFor({ id: trackId, voice }).name;
   const canStart = useAppStore(canStartAudibleAction);
   const [flashing, setFlashing] = useState(false);
 
@@ -33,7 +35,7 @@ function Pad({ trackId }: PadProps) {
       type="button"
       // An empty pad plays its kit voice; the name says which, for a screen
       // reader too.
-      aria-label={clip ? `pad ${trackId + 1}` : `pad ${trackId + 1}, ${KIT[trackId].name}`}
+      aria-label={clip ? `pad ${trackId + 1}` : `pad ${trackId + 1}, ${voiceName}`}
       data-flashing={flashing}
       disabled={!canStart}
       onClick={() => runAudibleAction(triggerTrackNow(trackId))}
@@ -63,7 +65,7 @@ function Pad({ trackId }: PadProps) {
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">
           {/* An empty pad plays its kit voice, so it says which. */}
-          {KIT[trackId].name}
+          {voiceName}
         </div>
       )}
       <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-white">

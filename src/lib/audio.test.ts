@@ -77,6 +77,9 @@ vi.mock("tone", () => ({
   NoiseSynth: vi.fn(function NoiseSynth() {
     return makeSynth();
   }),
+  Synth: vi.fn(function Synth() {
+    return makeSynth();
+  }),
   // The hats' high-pass; kept out of synthInstances so its indices stay the
   // track order.
   Filter: vi.fn(function Filter() {
@@ -194,6 +197,32 @@ describe("audio: per-step trigger logic", () => {
     const built = [...synthInstances];
     __resetAudioForTesting();
     for (const synth of built) expect(synth.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a new sound choice builds that voice, retires the old one after its tail, and leaves unchanged tracks alone", () => {
+    vi.useFakeTimers();
+    try {
+      initTransport();
+      const a = useAppStore.getState().actions;
+      const oldThump = synthInstances[4];
+
+      a.setTrackVoice(4, "cowbell");
+      // The cowbell is two tones.
+      expect(synthInstances).toHaveLength(10);
+      expect(oldThump.dispose).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1500);
+      expect(oldThump.dispose).toHaveBeenCalledTimes(1);
+
+      a.toggleStep(4, 0);
+      transportMock.scheduleRepeat.mock.calls[0]?.[0](0);
+      expect(synthInstances[8].triggerAttackRelease).toHaveBeenCalledWith(540, 0.1, 0, 1);
+
+      // Picking the voice a track already plays (its default) builds nothing.
+      a.setTrackVoice(1, "hat");
+      expect(synthInstances).toHaveLength(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not create a player or fallback click for clips with unavailable audio", () => {
