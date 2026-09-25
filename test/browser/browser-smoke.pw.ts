@@ -335,6 +335,21 @@ test("shows no transport before the first clip and suspends camera on hide", asy
   await expect(page.getByText(/Camera disconnected/i)).toBeVisible();
 });
 
+test("blocks keyboard playback during a recording countdown once Play exists", async ({ page }) => {
+  await installBrowserMocks(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await seedOneClipProject(page);
+
+  await page.getByRole("button", { name: "record clip for track 2", exact: true }).click();
+  await expect(page.getByRole("status", { name: "recording countdown" })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Start playback" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop playback" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("status", { name: "recording countdown" })).toHaveCount(0);
+});
+
 test("surfaces export MediaRecorder failures without camera permission", async ({ page }) => {
   await installBrowserMocks(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
