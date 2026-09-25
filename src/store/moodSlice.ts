@@ -334,6 +334,10 @@ export function createMoodActions(hooks: MoodActionHooks): MoodActions {
               ? stopMoodPerformanceState(state.mood.performance)
               : createIdleMoodPerformance(),
           },
+          // Both modes show recording.error; one mode's failure must not
+          // greet the user in the other.
+          recording:
+            state.recording.error === null ? state.recording : { ...state.recording, error: null },
         };
       });
     },

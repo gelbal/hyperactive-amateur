@@ -908,6 +908,17 @@ describe("useAppStore", () => {
       });
     });
 
+    it("clears a recording error on a mode switch so it never shows in the other mode", () => {
+      get().actions.setRecordingError("Recording interrupted — the microphone or camera was taken by another app or call.");
+
+      get().actions.setAppMode("mood");
+      expect(get().recording.error).toBeNull();
+
+      get().actions.setRecordingError("Camera unavailable — try again.");
+      get().actions.setAppMode("chop");
+      expect(get().recording.error).toBeNull();
+    });
+
     it("keeps a failed Mood load failed through a new piece and a scratch", () => {
       get().actions.setMoodHydration("failed");
 
