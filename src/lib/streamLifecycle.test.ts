@@ -43,6 +43,10 @@ import {
   isPendingAudibleCurrent,
 } from "./audibleActionGate";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
+import {
+  __resetPerformanceInterruptHandlersForTesting,
+  registerPerformanceInterruptHandler,
+} from "./performanceInterrupt";
 import { __resetRecordingInterruptHandlersForTesting } from "./recordingInterrupt";
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
@@ -480,6 +484,22 @@ describe("streamLifecycle", () => {
   });
 
   describe("installVisibilityListener", () => {
+    it("on hide: stops a running Mood performance through the performance seam", () => {
+      vi.mocked(Tone.getTransport).mockReturnValue({
+        stop: vi.fn(),
+      } as unknown as ReturnType<typeof Tone.getTransport>);
+      const interrupt = vi.fn();
+      const unregister = registerPerformanceInterruptHandler({ isActive: () => true, interrupt });
+      const detach = installVisibilityListener();
+
+      window.dispatchEvent(new Event("pagehide"));
+
+      expect(interrupt).toHaveBeenCalledTimes(1);
+      detach();
+      unregister();
+      __resetPerformanceInterruptHandlersForTesting();
+    });
+
     it.each([
       {
         name: "visibilitychange hidden",

@@ -16,7 +16,11 @@ import {
   stopMoodTakeEarly,
 } from "../../lib/moodRecordingFlow";
 import { armLens } from "../../lib/moodPerformance";
-import { startMoodPerformance, stopMoodPerformance } from "../../lib/moodTransport";
+import {
+  registerMoodPerformanceInterrupt,
+  startMoodPerformance,
+  stopMoodPerformance,
+} from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useMoodKeys } from "../../lib/useMoodKeys";
 import {
@@ -866,9 +870,11 @@ export function MoodMode() {
 
   useEffect(() => {
     const unregisterMoodRecordingInterrupt = registerMoodRecordingInterrupt();
+    const unregisterMoodPerformanceInterrupt = registerMoodPerformanceInterrupt();
     unmountedRef.current = false;
     return () => {
       unregisterMoodRecordingInterrupt();
+      unregisterMoodPerformanceInterrupt();
       unmountedRef.current = true;
     };
   }, []);

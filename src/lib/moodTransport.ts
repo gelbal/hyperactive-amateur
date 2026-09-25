@@ -12,6 +12,7 @@ import { ensureAudioRunning } from "./audioLifecycle";
 import { getActiveExportSession } from "./exportSession";
 import { initializeMoodFxForPerformance, resetMoodDropFilter } from "./moodFx";
 import { stopAllMoodPlayers } from "./moodPlayers";
+import { registerPerformanceInterruptHandler } from "./performanceInterrupt";
 import {
   createBoundaryQueue,
   cycleIndexAt,
@@ -146,6 +147,15 @@ export async function startMoodPerformanceForExportFlow(): Promise<boolean> {
     return false;
   }
   return startMoodPerformanceTransport();
+}
+
+// Registered from the Mood composition root: a page hide or an audio
+// interruption stops a running performance the way it stops Chop playback.
+export function registerMoodPerformanceInterrupt(): () => void {
+  return registerPerformanceInterruptHandler({
+    isActive: () => useAppStore.getState().mood.performance.isPerforming,
+    interrupt: stopMoodPerformance,
+  });
 }
 
 export function stopMoodPerformance(): void {

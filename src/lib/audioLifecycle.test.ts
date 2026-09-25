@@ -50,6 +50,10 @@ import {
   shouldShowSilentSwitchHint,
 } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
+import {
+  __resetPerformanceInterruptHandlersForTesting,
+  registerPerformanceInterruptHandler,
+} from "./performanceInterrupt";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
@@ -419,6 +423,34 @@ describe("ensureAudioRunning", () => {
         Reflect.deleteProperty(document, "visibilityState");
       }
     }
+  });
+
+  it("stops a running Mood performance through the performance seam and marks resume required", () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const interrupt = vi.fn();
+    const unregister = registerPerformanceInterruptHandler({ isActive: () => true, interrupt });
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("interrupted");
+
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(audioMocks.stopPlayback).not.toHaveBeenCalled();
+    expect(useAppStore.getState().playback.audioState).toBe("resume-required");
+    unregister();
+  });
+
+  it("leaves an export-owned performance to the export abort", () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const interrupt = vi.fn();
+    const unregister = registerPerformanceInterruptHandler({ isActive: () => true, interrupt });
+    useAppStore.getState().actions.setIsExporting(true);
+    detachAudioLifecycle = initAudioLifecycle();
+
+    audioContextStub.setState("interrupted");
+
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(exportSessionMocks.abortActiveExport).toHaveBeenCalledTimes(1);
+    unregister();
   });
 
   it("routes recording-path audio interruptions through the recording interrupt seam", () => {

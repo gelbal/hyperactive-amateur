@@ -62,10 +62,12 @@ import {
   armMoodLensCommit,
   armMoodSelectionCommit,
   consumeDueCommits,
+  registerMoodPerformanceInterrupt,
   startMoodPerformance,
   startMoodPerformanceForExportFlow,
   stopMoodPerformance,
 } from "./moodTransport";
+import { interruptActivePerformance } from "./performanceInterrupt";
 import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
@@ -197,6 +199,25 @@ describe("moodTransport", () => {
     expect(toneHarness.transport.start).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
     expect(claimPendingAudible()).toEqual(expect.any(Function));
+  });
+
+  it("lets a hide or an interruption stop a running performance once registered", async () => {
+    createMoodWithCycle();
+    const unregister = registerMoodPerformanceInterrupt();
+
+    expect(interruptActivePerformance()).toBe(false);
+
+    await startMoodPerformance();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+
+    expect(interruptActivePerformance()).toBe(true);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    expect(toneHarness.transport.stop).toHaveBeenCalled();
+
+    unregister();
+    await startMoodPerformance();
+    expect(interruptActivePerformance()).toBe(false);
+    stopMoodPerformance();
   });
 
   it("rechecks store state after audio unlock before owning the Transport", async () => {
