@@ -387,6 +387,19 @@ describe("moodPlayers", () => {
       expect(incoming.connect).toHaveBeenCalledWith(toneMocks.gains[0]);
     });
 
+    it("schedules a swap once however often it is asked while locked", () => {
+      const { takeA, takeB } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      toneHarness.setImmediate(3.92);
+
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-b", take: takeB }, 4, 0, 2);
+      toneHarness.setImmediate(3.95);
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-b", take: takeB }, 4, 0, 2);
+
+      expect(toneMocks.players).toHaveLength(2);
+      expect(toneMocks.players[0].stop).toHaveBeenCalledTimes(1);
+    });
+
     it("adopts the scheduled player at the commit instead of starting another late", () => {
       const { takeA, takeB } = liveTakes();
       syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
@@ -447,7 +460,7 @@ describe("moodPlayers", () => {
       expect(toneMocks.players[0].stop).not.toHaveBeenCalled();
     });
 
-    it("replaces a scheduled player whose take changed before the commit", () => {
+    it("replaces a scheduled player whose audio changed before the commit, at the audible time", () => {
       const { takeB } = liveTakes();
       toneHarness.setImmediate(3.95);
       scheduleMoodPlayerSwap(null, { takeId: "take-b", take: takeB }, 4, 0, 2);
@@ -458,7 +471,41 @@ describe("moodPlayers", () => {
 
       expect(toneMocks.players).toHaveLength(2);
       expect(toneMocks.players[0].dispose).toHaveBeenCalledTimes(1);
-      expect(toneMocks.players[1].buffer).toBeDefined();
+      // Not one lookahead later: in phase from now, 20 ms later-synced.
+      const [startAt, offset] = toneMocks.players[1].start.mock.calls[0];
+      expect(startAt).toBe(4.01);
+      expect(offset).toBeCloseTo(1.99);
+    });
+
+    it("starts a performance's first players at the epoch, not before it", () => {
+      const { takeA } = liveTakes();
+      // Play: the epoch is the arm clock's now, a lookahead ahead.
+      toneHarness.setImmediate(9.9);
+
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 10, 2);
+
+      expect(toneMocks.players[0].start).toHaveBeenCalledWith(10, 0);
+    });
+
+    it("swaps A to B and back when a paint stall locks both boundaries at once", () => {
+      const { takeA, takeB } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 4);
+      // No frame ran between locking 4 and 8: the first one comes at 7.95.
+      toneHarness.setImmediate(7.95);
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-b", take: takeB }, 4, 0, 4);
+      scheduleMoodPlayerSwap("take-b", { takeId: "take-a", take: takeA }, 8, 0, 4);
+
+      syncMoodPlayers([{ takeId: "take-b", take: takeB }], 0, 4);
+      toneHarness.setImmediate(8.01);
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 4);
+
+      const [liveA, playerB, nextA] = toneMocks.players;
+      expect(liveA.dispose).toHaveBeenCalledTimes(1);
+      expect(playerB.stop).toHaveBeenCalledWith(8);
+      expect(playerB.dispose).toHaveBeenCalledTimes(1);
+      expect(nextA.start).toHaveBeenCalledWith(8, 0);
+      expect(nextA.dispose).not.toHaveBeenCalled();
+      expect(toneMocks.players).toHaveLength(3);
     });
 
     it("disposes a scheduled take that a later locked swap replaces before its commit", () => {

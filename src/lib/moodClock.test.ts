@@ -119,7 +119,7 @@ describe("BoundaryQueue", () => {
     expect(queue.lockedSelectionsAt(4.02)).toEqual([
       { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
     ]);
-    expect(queue.lockedSelectionsAt(8)).toEqual([
+    expect(queue.lockedSelectionsAt(8.01)).toEqual([
       { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
       { type: "selection", micId: "mic-a", entry: "off", boundaryTime: 8 },
       { type: "selection", micId: "mic-b", entry: "take-2", boundaryTime: 8 },
@@ -128,9 +128,22 @@ describe("BoundaryQueue", () => {
       { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
       { type: "lens", lens: "splits", boundaryTime: 4 },
     ]);
-    expect(queue.lockedSelectionsAt(8)).toEqual([
+    expect(queue.lockedSelectionsAt(8.01)).toEqual([
       { type: "selection", micId: "mic-a", entry: "off", boundaryTime: 8 },
       { type: "selection", micId: "mic-b", entry: "take-2", boundaryTime: 8 },
+    ]);
+  });
+
+  it("locks a boundary only once the arm clock is past the window that still lands on it", () => {
+    const queue = createBoundaryQueue();
+
+    // An arm made exactly at the boundary on the arm clock is assigned that
+    // boundary (nextCycleBoundary), so it is not final yet.
+    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4, 4);
+
+    expect(queue.lockedSelectionsAt(4)).toEqual([]);
+    expect(queue.lockedSelectionsAt(4.001)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
     ]);
   });
 

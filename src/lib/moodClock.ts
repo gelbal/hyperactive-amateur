@@ -196,13 +196,15 @@ export function createBoundaryQueue(): BoundaryQueue {
 
       return due.sort(compareBoundaryEvents);
     },
-    // Selections whose boundary the arm clock has reached are final: a
-    // re-arm now lands on a later boundary and this one is held. Listing
-    // them does not drain them.
+    // Past its boundary by more than the window nextBoundary still assigns
+    // to it, a selection is final: a re-arm lands on a later boundary and
+    // this one is held.
     lockedSelectionsAt(now) {
       assertFiniteSeconds("now", now);
 
-      return pendingSelections().filter((event) => event.boundaryTime <= now);
+      return pendingSelections().filter(
+        (event) => event.boundaryTime < now - BOUNDARY_EPSILON_SECONDS,
+      );
     },
     pendingSelections,
   };

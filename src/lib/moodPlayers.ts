@@ -25,6 +25,9 @@ let players = new Map<string, MoodPlayerEntry>();
 // Incoming players already started on the audio clock for a locked boundary
 // swap, keyed by take id, until the paint-path commit makes them live.
 let scheduledPlayers = new Map<string, ScheduledMoodPlayerEntry>();
+// Swaps already handed to the audio clock this performance: the conductor
+// asks every frame while a swap is locked.
+let scheduledSwaps = new Set<string>();
 let captureGain: Tone.Gain | null = null;
 
 function positiveModulo(value: number, divisor: number): number {
@@ -103,7 +106,7 @@ function createMoodPlayer(
   take: MoodTake,
   epoch: number,
   cycleSeconds: number,
-  startAt: number = Tone.now(),
+  startAt: number,
 ): Tone.Player {
   const loopPeriodSeconds = takeLoopPeriod(take.cycleMultiple, cycleSeconds);
   const loopBuffer = buildPaddedLoopBuffer(take, loopPeriodSeconds);
@@ -159,9 +162,16 @@ export function syncMoodPlayers(
       continue;
     }
 
+    // At Play the epoch is still ahead on the audible clock; a replacement
+    // mid-performance starts now, in phase, not one lookahead later.
     players.set(liveTake.takeId, {
       take: liveTake.take,
-      player: createMoodPlayer(liveTake.take, epoch, cycleSeconds),
+      player: createMoodPlayer(
+        liveTake.take,
+        epoch,
+        cycleSeconds,
+        Math.max(epoch, Tone.immediate()),
+      ),
     });
   }
 
@@ -202,6 +212,10 @@ export function scheduleMoodPlayerSwap(
   epoch: number,
   cycleSeconds: number,
 ): void {
+  const swapKey = `${outgoingTakeId ?? "off"}|${incoming?.takeId ?? "off"}|${boundaryTime}`;
+  if (scheduledSwaps.has(swapKey)) return;
+  scheduledSwaps.add(swapKey);
+
   const outgoing = outgoingTakeId === null ? undefined : players.get(outgoingTakeId);
   if (
     incoming &&
@@ -247,6 +261,7 @@ export function stopAllMoodPlayers(): void {
   }
   players = new Map();
   scheduledPlayers = new Map();
+  scheduledSwaps = new Set();
 }
 
 export function __resetMoodPlayersForTesting(): void {
