@@ -11,6 +11,7 @@ import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { ModeSwitch } from "./components/ModeSwitch";
 import { LoadFailedNotice } from "./components/LoadFailedNotice";
+import { MoodLoadBoundary } from "./components/MoodLoadBoundary";
 import { selectClipCount, selectEditorOpen, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
@@ -223,9 +224,11 @@ export function App() {
                 )}
               </>
             ) : (
-              <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
-                <MoodMode />
-              </Suspense>
+              <MoodLoadBoundary>
+                <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
+                  <MoodMode />
+                </Suspense>
+              </MoodLoadBoundary>
             )}
           </>
         )}

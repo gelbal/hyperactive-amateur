@@ -30,6 +30,7 @@ const audioMocks = vi.hoisted(() => ({
 const moodModeHarness = vi.hoisted(() => ({
   pending: new Promise<never>(() => undefined),
   suspend: true,
+  crash: false,
 }));
 
 vi.mock("./lib/audio", () => ({
@@ -83,6 +84,9 @@ vi.mock("./components/mood/MoodMode", async () => {
   const { useAppStore: useMockStore } = await import("./store/useAppStore");
   return {
     default: function MockMoodMode() {
+      if (moodModeHarness.crash) {
+        throw new TypeError("Failed to fetch dynamically imported module: /assets/MoodMode-old.js");
+      }
       if (moodModeHarness.suspend) throw moodModeHarness.pending;
       const recordingState = useMockStore((s) => s.recording.state);
       const slot = document.querySelector<HTMLElement>("[data-mood-header-slot]");
@@ -144,6 +148,7 @@ describe("App autosave gating", () => {
     vi.clearAllMocks();
     clearLogs();
     moodModeHarness.suspend = true;
+    moodModeHarness.crash = false;
     useAppStore.getState().actions.reset();
     rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
       ok: true,
@@ -440,6 +445,25 @@ describe("App autosave gating", () => {
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
     expect(screen.getByText(LOAD_FAILED_COPY)).toBeInTheDocument();
     expect(screen.getByText("Loading mood...")).toBeInTheDocument();
+  });
+
+  it("keeps the app and shows one reload line when the Mood screen fails to load", async () => {
+    // After a deploy an open app's lazy Mood chunk can 404; React reports the
+    // caught error on the console, which this test captures.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    moodModeHarness.crash = true;
+    useAppStore.getState().actions.setAppMode("mood");
+
+    await renderApp();
+
+    expect(screen.getByText("Couldn't open Mood — reload to try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Mode" })).toBeInTheDocument();
+    const failed = getLogs().find((entry) => entry.event === LOG_EVENTS.MOOD_LOAD_FAILED);
+    expect(failed?.payload).toMatchObject({ message: expect.stringContaining("dynamically imported") });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("shows the lazy Mood fallback and unmounts the Chop surface in Mood", async () => {

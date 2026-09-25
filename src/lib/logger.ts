@@ -55,6 +55,7 @@ export const LOG_EVENTS = {
   MOOD_CLICK_BPM_REJECTED: "mood.click-bpm-rejected",
   MOOD_TAKE_LIMIT_REJECTED: "mood.take-limit-rejected",
   MOOD_TAKE_FAILED: "mood.take-failed",
+  MOOD_LOAD_FAILED: "mood.load-failed",
   MOOD_PRINT_DEGRADED: "mood.print-degraded",
   MOOD_CREDIT_WINDOW: "mood-credit.window",
   MOOD_CREDIT_SKIP: "mood-credit.skip",
