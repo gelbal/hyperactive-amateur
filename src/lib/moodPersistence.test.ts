@@ -449,6 +449,50 @@ describe("mood persistence", () => {
     expect(await storedBlobKeys()).toEqual([refs[0]]);
   });
 
+  it.each([
+    ["a live Mood record with an unreadable mic list (before Mood loads)", MOOD_KEY, { moodSchemaVersion: 1, mics: null }],
+    ["a live Mood record from a newer schema", MOOD_KEY, { moodSchemaVersion: 2, layout: "unknown" }],
+    [
+      "a Mood quarantine with a readable mic list but unreadable takes",
+      MOOD_QUARANTINE_KEY,
+      { moodSchemaVersion: 1, mics: [{ id: "mic-0", takes: "unreadable" }] },
+    ],
+    [
+      "a Mood record whose ref field is not a string",
+      MOOD_KEY,
+      { moodSchemaVersion: 1, mics: [{ id: "mic-0", takes: [{ id: "t", videoBlobRef: 7 }] }] },
+    ],
+  ])("holds blob GC while %s", async (_label, key, record) => {
+    await saveMoodPiece(moodPiece(45));
+    const moodRefs = await storedBlobKeys();
+    expect(moodRefs.length).toBeGreaterThan(0);
+    await set(key, record);
+
+    // A Chop save runs the shared GC; nothing can tell which blobs the
+    // unreadable record names.
+    useAppStore.getState().actions.setTrackClip(0, clip(145));
+    useAppStore.getState().actions.clearTrackClip(0);
+    await saveProject(useAppStore.getState());
+
+    for (const ref of moodRefs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
+  });
+
+  it("holds blob GC while the live Chop record comes from a newer schema", async () => {
+    await saveMoodPiece(moodPiece(46));
+    useAppStore.getState().actions.setTrackClip(0, clip(146));
+    await saveProject(useAppStore.getState());
+    const chopRefs = chopMediaRefs(await storedChopMeta());
+    await set("ha:meta", { schemaVersion: 3, layout: "unknown" });
+
+    await saveMoodPiece({ ...moodPiece(47), mics: [] });
+
+    for (const ref of chopRefs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
+  });
+
   it("reopens the database for Mood after a failed open once the store is reset", async () => {
     await saveMoodPiece(moodPiece(44));
     resetPersistenceStore();
