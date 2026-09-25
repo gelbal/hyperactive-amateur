@@ -24,7 +24,11 @@ const toneMocks = vi.hoisted(() => {
   }
 
   interface GainMock {
-    gain: { value: number };
+    gain: {
+      value: number;
+      cancelScheduledValues: ReturnType<typeof vi.fn>;
+      setValueAtTime: ReturnType<typeof vi.fn>;
+    };
     connect: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   }
@@ -49,7 +53,13 @@ const toneMocks = vi.hoisted(() => {
 
   function makeGain(initialGain: number): GainMock {
     const gain: GainMock = {
-      gain: { value: initialGain },
+      gain: {
+        value: initialGain,
+        cancelScheduledValues: vi.fn(),
+        setValueAtTime: vi.fn((value: number) => {
+          gain.gain.value = value;
+        }),
+      },
       connect: vi.fn(() => gain),
       dispose: vi.fn(),
     };
@@ -293,6 +303,21 @@ describe("moodPlayers", () => {
 
     setCaptureGain(false);
     expect(toneMocks.gains[0].gain.value).toBe(1);
+  });
+
+  it("switches the capture gain on the audio clock's current time, not one lookahead later", () => {
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(4);
+
+    setCaptureGain(true);
+
+    const gain = toneMocks.gains[0].gain;
+    expect(gain.cancelScheduledValues).toHaveBeenCalledWith(4);
+    expect(gain.setValueAtTime).toHaveBeenLastCalledWith(0, 4);
+
+    toneHarness.setImmediate(9);
+    setCaptureGain(false);
+    expect(gain.setValueAtTime).toHaveBeenLastCalledWith(1, 9);
   });
 
   it("stops and disposes every mood player", () => {

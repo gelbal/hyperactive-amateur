@@ -127,8 +127,14 @@ export function syncMoodPlayers(
   }
 }
 
+// Switched on the audio clock's current time: the value setter schedules at
+// Tone.now(), one lookahead (100 ms) late, so the loops would still sound
+// through the speakers into the start of a take.
 export function setCaptureGain(muted: boolean): void {
-  getCaptureGain().gain.value = muted ? 0 : 1;
+  const gain = getCaptureGain().gain;
+  const now = Tone.immediate();
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(muted ? 0 : 1, now);
 }
 
 export function stopAllMoodPlayers(): void {
