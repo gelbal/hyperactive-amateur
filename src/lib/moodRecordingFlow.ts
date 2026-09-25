@@ -112,6 +112,10 @@ function cycleCountdownDeadline(
   return boundary - now >= beatSeconds ? boundary : boundary + cycleSeconds;
 }
 
+// A transport event this close to the lookahead clock may already be
+// behind the transport's scheduling position.
+const COUNT_IN_TRANSPORT_MARGIN_SECONDS = 0.02;
+
 function scheduleCountInClicks(
   startAt: number,
   countdownEndsAt: number,
@@ -140,17 +144,25 @@ function scheduleCountInClicks(
   const transport = Tone.getTransport();
   const scheduledIds = new Set<number>();
   let cancelled = false;
-  // scheduleOnce takes TRANSPORT time (seconds since position 0), not the
-  // audio clock — convert each absolute tick time to a transport offset or
-  // every tick fires late by the transport's start-time offset.
-  const transportNow = transport.seconds;
-  for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
+  // Overdub ticks sit on the loops' beat grid, counted back from the
+  // punch-in (a cycle boundary), so the accented one is the last beat before
+  // it. They are carried by the transport so a cancelled take can clear them;
+  // scheduleOnce takes TRANSPORT time, so each audio-clock tick is converted.
+  // A tick already inside the lookahead may be behind the transport's
+  // scheduling position, so it plays on the audio clock directly.
+  const beatsBeforePunchIn = Math.floor((countdownEndsAt - startAt) / beatSeconds + 1e-9);
+  for (let beat = beatsBeforePunchIn; beat >= 1; beat -= 1) {
+    const when = countdownEndsAt - beat * beatSeconds;
+    if (when <= Tone.now() + COUNT_IN_TRANSPORT_MARGIN_SECONDS) {
+      triggerMoodCountInTick(when, optionsAt(when));
+      continue;
+    }
     let scheduledId: number | null = null;
-    scheduledId = transport.scheduleOnce((time) => {
+    scheduledId = transport.scheduleOnce(() => {
       if (cancelled) return;
       if (scheduledId !== null) scheduledIds.delete(scheduledId);
-      triggerMoodCountInTick(time, optionsAt(when));
-    }, transportNow + (when - startAt));
+      triggerMoodCountInTick(when, optionsAt(when));
+    }, transport.getSecondsAtTime(when));
     scheduledIds.add(scheduledId);
   }
   return () => {

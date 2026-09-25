@@ -833,24 +833,26 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().recording.state).toBe("countdown");
     expect(useAppStore.getState().recording.countdownEndsAt).toBe(22);
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+    // The ticks sit on the loops' beat grid (epoch 10, beat 0.5), counted
+    // back from the punch-in at 22: the accented one is the last beat before
+    // it. Transport positions are the ticks' audio times from 17.75.
     expect(toneHarness.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
-      0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4,
+      0.25, 0.75, 1.25, 1.75, 2.25, 2.75, 3.25, 3.75,
     ]);
 
     const scheduledCallbacks = toneHarness.transport.scheduleOnce.mock.calls.map(
       ([callback]) => callback,
     );
-    scheduledCallbacks.forEach((callback, index) => callback(17.75 + index * 0.5));
+    scheduledCallbacks.forEach((callback, index) => callback(18 + index * 0.5));
     expect(audioMocks.triggerMoodCountInTick.mock.calls).toEqual([
-      [17.75, { beatsRemaining: 9, accent: false }],
-      [18.25, { beatsRemaining: 8, accent: false }],
-      [18.75, { beatsRemaining: 7, accent: false }],
-      [19.25, { beatsRemaining: 6, accent: false }],
-      [19.75, { beatsRemaining: 5, accent: false }],
-      [20.25, { beatsRemaining: 4, accent: false }],
-      [20.75, { beatsRemaining: 3, accent: false }],
-      [21.25, { beatsRemaining: 2, accent: false }],
-      [21.75, { beatsRemaining: 1, accent: true }],
+      [18, { beatsRemaining: 8, accent: false }],
+      [18.5, { beatsRemaining: 7, accent: false }],
+      [19, { beatsRemaining: 6, accent: false }],
+      [19.5, { beatsRemaining: 5, accent: false }],
+      [20, { beatsRemaining: 4, accent: false }],
+      [20.5, { beatsRemaining: 3, accent: false }],
+      [21, { beatsRemaining: 2, accent: false }],
+      [21.5, { beatsRemaining: 1, accent: true }],
     ]);
 
     cancelCurrentMoodTake();
@@ -1514,6 +1516,29 @@ describe("moodRecordingFlow", () => {
     expect(toneSpies.transportCancel).not.toHaveBeenCalled();
   });
 
+  it("plays an overdub count-in tick already inside the lookahead on the audio clock", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    toneHarness.setLookahead(0.1);
+    audioMocks.context.currentTime = 17.4;
+    toneHarness.setImmediate(17.4);
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    // Punch-in at 18; the tick at 17.5 is closer than the lookahead, where the
+    // transport may already have passed its position.
+    expect(useAppStore.getState().recording.countdownEndsAt).toBe(18);
+    expect(audioMocks.triggerMoodCountInTick.mock.calls).toEqual([
+      [17.5, { beatsRemaining: 1, accent: true }],
+    ]);
+    expect(toneHarness.transport.scheduleOnce).not.toHaveBeenCalled();
+
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+  });
+
   it("cancels overdub count-in ticks when an abort lands mid-count-in", async () => {
     vi.useFakeTimers();
     seedMoodCycle(4);
@@ -1524,32 +1549,29 @@ describe("moodRecordingFlow", () => {
     // transport was re-positioned to 0 at performance start. Ticks must be
     // scheduled TRANSPORT-relative or they fire late by the epoch offset.
     toneHarness.transport.seconds = 100;
-    toneHarness.transport.scheduleOnce
-      .mockReturnValueOnce(601)
-      .mockReturnValueOnce(602)
-      .mockReturnValueOnce(603);
+    toneHarness.transport.scheduleOnce.mockReturnValueOnce(601).mockReturnValueOnce(602);
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
 
     expect(useAppStore.getState().recording.state).toBe("countdown");
-    expect(toneHarness.transport.scheduleOnce).toHaveBeenCalledTimes(3);
-    // Ticks intended for audio times 16.6/17.1/17.6 land at transport
-    // positions 100/100.5/101.
+    expect(toneHarness.transport.scheduleOnce).toHaveBeenCalledTimes(2);
+    // Ticks on the grid at audio times 17 and 17.5 (the punch-in is at 18)
+    // land at transport positions 100.4 and 100.9.
     expect(toneHarness.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
-      100, 100.5, 101,
+      100.4, 100.9,
     ]);
     expect(audioMocks.triggerMoodCountInTick).not.toHaveBeenCalled();
 
     cancelCurrentMoodTake();
 
     await expect(promise).resolves.toBe(false);
-    expect(toneHarness.transport.clear.mock.calls).toEqual([[601], [602], [603]]);
+    expect(toneHarness.transport.clear.mock.calls).toEqual([[601], [602]]);
 
     const scheduledCallbacks = toneHarness.transport.scheduleOnce.mock.calls.map(
       ([callback]) => callback,
     );
-    scheduledCallbacks.forEach((callback, index) => callback(16.6 + index * 0.5));
+    scheduledCallbacks.forEach((callback, index) => callback(17 + index * 0.5));
 
     expect(audioMocks.triggerMoodCountInTick).not.toHaveBeenCalled();
   });

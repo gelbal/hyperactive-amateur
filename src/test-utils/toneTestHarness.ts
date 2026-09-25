@@ -113,6 +113,9 @@ export function createToneHarness() {
     set seconds(value: number) {
       transportSeconds = value;
     },
+    // Transport seconds at an audio-clock time; `seconds` is modeled at the
+    // audible clock, so scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
+    getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
     get swing() {
       return transportSwing;
     },
@@ -206,6 +209,7 @@ export function createToneHarness() {
           set seconds(value: number) {
             transportSeconds = value;
           },
+          getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
           get swing() {
             return transportSwing;
           },
