@@ -37,6 +37,7 @@ const toneMocks = vi.hoisted(() => {
   const gains: GainMock[] = [];
 
   function makePlayer(buffer: AudioBuffer): PlayerMock {
+    let loopEnd = 0;
     const player: PlayerMock = {
       buffer,
       connect: vi.fn(() => player),
@@ -45,7 +46,16 @@ const toneMocks = vi.hoisted(() => {
       stop: vi.fn(() => player),
       loop: false,
       loopStart: 0,
-      loopEnd: 0,
+      // Tone's Player range-checks loopEnd against the loaded buffer.
+      get loopEnd() {
+        return loopEnd;
+      },
+      set loopEnd(value: number) {
+        if (value < 0 || value > buffer.duration) {
+          throw new RangeError(`Value must be within [0, ${buffer.duration}], got: ${value}`);
+        }
+        loopEnd = value;
+      },
     };
     players.push(player);
     return player;
@@ -280,6 +290,29 @@ describe("moodPlayers", () => {
       expect(offset).toBeCloseTo(3.65);
     }
   });
+
+  it.each([44_100, 48_000])(
+    "builds a loop buffer that holds the whole period at every Click tempo (%i Hz)",
+    (sampleRate) => {
+      const buffer = makeBuffer(sampleRate, 1, () => 0.5, sampleRate);
+      for (const bpm of [70, 80, 90, 100, 110, 120, 130, 140, 150, 160]) {
+        for (const bars of [1, 2, 4]) {
+          for (const cycleMultiple of [0.5, 1, 2, 4] as const) {
+            const cycleSeconds = (bars * 4 * 60) / bpm;
+            const take = makeMoodTake({
+              id: `take-${bpm}-${bars}-${cycleMultiple}`,
+              audioBuffer: buffer,
+              cycleMultiple,
+            });
+            syncMoodPlayers([{ takeId: take.id, take }], 0, cycleSeconds);
+            const player = toneMocks.players[toneMocks.players.length - 1];
+            expect(player.loopEnd).toBe(cycleMultiple * cycleSeconds);
+            expect(player.buffer.duration).toBeGreaterThanOrEqual(player.loopEnd);
+          }
+        }
+      }
+    },
+  );
 
   it("creates one shared capture gain node and routes players through it", () => {
     setCaptureGain(true);

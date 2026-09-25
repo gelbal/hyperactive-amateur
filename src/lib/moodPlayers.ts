@@ -47,7 +47,10 @@ function buildPaddedLoopBuffer(take: MoodTake, loopPeriodSeconds: number): Audio
 
   const trimmed = sliceAudioBuffer(take.audioBuffer, take.trimStartMs, take.trimEndMs);
   const sampleRate = trimmed.sampleRate;
-  const periodSamples = Math.max(1, Math.round(loopPeriodSeconds * sampleRate));
+  // Rounded up (and past a float shortfall): Tone rejects a loopEnd beyond
+  // the buffer's duration, and loopEnd is the exact period.
+  let periodSamples = Math.max(1, Math.ceil(loopPeriodSeconds * sampleRate));
+  if (periodSamples / sampleRate < loopPeriodSeconds) periodSamples += 1;
   const loopBuffer = getAudioContext().createBuffer(
     trimmed.numberOfChannels,
     periodSamples,
