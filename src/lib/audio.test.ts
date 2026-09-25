@@ -440,6 +440,25 @@ describe("audio: per-step trigger logic", () => {
     }
   });
 
+  it("does not start Chop playback when the app switched to Mood before the unlock settled", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = togglePlayback();
+    // The mode is persisted; restore it so later tests start in Chop.
+    try {
+      useAppStore.getState().actions.setAppMode("mood");
+      audioStarted.resolve();
+      await promise;
+
+      expect(transportMock.start).not.toHaveBeenCalled();
+      expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    } finally {
+      useAppStore.getState().actions.setAppMode("chop");
+    }
+  });
+
   it("does not start playback when the page hid and returned before the unlock settled", async () => {
     initTransport();
     const audioStarted = deferred();

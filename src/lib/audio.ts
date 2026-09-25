@@ -256,12 +256,15 @@ function retire(voice: DrumVoice): void {
 
 // Re-checked after the unlock's await: a tap that was pending when the page
 // went hidden must not start sound in the background once audio resumes, nor
-// on return when the frozen unlock settles only then.
+// on return when the frozen unlock settles only then. A switch to Mood during
+// the unlock drops it too: Mood has no Chop Play to stop it with.
 function canStartAfterPendingAudible(): boolean {
+  const state = useAppStore.getState();
   return (
     isPendingAudibleCurrent() &&
     !(typeof document !== "undefined" && document.hidden) &&
-    canStartAudibleAction(useAppStore.getState())
+    state.appMode === "chop" &&
+    canStartAudibleAction(state)
   );
 }
 
