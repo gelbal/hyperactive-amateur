@@ -205,6 +205,25 @@ describe("audio: per-step trigger logic", () => {
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
   });
 
+  it("keeps the Chop step loop silent while a Mood performance owns the transport", () => {
+    initTransport();
+    const a = useAppStore.getState().actions;
+    a.toggleStep(2, 0);
+    a.createMoodPiece("corners", "pocket");
+    a.setMoodPerforming(true, 0);
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+
+    cb?.(0);
+
+    for (const voice of synthInstances.slice(0, 8)) {
+      expect(voice.triggerAttackRelease).not.toHaveBeenCalled();
+    }
+
+    a.setMoodPerforming(false);
+    cb?.(0);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
+  });
+
   it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {
     initTransport();
     expect(synthInstances).toHaveLength(8);

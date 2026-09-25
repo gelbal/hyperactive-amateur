@@ -48,6 +48,9 @@ export function initTransport(): void {
   syncPlayers(useAppStore.getState().project.tracks);
 
   scheduledEventId = transport.scheduleRepeat((time) => {
+    // The Transport is shared: while a Mood performance owns it, the Chop
+    // pattern (and the kit on empty tracks) stays silent.
+    if (useAppStore.getState().mood.performance.isPerforming) return;
     const stepCount = useAppStore.getState().project.stepCount;
     const stepIndex = stepCounter % stepCount;
     stepCounter += 1;
