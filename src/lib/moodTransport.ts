@@ -101,13 +101,19 @@ async function startMoodPerformanceTransport(): Promise<boolean> {
 
   clearScheduledBoundaryRepeat();
   resetBoundaryState();
-  activeEpoch = Tone.now();
+  const epoch = Tone.now();
+  activeEpoch = epoch;
   const transport = Tone.getTransport();
   transport.position = 0;
   scheduledBoundaryEventId = transport.scheduleRepeat(onCycleBoundary, cycleSeconds);
   initializeMoodFxForPerformance(cycleSeconds);
-  useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
+  useAppStore.getState().actions.setMoodPerforming(true, epoch);
   const { syncCommittedMoodEngines } = await import("./moodPerformance");
+  // A hide or an interruption can stop the performance during that await;
+  // starting the shared transport now would run Chop's step loop unowned.
+  if (activeEpoch !== epoch || !useAppStore.getState().mood.performance.isPerforming) {
+    return false;
+  }
   syncCommittedMoodEngines();
   // The transport is shared and carries Chop's swing, which Tone applies by
   // delaying off-grid events: Mood's count-in ticks and GATE repeat would

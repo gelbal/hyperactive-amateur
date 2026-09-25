@@ -215,6 +215,32 @@ describe("moodTransport", () => {
     expect(toneHarness.transport.swing).toBe(0.5);
   });
 
+  it("does not start the transport when a stop lands while the start is still settling", async () => {
+    createMoodWithCycle();
+    useAppStore.getState().actions.setSwing(0.5);
+    toneHarness.transport.swing = 0.5;
+    // A hide or an interruption, arriving just after the store says performing
+    // and before the start's last await settles.
+    const unsubscribe = useAppStore.subscribe((state, prev) => {
+      if (!prev.mood.performance.isPerforming && state.mood.performance.isPerforming) {
+        queueMicrotask(() => stopMoodPerformance());
+      }
+    });
+
+    try {
+      await startMoodPerformance();
+    } finally {
+      unsubscribe();
+    }
+
+    // Chop's step loop plays whenever the transport runs unowned.
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    const started = toneHarness.transport.start.mock.invocationCallOrder.at(-1) ?? 0;
+    const stopped = toneHarness.transport.stop.mock.invocationCallOrder.at(-1) ?? 0;
+    expect(started).toBeLessThan(stopped);
+    expect(toneHarness.transport.swing).toBe(0.5);
+  });
+
   it("lets a hide or an interruption stop a running performance once registered", async () => {
     createMoodWithCycle();
     const unregister = registerMoodPerformanceInterrupt();
