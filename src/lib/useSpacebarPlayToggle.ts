@@ -21,6 +21,7 @@ export function useSpacebarPlayToggle(): void {
       if (event.repeat) return;
       if (isEditable(event.target)) return;
       const state = useAppStore.getState();
+      if (state.appMode !== "chop") return;
       if (state.playback.isExporting) return;
       // No Play button before the first clip, so no shortcut either; once
       // the editor is open both stay, even after the last clip is deleted.

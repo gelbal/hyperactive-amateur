@@ -1,6 +1,6 @@
 // ABOUTME: Root React component for Hyperactive Amateur — header (title + controls), viewport, pads, grid.
 // ABOUTME: Owns global app effects: Tone.Transport bootstrap, rehydration, auto-save, keyboard hooks.
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
@@ -10,6 +10,7 @@ import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
+import { ModeSwitch } from "./components/ModeSwitch";
 import { selectClipCount, selectEditorOpen, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
@@ -35,9 +36,12 @@ function logPanelRequested(): boolean {
   }
 }
 
+const MoodMode = lazy(() => import("./components/mood/MoodMode"));
+
 export function App() {
   const [hydrating, setHydrating] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const appMode = useAppStore((s) => s.appMode);
   const clipCount = useAppStore(selectClipCount);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   // Open from the first clip, and still open after the last clip is deleted:
@@ -47,6 +51,7 @@ export function App() {
   // clips meanwhile.
   const showControls = editorOpen || isPlaying;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
+  const isChopMode = appMode === "chop";
 
   useEffect(() => {
     initTransport();
@@ -130,21 +135,24 @@ export function App() {
               </a>
             </p>
           </div>
-          {/* Before the first clip the header is the title alone: nothing
-              here is usable until there is something to play. While a saved
-              project hydrates the controls row is reserved empty at the
-              buttons' height, so the page does not jump when the clips
-              arrive; Play needs no reservation, the title block is taller
-              than it at every width. */}
-          {(showControls || hydrating) && (
-            <div className="contents lg:flex lg:flex-col lg:items-end lg:gap-3 lg:ml-auto">
-              {showControls && (
-                <div className="shrink-0">
-                  <PlayButton />
-                </div>
-              )}
-              {/* The controls carry the 12 px between the lines themselves
-                  (gap-y-0 on the row); at lg the column's gap does it. */}
+          {/* Before the first clip the header is the title and the mode
+              switch: nothing else here is usable until there is something to
+              play. The switch shares Play's cell so it is reachable in every
+              state. While a saved project hydrates the controls row is
+              reserved empty at the buttons' height, so the page does not jump
+              when the clips arrive; Play needs no reservation, the title
+              block is taller than it at every width. */}
+          <div className="contents lg:flex lg:flex-col lg:items-end lg:gap-3 lg:ml-auto">
+            {/* Phones stack Play over the switch (title, switch and Play do
+                not fit one 375 px line); at lg they share a line with Play at
+                the right edge, so Play keeps its place above the controls. */}
+            <div className="shrink-0 flex flex-col items-end gap-1.5 lg:flex-row-reverse lg:items-center lg:gap-3">
+              {isChopMode && showControls && <PlayButton />}
+              <ModeSwitch />
+            </div>
+            {/* The controls carry the 12 px between the lines themselves
+                (gap-y-0 on the row); at lg the column's gap does it. */}
+            {isChopMode && (showControls || hydrating) && (
               <div className="w-full lg:w-auto mt-3 lg:mt-0 min-h-[2.375rem] pointer-coarse:min-h-11 flex flex-wrap items-center gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
                 {showControls && (
                   <>
@@ -154,14 +162,14 @@ export function App() {
                   </>
                 )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
-        ) : (
+        ) : isChopMode ? (
           <>
             {loadFailed && <LoadFailedNotice />}
             <Viewport />
@@ -174,9 +182,13 @@ export function App() {
               </p>
             )}
           </>
+        ) : (
+          <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
+            <MoodMode />
+          </Suspense>
         )}
       </main>
-      {editorOpen && <StepGrid />}
+      {isChopMode && editorOpen && <StepGrid />}
       {logPanelRequested() && <LogPanel />}
     </div>
   );

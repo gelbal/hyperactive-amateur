@@ -1,4 +1,4 @@
-// ABOUTME: BpmDial — the Feel panel's tempo row: a circular knob that snaps to discrete stops in the hip-hop range, with its readout beside it.
+// ABOUTME: BpmDialControl — a circular tempo knob that snaps to discrete stops in the hip-hop range, with its readout beside it; BpmDial binds it to the project BPM for the Feel panel.
 // ABOUTME: Turning the knob by angle or the scroll wheel changes the value; arrow keys adjust by one stop.
 import { useEffect, useId, useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
@@ -87,15 +87,22 @@ interface Turn {
   accumulatedDeg: number;
 }
 
-export function BpmDial() {
-  const bpm = useAppStore((s) => s.project.bpm);
-  // Export freezes project mutations; the dial must look disabled and ignore
-  // input, not just rely on the store writer's no-op.
-  const isExporting = useAppStore((s) => s.playback.isExporting);
+type BpmDialControlProps = {
+  bpm: number;
+  onChange: (bpm: number) => void;
+  disabled?: boolean;
+};
+
+export function BpmDialControl({ bpm, onChange, disabled = false }: BpmDialControlProps) {
   const turnRef = useRef<Turn | null>(null);
   const knobRef = useRef<HTMLButtonElement | null>(null);
   const labelId = useId();
   const [dragging, setDragging] = useState(false);
+
+  // Only a changed stop is emitted.
+  const emit = (next: number) => {
+    if (next !== bpm) onChange(next);
+  };
 
   // React registers wheel listeners as passive, so a synthetic onWheel
   // cannot cancel the scroll: inside the scrolling Feel panel a wheel over
@@ -105,13 +112,14 @@ export function BpmDial() {
     const knob = knobRef.current;
     if (!knob) return;
     const onWheel = (event: WheelEvent) => {
-      if (useAppStore.getState().playback.isExporting || event.deltaY === 0) return;
+      if (disabled || event.deltaY === 0) return;
       event.preventDefault();
-      writeBpm(stepBy(useAppStore.getState().project.bpm, event.deltaY > 0 ? -1 : 1));
+      const next = stepBy(bpm, event.deltaY > 0 ? -1 : 1);
+      if (next !== bpm) onChange(next);
     };
     knob.addEventListener("wheel", onWheel, { passive: false });
     return () => knob.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [bpm, disabled, onChange]);
 
   const angleDeg = angleFor(bpm);
   const notchFrom = polar(NOTCH_INNER, angleDeg);
@@ -136,9 +144,9 @@ export function BpmDial() {
         aria-valuenow={bpm}
         aria-valuetext={`${bpm} BPM`}
         role="slider"
-        disabled={isExporting}
+        disabled={disabled}
         onPointerDown={(event) => {
-          if (isExporting) return;
+          if (disabled) return;
           event.preventDefault();
           const knob = event.currentTarget as HTMLButtonElement;
           knob.setPointerCapture(event.pointerId);
@@ -151,7 +159,7 @@ export function BpmDial() {
         }}
         onPointerMove={(event) => {
           const turn = turnRef.current;
-          if (isExporting || !turn) return;
+          if (disabled || !turn) return;
           const angle = pointerAngle(event.currentTarget as HTMLButtonElement, event.clientX, event.clientY);
           if (angle === null) {
             // Inside the dead zone: the next sample outside it seeds afresh.
@@ -168,7 +176,7 @@ export function BpmDial() {
           const minDeg = -turn.startIdx * DEG_PER_STOP;
           const maxDeg = (STOPS.length - 1 - turn.startIdx) * DEG_PER_STOP;
           turn.accumulatedDeg = Math.max(minDeg, Math.min(maxDeg, turn.accumulatedDeg + delta));
-          writeBpm(STOPS[turn.startIdx + Math.round(turn.accumulatedDeg / DEG_PER_STOP)]);
+          emit(STOPS[turn.startIdx + Math.round(turn.accumulatedDeg / DEG_PER_STOP)]);
         }}
         onPointerUp={(event) => {
           (event.currentTarget as HTMLButtonElement).releasePointerCapture(
@@ -182,16 +190,16 @@ export function BpmDial() {
           setDragging(false);
         }}
         onKeyDown={(event) => {
-          if (isExporting) return;
+          if (disabled) return;
           if (event.key === "ArrowUp" || event.key === "ArrowRight") {
             event.preventDefault();
-            writeBpm(stepBy(bpm, 1));
+            emit(stepBy(bpm, 1));
           } else if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
             event.preventDefault();
-            writeBpm(stepBy(bpm, -1));
+            emit(stepBy(bpm, -1));
           }
         }}
-        title="Turn, scroll, or use arrow keys to change BPM"
+        title={disabled ? "frozen during export" : "Turn, scroll, or use arrow keys to change BPM"}
         className={
           "relative shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-colors " +
           "disabled:opacity-30 disabled:cursor-not-allowed " +
@@ -236,4 +244,13 @@ export function BpmDial() {
       </div>
     </div>
   );
+}
+
+export function BpmDial() {
+  const bpm = useAppStore((s) => s.project.bpm);
+  // Export freezes project mutations; the dial must look disabled and ignore
+  // input, not just rely on the store writer's no-op.
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+
+  return <BpmDialControl bpm={bpm} disabled={isExporting} onChange={writeBpm} />;
 }
