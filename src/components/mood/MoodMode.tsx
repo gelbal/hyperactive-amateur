@@ -33,9 +33,9 @@ const STAGE_LABELS: Record<MoodStageId, string> = {
 };
 
 const STAGE_SUBTITLES: Record<MoodStageId, string> = {
-  corners: "Four square mics for tight framing.",
-  row: "Two to five portrait mics in a wide row.",
-  stack: "Two to five landscape mics in a vertical stack.",
+  corners: "2×2 · square video",
+  row: "side by side · widescreen video",
+  stack: "stacked · vertical video",
 };
 
 const STAGE_ORDER: MoodStageId[] = ["corners", "row", "stack"];
@@ -154,6 +154,7 @@ function StagePicker({ disabled }: { disabled: boolean }) {
 
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
+      <p className="text-sm font-semibold text-zinc-500">pick your stage</p>
       <div className="grid w-full gap-3 sm:grid-cols-3">
         {STAGE_ORDER.map((stage) => (
           <button
@@ -261,7 +262,7 @@ function ScratchMoodControl({ disabled }: { disabled: boolean }) {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <p className="text-center text-xs text-zinc-400">This forgets this mood shell. Sure?</p>
+      <p className="text-center text-xs text-zinc-400">Start over and clear this mood?</p>
       <div className="flex gap-2">
         <button
           type="button"
@@ -343,7 +344,7 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
   return (
     <div
       role="group"
-      aria-label="Mood lens"
+      aria-label="Lens"
       className="inline-flex rounded border border-zinc-800 bg-zinc-950 p-1"
     >
       {LENS_OPTIONS.map((option) => {
@@ -369,7 +370,7 @@ function MoodLensControl({ lens }: { lens: MoodLens }) {
             title={title}
             onClick={() => armLens(option.id)}
             className={
-              "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              "inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded px-3 text-sm font-semibold pointer-coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
               (selected
                 ? "bg-orange-500 text-zinc-950"
                 : armed
@@ -401,7 +402,7 @@ function MoodVibeControl({ vibe }: { vibe: MoodVibeId }) {
   return (
     <div
       role="group"
-      aria-label="Mood vibe"
+      aria-label="Vibe"
       className="inline-flex max-w-full flex-wrap gap-1 rounded border border-zinc-800 bg-zinc-950 p-1"
     >
       {VIBE_OPTIONS.map((option) => {
@@ -424,7 +425,7 @@ function MoodVibeControl({ vibe }: { vibe: MoodVibeId }) {
             title={title}
             onClick={() => setMoodVibe(option.id)}
             className={
-              "inline-flex h-9 items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
+              "inline-flex h-9 items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold pointer-coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40 " +
               (selected
                 ? "bg-zinc-900 text-zinc-100 ring-2 ring-orange-500"
                 : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100")
@@ -487,7 +488,24 @@ function queueMoodPosterJobs(jobs: moodRehydrate.MoodPosterRegenerationJob[] = [
       useAppStore
         .getState()
         .actions.attachMoodTakePoster(job.micId, job.takeId, posterBlob, posterUrl);
+      // The attach no-ops when exporting or when the take/piece is gone
+      // (scratch, delete) — a URL that did not land must be revoked.
+      const attached = useAppStore
+        .getState()
+        .mood.piece?.mics.find((mic) => mic.id === job.micId)
+        ?.takes.find((take) => take.id === job.takeId)?.posterUrl;
+      if (attached !== posterUrl) URL.revokeObjectURL(posterUrl);
     });
+  }
+}
+
+// A hydrate abandoned by unmount (mode switch mid-load) must return the
+// store to "cold" — re-entry only restarts hydration from there. Guarded so
+// a newer mount's completed hydration is never clobbered.
+function abandonPendingHydration(): void {
+  const state = useAppStore.getState();
+  if (state.mood.hydration === "hydrating") {
+    state.actions.setMoodHydration("cold");
   }
 }
 
@@ -518,10 +536,10 @@ export function MoodMode() {
     void moodRehydrate
       .rehydrateMoodFromStorage()
       .then(async (loaded) => {
-        if (unmountedRef.current) return;
+        if (unmountedRef.current) return abandonPendingHydration();
         if (loaded.ok && loaded.piece) {
           const decoded = await moodRehydrate.decodeMoodTakes(loaded.piece, getAudioContext());
-          if (unmountedRef.current) return;
+          if (unmountedRef.current) return abandonPendingHydration();
           // Decode repairs are diagnostics like the load's own; the take's
           // repair state carries the only actionable part.
           if (decoded.warnings.length > 0) {
@@ -538,7 +556,7 @@ export function MoodMode() {
           scope: "mood",
           message: err instanceof Error ? err.message : String(err),
         });
-        if (unmountedRef.current) return;
+        if (unmountedRef.current) return abandonPendingHydration();
         // Mood saving stays paused for the session: a write would replace
         // the record that could not be read.
         useAppStore.getState().actions.setMoodHydration("failed");
@@ -566,6 +584,9 @@ export function MoodMode() {
     );
   }
 
+  // Focus order after the app mode switcher follows JSX order: stage invitation
+  // controls when present, mic chips, the open StackSheet rows for that mic,
+  // Lens, Vibe, Drop, Play/Stop, then Scratch controls.
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
       {loadFailedNotice}

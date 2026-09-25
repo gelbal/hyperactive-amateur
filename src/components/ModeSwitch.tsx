@@ -44,7 +44,7 @@ export function ModeSwitch() {
             disabled={disabled}
             onClick={() => switchMode(mode.id)}
             className={
-              "px-3 py-1.5 text-sm font-medium rounded-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
+              "px-3 py-1.5 pointer-coarse:min-h-11 text-sm font-medium rounded-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +
               "disabled:cursor-not-allowed disabled:opacity-40 " +
               (active
                 ? "bg-orange-500 text-zinc-950"
