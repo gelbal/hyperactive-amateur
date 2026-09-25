@@ -451,7 +451,9 @@ describe("mood persistence", () => {
 
   it.each([
     ["a live Mood record with an unreadable mic list (before Mood loads)", MOOD_KEY, { moodSchemaVersion: 1, mics: null }],
-    ["a live Mood record from a newer schema", MOOD_KEY, { moodSchemaVersion: 2, layout: "unknown" }],
+    // Its mic list reads as empty; only the schema version says it may name
+    // blobs in a layout this build does not know.
+    ["a live Mood record from a newer schema", MOOD_KEY, { moodSchemaVersion: 2, mics: [] }],
     [
       "a Mood quarantine with a readable mic list but unreadable takes",
       MOOD_QUARANTINE_KEY,
@@ -484,7 +486,7 @@ describe("mood persistence", () => {
     useAppStore.getState().actions.setTrackClip(0, clip(146));
     await saveProject(useAppStore.getState());
     const chopRefs = chopMediaRefs(await storedChopMeta());
-    await set("ha:meta", { schemaVersion: 3, layout: "unknown" });
+    await set("ha:meta", { schemaVersion: 3, tracks: [] });
 
     await saveMoodPiece({ ...moodPiece(47), mics: [] });
 

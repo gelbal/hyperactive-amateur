@@ -518,6 +518,11 @@ test("records the One in Mood and performs from the keyboard", async ({ page }) 
   await page.keyboard.press("Space");
   await expect(page.getByRole("button", { name: "Stop mood performance" })).toBeVisible();
   await expect(page.locator("[aria-live='polite']", { hasText: "performing" })).toHaveCount(1);
+  // The loop counter only moves when the transport really runs: a Play that
+  // failed inside the engine still shows the labels above.
+  await expect(page.getByRole("group", { name: "Mood cycle count" })).toHaveText(/loop [1-9]/, {
+    timeout: 10_000,
+  });
 
   await page.keyboard.press("Space");
   await expect(page.getByRole("button", { name: "Start mood performance" })).toBeVisible();
