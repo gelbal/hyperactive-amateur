@@ -161,7 +161,7 @@ describe("moodPlayers", () => {
     vi.mocked(fakeContext.createBuffer).mockClear();
   });
 
-  it("diffs by takeId and rebuilds only when the take reference changes", () => {
+  it("diffs by takeId and rebuilds only when the take's audio changes", () => {
     const takeA = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
     syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
     const first = toneMocks.players[0];
@@ -170,7 +170,11 @@ describe("moodPlayers", () => {
     expect(toneMocks.players).toHaveLength(1);
     expect(first.dispose).not.toHaveBeenCalled();
 
-    const replacement = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
+    const replacement = makeMoodTake({
+      id: "take-a",
+      audioBuffer: defaultAudioBuffer,
+      trimEndMs: 900,
+    });
     syncMoodPlayers([{ takeId: "take-a", take: replacement }], 0, 2);
     expect(toneMocks.players).toHaveLength(2);
     expect(first.dispose).toHaveBeenCalledTimes(1);
@@ -481,6 +485,86 @@ describe("moodPlayers", () => {
 
       expect(toneMocks.players[0].dispose).toHaveBeenCalledTimes(1);
       expect(toneMocks.players[1].dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a live player when only the take's metadata changed", () => {
+      const { takeA } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      const withPoster = { ...takeA, posterUrl: "blob:test/poster-a" };
+
+      toneHarness.setImmediate(4.01);
+      syncMoodPlayers([{ takeId: "take-a", take: withPoster }], 0, 2);
+
+      expect(toneMocks.players).toHaveLength(1);
+      expect(toneMocks.players[0].dispose).not.toHaveBeenCalled();
+    });
+
+    it("adopts a scheduled player whose take only gained metadata before the commit", () => {
+      const { takeB } = liveTakes();
+      toneHarness.setImmediate(3.95);
+      scheduleMoodPlayerSwap(null, { takeId: "take-b", take: takeB }, 4, 0, 2);
+
+      toneHarness.setImmediate(4.01);
+      syncMoodPlayers([{ takeId: "take-b", take: { ...takeB, posterUrl: "blob:test/poster-b" } }], 0, 2);
+
+      expect(toneMocks.players).toHaveLength(1);
+      expect(toneMocks.players[0].dispose).not.toHaveBeenCalled();
+    });
+
+    it("schedules nothing when the incoming take plays the same audio as the live one", () => {
+      const { takeA } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      toneHarness.setImmediate(3.95);
+
+      scheduleMoodPlayerSwap(
+        "take-a",
+        { takeId: "take-a", take: { ...takeA, posterUrl: "blob:test/poster-a" } },
+        4,
+        0,
+        2,
+      );
+
+      expect(toneMocks.players).toHaveLength(1);
+      expect(toneMocks.players[0].stop).not.toHaveBeenCalled();
+    });
+
+    it("keeps a player scheduled for a later boundary through an earlier commit", () => {
+      const { takeA, takeB } = liveTakes();
+      // A paint stall: the frame at 5.95 sees swaps locked for 4 and 6.
+      toneHarness.setImmediate(5.95);
+      scheduleMoodPlayerSwap(null, { takeId: "take-a", take: takeA }, 4, 0, 2);
+      scheduleMoodPlayerSwap(null, { takeId: "take-b", take: takeB }, 6, 0, 2);
+
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      toneHarness.setImmediate(6.01);
+      syncMoodPlayers(
+        [
+          { takeId: "take-a", take: takeA },
+          { takeId: "take-b", take: takeB },
+        ],
+        0,
+        2,
+      );
+
+      expect(toneMocks.players).toHaveLength(2);
+      expect(toneMocks.players[1].start).toHaveBeenCalledWith(6, 0);
+      expect(toneMocks.players[1].dispose).not.toHaveBeenCalled();
+    });
+
+    it("stops a take scheduled for one boundary at the next when both are locked for one mic", () => {
+      const { takeA, takeB } = liveTakes();
+      toneHarness.setImmediate(5.95);
+      scheduleMoodPlayerSwap(null, { takeId: "take-a", take: takeA }, 4, 0, 2);
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-b", take: takeB }, 6, 0, 2);
+
+      expect(toneMocks.players[0].stop).toHaveBeenCalledWith(6);
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      expect(toneMocks.players[0].dispose).not.toHaveBeenCalled();
+
+      toneHarness.setImmediate(6.01);
+      syncMoodPlayers([{ takeId: "take-b", take: takeB }], 0, 2);
+      expect(toneMocks.players[0].dispose).toHaveBeenCalledTimes(1);
+      expect(toneMocks.players).toHaveLength(2);
     });
 
     it("disposes scheduled players when the performance stops", () => {

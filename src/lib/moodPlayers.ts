@@ -17,10 +17,14 @@ interface MoodPlayerEntry {
   player: Tone.Player | null;
 }
 
+interface ScheduledMoodPlayerEntry extends MoodPlayerEntry {
+  startAt: number;
+}
+
 let players = new Map<string, MoodPlayerEntry>();
 // Incoming players already started on the audio clock for a locked boundary
 // swap, keyed by take id, until the paint-path commit makes them live.
-let scheduledPlayers = new Map<string, MoodPlayerEntry>();
+let scheduledPlayers = new Map<string, ScheduledMoodPlayerEntry>();
 let captureGain: Tone.Gain | null = null;
 
 function positiveModulo(value: number, divisor: number): number {
@@ -80,6 +84,20 @@ function hasPlayableAudio(take: MoodTake): boolean {
   return take.audioStatus !== "unavailable" && Boolean(take.audioBuffer);
 }
 
+// A take object is also replaced for metadata (a poster, a part tag); only
+// these fields change what its player sounds like.
+function playsSameAudio(a: MoodTake, b: MoodTake): boolean {
+  return (
+    a === b ||
+    (a.audioBuffer === b.audioBuffer &&
+      a.audioStatus === b.audioStatus &&
+      a.trimStartMs === b.trimStartMs &&
+      a.trimEndMs === b.trimEndMs &&
+      a.cycleMultiple === b.cycleMultiple &&
+      a.syncOffsetMs === b.syncOffsetMs)
+  );
+}
+
 function createMoodPlayer(
   take: MoodTake,
   epoch: number,
@@ -118,15 +136,16 @@ export function syncMoodPlayers(
     const scheduled = scheduledPlayers.get(liveTake.takeId);
     if (scheduled) {
       scheduledPlayers.delete(liveTake.takeId);
-      if (scheduled.take === liveTake.take) {
+      if (playsSameAudio(scheduled.take, liveTake.take)) {
         if (existing?.player) disposePlayer(existing.player);
-        players.set(liveTake.takeId, scheduled);
+        players.set(liveTake.takeId, { take: liveTake.take, player: scheduled.player });
         continue;
       }
       if (scheduled.player) disposePlayer(scheduled.player);
     }
 
-    if (existing?.take === liveTake.take) {
+    if (existing && playsSameAudio(existing.take, liveTake.take)) {
+      players.set(liveTake.takeId, { take: liveTake.take, player: existing.player });
       continue;
     }
 
@@ -153,16 +172,16 @@ export function syncMoodPlayers(
     players.delete(takeId);
   }
 
-  // A scheduled take that did not go live at its commit (deleted before the
-  // boundary) must not keep sounding.
-  for (const takeId of [...scheduledPlayers.keys()]) {
-    if (!nextTakeIds.has(takeId)) disposeScheduledPlayer(takeId);
+  // A scheduled take whose boundary has passed without it going live (it
+  // was deleted, or replaced at the same boundary) must not keep sounding.
+  // One scheduled for a later boundary (after a paint stall) waits for its
+  // own commit.
+  const now = Tone.immediate();
+  for (const [takeId, scheduled] of [...scheduledPlayers]) {
+    if (!nextTakeIds.has(takeId) && scheduled.startAt <= now) disposeScheduledPlayer(takeId);
   }
 }
 
-// Switched on the audio clock's current time: the value setter schedules at
-// Tone.now(), one lookahead (100 ms) late, so the loops would still sound
-// through the speakers into the start of a take.
 function disposeScheduledPlayer(takeId: string): void {
   const scheduled = scheduledPlayers.get(takeId);
   if (!scheduled) return;
@@ -183,13 +202,21 @@ export function scheduleMoodPlayerSwap(
   cycleSeconds: number,
 ): void {
   const outgoing = outgoingTakeId === null ? undefined : players.get(outgoingTakeId);
-  if (incoming && outgoing?.take === incoming.take) return;
+  if (
+    incoming &&
+    outgoing &&
+    outgoingTakeId === incoming.takeId &&
+    playsSameAudio(outgoing.take, incoming.take)
+  ) {
+    return;
+  }
 
   const swapAt = Math.max(boundaryTime, Tone.immediate());
   outgoing?.player?.stop(swapAt);
-  // An outgoing take that was itself only scheduled never becomes live.
+  // An outgoing take that is itself only scheduled (for an earlier locked
+  // boundary, or this same one) stops here too; its commit disposes it.
   if (outgoingTakeId !== null && outgoingTakeId !== incoming?.takeId) {
-    disposeScheduledPlayer(outgoingTakeId);
+    scheduledPlayers.get(outgoingTakeId)?.player?.stop(swapAt);
   }
   if (!incoming || !hasPlayableAudio(incoming.take)) return;
 
@@ -197,9 +224,13 @@ export function scheduleMoodPlayerSwap(
   scheduledPlayers.set(incoming.takeId, {
     take: incoming.take,
     player: createMoodPlayer(incoming.take, epoch, cycleSeconds, swapAt),
+    startAt: swapAt,
   });
 }
 
+// Switched on the audio clock's current time: the value setter schedules at
+// Tone.now(), one lookahead (100 ms) late, so the loops would still sound
+// through the speakers into the start of a take.
 export function setCaptureGain(muted: boolean): void {
   const gain = getCaptureGain().gain;
   const now = Tone.immediate();
