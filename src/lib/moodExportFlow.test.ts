@@ -49,6 +49,14 @@ vi.mock("./moodTransport", () => ({
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
+const autoSaveMocks = vi.hoisted(() => ({
+  flushPending: vi.fn(),
+}));
+
+vi.mock("./autoSave", () => ({
+  flushPending: autoSaveMocks.flushPending,
+}));
+
 vi.mock("tone", () => toneHarness.createToneModule());
 
 import { MOOD_EXPORT_MAX_MS, type ExportOptions } from "./export";
@@ -83,6 +91,7 @@ describe("moodExportFlow", () => {
     toneHarness.setLookahead(0);
     moodTransportMocks.startMoodPerformanceForExportFlow.mockReset();
     moodTransportMocks.stopMoodPerformance.mockReset();
+    autoSaveMocks.flushPending.mockReset();
     moodTransportMocks.startMoodPerformanceForExportFlow.mockImplementation(async () => {
       useAppStore.getState().actions.setMoodPerforming(true, 10);
       return true;
@@ -195,6 +204,38 @@ describe("moodExportFlow", () => {
     await expect(handle.result).rejects.toThrow(/page hidden/);
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    "flushes the mix the stop marked when a render fails while hidden (%s)",
+    async (hidden, flushes) => {
+      createPieceWithCycle();
+      audioMocks.audioContext.currentTime = 10.1;
+      toneHarness.setImmediate(10.1);
+      Object.defineProperty(document, "hidden", { value: hidden, configurable: true });
+      exportMocks.exportSong.mockImplementation(async (_canvas, _ctx, options) => {
+        audioMocks.audioContext.currentTime = 12;
+        await (options as ExportOptions).drive?.prepare?.();
+        throw new Error("page hidden");
+      });
+
+      try {
+        const handle = startMoodExport({ mimeType: "video/webm" });
+        await expect(handle.result).rejects.toThrow(/page hidden/);
+      } finally {
+        Object.defineProperty(document, "hidden", { value: false, configurable: true });
+      }
+
+      expect(autoSaveMocks.flushPending).toHaveBeenCalledTimes(flushes);
+      if (flushes > 0) {
+        expect(autoSaveMocks.flushPending.mock.invocationCallOrder[0]).toBeGreaterThan(
+          moodTransportMocks.stopMoodPerformance.mock.invocationCallOrder[0],
+        );
+      }
+    },
+  );
 
   it("does not stop a performance it never started when the export is refused", async () => {
     createPieceWithCycle();

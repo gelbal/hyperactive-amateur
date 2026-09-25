@@ -4,6 +4,7 @@ import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import { waitUntilAudioTime } from "./async";
 import { getAudioContext } from "./audio";
+import { flushPending } from "./autoSave";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
 import { getActiveExportSession } from "./exportSession";
 import { nextCycleBoundary } from "./moodClock";
@@ -112,7 +113,13 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     // export started — otherwise the UI shows a live performance over a
     // transport the interruption handlers already stopped. A finished or
     // capped render is a success and keeps performing.
-    if (performanceStartedByExport) stopMoodPerformance();
+    if (performanceStartedByExport) {
+      stopMoodPerformance();
+      // The stop marks the mix for saving after the hide's own flush ran
+      // (the render is aborted from that handler): flush again while the
+      // page can still write.
+      if (typeof document !== "undefined" && document.hidden) flushPending();
+    }
     throw err;
   });
   // exportSong registered its session synchronously before its first await,
