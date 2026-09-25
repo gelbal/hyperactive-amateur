@@ -29,6 +29,11 @@ const audioLifecycleMocks = vi.hoisted(() => ({
   ensureAudioRunning: vi.fn(),
 }));
 
+const moodPlayersMocks = vi.hoisted(() => ({
+  stopAllMoodPlayers: vi.fn(),
+  syncMoodPlayers: vi.fn(),
+}));
+
 vi.mock("tone", () => ({
   getDraw: vi.fn(() => toneMocks.draw),
   getTransport: vi.fn(() => toneMocks.transport),
@@ -39,6 +44,11 @@ vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
 }));
 
+vi.mock("./moodPlayers", () => ({
+  stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
+  syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
+}));
+
 import {
   __resetMoodRendererForTesting,
   drawMoodFrame,
@@ -46,6 +56,7 @@ import {
 } from "./moodRenderer";
 import {
   __resetMoodVideoPoolForTesting,
+  syncPool,
   videoForTake,
 } from "./moodVideoPool";
 import {
@@ -211,6 +222,8 @@ describe("moodRenderer", () => {
     toneMocks.transport.scheduleRepeat.mockClear();
     toneMocks.transport.position = 0;
     toneMocks.draw.schedule.mockClear();
+    moodPlayersMocks.stopAllMoodPlayers.mockReset();
+    moodPlayersMocks.syncMoodPlayers.mockReset();
     installInstantImages();
   });
 
@@ -357,6 +370,7 @@ describe("moodRenderer", () => {
       cycleCount: 0,
     };
     const ctx = createRenderer("corners");
+    syncPool([{ takeId: "live", url: "blob:test/live", loopStart: 0.25, loopEnd: 1.25 }]);
 
     drawMoodFrame(1, { piece: renderPiece, performance });
 
