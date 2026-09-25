@@ -102,6 +102,13 @@ describe("tailwind pointer-coarse variants", () => {
     );
   }, 20_000);
 
+  it("emits the phone title's min-[360px] size beside the Mood tall variant", async () => {
+    const css = await builtCss();
+    // An object entry in theme.screens disables Tailwind's min-/max-
+    // arbitrary variants, which the header title relies on.
+    expect(css).toMatch(/@media \(min-width: 360px\)\s*{\s*\.min-\\\[360px\\\]\\:text-3xl/);
+  }, 20_000);
+
   it("emits the height-gated tall variant used by the Mood viewport lock", async () => {
     const css = await builtCss();
     expect(css).toContain("@media (min-height: 640px)");
