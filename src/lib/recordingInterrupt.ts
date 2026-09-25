@@ -2,20 +2,31 @@
 // ABOUTME: Lets media/audio lifecycle code interrupt active flows without importing recordingFlow.
 export interface RecordingInterruptHandler {
   isActive: () => boolean;
-  interrupt: (reason: "interrupted") => void;
+  interrupt: (reason: "user" | "interrupted") => void;
 }
 
-let recordingInterruptHandler: RecordingInterruptHandler | null = null;
+let recordingInterruptHandlers: RecordingInterruptHandler[] = [];
 
 export function registerRecordingInterruptHandler(
   handler: RecordingInterruptHandler | null,
-): void {
-  recordingInterruptHandler = handler;
+): () => void {
+  if (!handler) {
+    recordingInterruptHandlers = [];
+    return () => undefined;
+  }
+  recordingInterruptHandlers = [...recordingInterruptHandlers, handler];
+  return () => {
+    recordingInterruptHandlers = recordingInterruptHandlers.filter(
+      (candidate) => candidate !== handler,
+    );
+  };
 }
 
-export function interruptActiveRecording(reason: "interrupted"): boolean {
-  const interruptHandler = recordingInterruptHandler;
-  if (!interruptHandler?.isActive()) return false;
-  interruptHandler.interrupt(reason);
-  return true;
+export function interruptActiveRecording(reason: "user" | "interrupted"): boolean {
+  for (const interruptHandler of recordingInterruptHandlers) {
+    if (!interruptHandler.isActive()) continue;
+    interruptHandler.interrupt(reason);
+    return true;
+  }
+  return false;
 }

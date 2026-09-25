@@ -18,6 +18,7 @@ let kit: Array<{ id: string; voice: DrumVoice } | undefined> = [];
 // Tone has already scheduled in its lookahead still play.
 const VOICE_RETIRE_MS = 1500;
 const retiring = new Map<DrumVoice, ReturnType<typeof setTimeout>>();
+let countInClick: Tone.MembraneSynth | null = null;
 let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
@@ -115,6 +116,13 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
     kit[trackId]?.voice.trigger(when, track.volume);
   }
   useAppStore.getState().actions.markTriggered(trackId);
+}
+
+// The Mood count-in click has its own voice: an empty track plays a drum,
+// so a kit voice here would count the take in on a kick.
+export function triggerCountInClick(when: number): void {
+  countInClick ??= new Tone.MembraneSynth({ volume: -10 }).toDestination();
+  countInClick.triggerAttackRelease("C2", "16n", when, 0.35);
 }
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
@@ -266,6 +274,8 @@ export function __resetAudioForTesting(): void {
   players = new Map();
   lastClips = new Map();
   for (const entry of kit) entry?.voice.dispose();
+  countInClick?.dispose();
+  countInClick = null;
   kit = [];
   for (const [voice, timer] of retiring) {
     clearTimeout(timer);

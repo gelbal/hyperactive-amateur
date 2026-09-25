@@ -8,18 +8,28 @@ import type {
   MoodSelectionEntry,
   MoodStageId,
   MoodTake,
+  RecordingState,
 } from "../types";
 import { drawCover } from "./canvasDraw";
+import {
+  deriveMoodMetronomeMicId,
+  deriveMoodMetronomeTakeId,
+  getMoodRecordingPreviewStream,
+} from "./moodCapture";
 import { applyDueCommits } from "./moodCommits";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import { layoutFor, type TileRect } from "./moodTilers";
 import {
   isVideoReadyForDraw,
+  setCaptureVideoPolicy,
   videoForTake,
 } from "./moodVideoPool";
 
 const TILE_BLACK = "#050505";
 const OFF_POSTER_ALPHA = 0.28;
+const CAPTURE_FROZEN_POSTER_ALPHA = 0.12;
+
+export { deriveMoodMetronomeMicId } from "./moodCapture";
 
 interface MoodRenderer {
   canvas: HTMLCanvasElement;
@@ -40,6 +50,8 @@ interface PosterCacheEntry {
 
 let renderer: MoodRenderer | null = null;
 const posterCache = new Map<string, PosterCacheEntry>();
+let capturePreviewVideo: HTMLVideoElement | null = null;
+let capturePreviewStream: MediaStream | null = null;
 
 export function initMoodRenderer(canvas: HTMLCanvasElement, stage: MoodStageId): void {
   const descriptor = STAGE_DESCRIPTORS[stage];
@@ -66,6 +78,82 @@ function postCommitState(stage: MoodStageId, fallback: MoodRenderState): MoodRen
 function liveTakeFor(mic: MoodMic, entry: MoodSelectionEntry | undefined): MoodTake | null {
   if (!entry || entry === "off") return null;
   return mic.takes.find((take) => take.id === entry) ?? null;
+}
+
+function isCaptureRecordingState(state: RecordingState): boolean {
+  return state === "preparing" || state === "countdown" || state === "recording";
+}
+
+function clearCapturePreviewVideo(): void {
+  if (!capturePreviewVideo) return;
+  capturePreviewVideo.pause();
+  capturePreviewVideo.srcObject = null;
+  capturePreviewStream = null;
+}
+
+function previewVideoForStream(stream: MediaStream | null): HTMLVideoElement | null {
+  if (!stream) {
+    clearCapturePreviewVideo();
+    return null;
+  }
+  if (!capturePreviewVideo) {
+    capturePreviewVideo = document.createElement("video");
+    capturePreviewVideo.autoplay = true;
+    capturePreviewVideo.muted = true;
+    capturePreviewVideo.playsInline = true;
+  }
+  if (capturePreviewStream !== stream) {
+    capturePreviewStream = stream;
+    capturePreviewVideo.srcObject = stream;
+    void capturePreviewVideo.play().catch(() => undefined);
+  }
+  return capturePreviewVideo;
+}
+
+interface CaptureRenderState {
+  active: boolean;
+  hotMicId: string | null;
+  metronomeMicId: string | null;
+  metronomeTakeId: string | null;
+  previewVideo: HTMLVideoElement | null;
+}
+
+function captureRenderState(
+  piece: MoodPiece,
+  performance: MoodPerformanceState,
+): CaptureRenderState {
+  const state = useAppStore.getState();
+  const hotMicId = performance.hotMicId;
+  const active = hotMicId !== null && isCaptureRecordingState(state.recording.state);
+
+  if (!active) {
+    clearCapturePreviewVideo();
+    setCaptureVideoPolicy(false);
+    return {
+      active: false,
+      hotMicId: null,
+      metronomeMicId: null,
+      metronomeTakeId: null,
+      previewVideo: null,
+    };
+  }
+
+  const metronomeMicId = state.mood.monitorWithHeadphones
+    ? null
+    : deriveMoodMetronomeMicId(piece);
+  const metronomeTakeId =
+    metronomeMicId === null
+      ? null
+      : deriveMoodMetronomeTakeId(piece, performance);
+  setCaptureVideoPolicy(true, metronomeTakeId);
+
+  return {
+    active: true,
+    hotMicId,
+    metronomeMicId,
+    metronomeTakeId,
+    previewVideo: previewVideoForStream(getMoodRecordingPreviewStream()),
+  };
 }
 
 function lastPosterTake(mic: MoodMic): MoodTake | null {
@@ -131,12 +219,75 @@ function drawPoster(
   ctx.restore();
 }
 
+export function drawDesaturated(
+  ctx: CanvasRenderingContext2D,
+  rect: TileRect,
+  drawTile: () => void,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  drawTile();
+  ctx.globalCompositeOperation = "saturation";
+  ctx.fillStyle = "#000";
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.restore();
+}
+
+function drawCaptureTile(
+  ctx: CanvasRenderingContext2D,
+  mic: MoodMic,
+  entry: MoodSelectionEntry | undefined,
+  rect: TileRect,
+  capture: CaptureRenderState,
+): void {
+  fillTile(ctx, rect);
+  if (mic.id === capture.hotMicId) {
+    if (capture.previewVideo && isVideoReadyForDraw(capture.previewVideo)) {
+      drawCover(ctx, capture.previewVideo, {
+        x: rect.x,
+        y: rect.y,
+        width: rect.w,
+        height: rect.h,
+      });
+    }
+    return;
+  }
+
+  const liveTake = liveTakeFor(mic, entry);
+  if (mic.id === capture.metronomeMicId && capture.metronomeTakeId) {
+    drawDesaturated(ctx, rect, () => {
+      const video = videoForTake(capture.metronomeTakeId as string);
+      if (video && isVideoReadyForDraw(video)) {
+        drawCover(ctx, video, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.w,
+          height: rect.h,
+        });
+        return;
+      }
+      drawPoster(ctx, liveTake ?? lastPosterTake(mic), rect, 1);
+    });
+    return;
+  }
+
+  drawPoster(ctx, liveTake ?? lastPosterTake(mic), rect, CAPTURE_FROZEN_POSTER_ALPHA);
+}
+
 function drawWallTile(
   ctx: CanvasRenderingContext2D,
   mic: MoodMic,
   entry: MoodSelectionEntry | undefined,
   rect: TileRect,
+  capture: CaptureRenderState,
 ): void {
+  if (capture.active) {
+    drawCaptureTile(ctx, mic, entry, rect, capture);
+    return;
+  }
+
   fillTile(ctx, rect);
   const liveTake = liveTakeFor(mic, entry);
   if (liveTake) {
@@ -172,9 +323,10 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
 
+  const capture = captureRenderState(piece, performance);
   const micStates = piece.mics.map((mic) => ({
     micId: mic.id,
-    live: liveTakeFor(mic, performance.selections[mic.id]) !== null,
+    live: capture.active || liveTakeFor(mic, performance.selections[mic.id]) !== null,
   }));
   const rects = layoutFor(piece.stage, piece.lens, micStates);
   const micById = new Map(piece.mics.map((mic) => [mic.id, mic]));
@@ -182,11 +334,18 @@ export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   for (const rect of rects) {
     const mic = micById.get(rect.micId);
     if (!mic) continue;
-    drawWallTile(ctx, mic, performance.selections[mic.id], rect);
+    drawWallTile(ctx, mic, performance.selections[mic.id], rect, capture);
   }
 }
 
 export function __resetMoodRendererForTesting(): void {
   renderer = null;
   posterCache.clear();
+  clearCapturePreviewVideo();
+  capturePreviewVideo = null;
+  setCaptureVideoPolicy(false);
+}
+
+export function __getMoodRendererPreviewVideoForTesting(): HTMLVideoElement | null {
+  return capturePreviewVideo;
 }

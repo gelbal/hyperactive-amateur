@@ -29,6 +29,22 @@ export function canStartAudibleAction(state: AudibleActionGateState): boolean {
   );
 }
 
+// A Mood take claims the store synchronously like a Chop recording, so it
+// reads only the store: a pad or Play still unlocking re-checks the store
+// when it settles and drops.
+export function canStartMoodTake(state: AudibleActionGateState): boolean {
+  return (
+    !state.playback.isPlaying &&
+    !state.playback.isExporting &&
+    state.recording.state === "idle"
+  );
+}
+
+export function canStartMoodPerformanceTap(state: AudibleActionGateState): boolean {
+  const moodIsPerforming = state.mood?.performance.isPerforming ?? false;
+  return state.recording.state === "idle" && (!state.playback.isExporting || moodIsPerforming);
+}
+
 // Recording and export claim their state in the store synchronously before
 // their first await; pads and Play claim this flag. A second pad or Play tap
 // during the unlock gets null and drops; a pad or Play that finishes its

@@ -1,7 +1,7 @@
 // ABOUTME: recordClip tests — happy path, decode failure, duration honored.
 // ABOUTME: Mocks MediaRecorder via a tiny fake that fires events on a timer.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { recordClip } from "./recorder";
+import { createRecordClipStopController, recordClip } from "./recorder";
 import * as streamLifecycle from "./streamLifecycle";
 
 class FakeMediaRecorder {
@@ -193,6 +193,21 @@ describe("recordClip", () => {
     await expect(
       recordClip(stream, 1000, ctx, { signal: controller.signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
+    expect(FakeMediaRecorder.stopCalls).toBeGreaterThan(0);
+  });
+
+  it("resolves with collected chunks when the keep-result stop controller fires early", async () => {
+    const ctx = makeAudioContext(async () => fakeAudioBuffer);
+    const stream = {} as MediaStream;
+    const stopController = createRecordClipStopController();
+
+    const promise = recordClip(stream, 1000, ctx, { stopController });
+    queueMicrotask(() => stopController.stop());
+
+    await expect(promise).resolves.toMatchObject({
+      audioBuffer: fakeAudioBuffer,
+      durationMs: 1000,
+    });
     expect(FakeMediaRecorder.stopCalls).toBeGreaterThan(0);
   });
 });

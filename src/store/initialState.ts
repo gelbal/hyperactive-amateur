@@ -11,6 +11,7 @@ export const MAX_STEP_COUNT = 64;
 export const VIDEO_DEVICE_STORAGE_KEY = "hyperactive-amateur-video-device";
 export const AUDIO_DEVICE_STORAGE_KEY = "hyperactive-amateur-audio-device";
 export const APP_MODE_STORAGE_KEY = "ha:lastMode";
+export const MOOD_HEADPHONES_STORAGE_KEY = "ha:mood:headphones";
 
 function readStoredDeviceId(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -29,6 +30,15 @@ function readStoredAppMode(): AppMode {
     return value === "mood" || value === "chop" ? value : "chop";
   } catch {
     return "chop";
+  }
+}
+
+function readStoredMoodHeadphones(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -76,6 +86,7 @@ export function createInitialState(): AppState {
     mood: {
       piece: null,
       hydration: "cold",
+      monitorWithHeadphones: readStoredMoodHeadphones(),
       performance: createIdleMoodPerformance(),
     },
     playback: {
