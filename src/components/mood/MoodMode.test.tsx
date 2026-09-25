@@ -656,7 +656,9 @@ describe("MoodMode", () => {
     });
     expect(playButton).toBeDisabled();
     expect(playButton).toHaveAttribute("title", "record the One first");
-    expect(within(slot).getByText("space")).toHaveClass("text-[10px]", "text-zinc-500");
+    // No keyboard hint on screen (a phone has no Space); Play's tooltip
+    // carries the shortcut, as Chop's does.
+    expect(within(slot).queryByText("space")).not.toBeInTheDocument();
     expect(within(slot).getByLabelText("Time feel")).toHaveTextContent(
       "Pocket · first loop sets the length",
     );
@@ -752,6 +754,18 @@ describe("MoodMode", () => {
     fireEvent.click(playButton);
 
     expect(moodTransportMocks.startMoodPerformance).not.toHaveBeenCalled();
+  });
+
+  it("names the Space shortcut in the enabled Mood Play tooltip", () => {
+    act(() => {
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+      useAppStore.getState().actions.setMoodTake("mic-0", makeTake({ id: "the-one" }));
+    });
+    renderMoodMode();
+
+    const playButton = screen.getByRole("button", { name: "Start mood performance" });
+    expect(playButton).not.toBeDisabled();
+    expect(playButton).toHaveAttribute("title", "Play or stop (space)");
   });
 
   it("explains why established-cycle Play and Stop controls are disabled during export", () => {

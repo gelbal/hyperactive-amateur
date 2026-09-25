@@ -350,7 +350,7 @@ function MoodPlayButton({ cycleSeconds }: { cycleSeconds: MoodPiece["cycleSecond
       type="button"
       aria-label={isPerforming ? "Stop mood performance" : "Start mood performance"}
       disabled={disabled}
-      title={disabledTitle}
+      title={disabledTitle ?? "Play or stop (space)"}
       onClick={handleClick}
       className={
         "inline-flex h-10 pointer-coarse:h-11 items-center gap-2 rounded border px-3 text-sm font-semibold transition-colors " +
@@ -545,7 +545,6 @@ function MoodHeaderCluster({ piece }: { piece: MoodPiece }) {
   return (
     <>
       <MoodPlayButton cycleSeconds={piece.cycleSeconds} />
-      <span className="text-[10px] text-zinc-500 -ml-2">space</span>
       <span
         role="group"
         aria-label="Time feel"
