@@ -150,6 +150,40 @@ describe("attemptAudioRepair", () => {
     expect(take?.audioBlob?.type).toBe("audio/wav");
   });
 
+  it("logs a healed Mood take, and why one still fails", async () => {
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+    const take = makeRepairTake();
+    useAppStore.getState().actions.setMoodTake("mic-0", take);
+
+    audioMocks.decodeAudioData.mockRejectedValue(new Error("still broken"));
+    await attemptAudioRepair();
+
+    expect(warnSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+      scope: "mood",
+      phase: "repair",
+      micId: "mic-0",
+      takeId: take.id,
+      hasSidecar: take.audioBlob !== null,
+      blobType: take.videoBlob.type,
+      blobSize: take.videoBlob.size,
+      name: "Error",
+      message: "still broken",
+    });
+
+    audioMocks.decodeAudioData.mockResolvedValue(healedBuffer);
+    await attemptAudioRepair();
+
+    expect(infoSpy).toHaveBeenCalledWith(LOG_EVENTS.AUDIO_REPAIRED, {
+      scope: "mood",
+      micId: "mic-0",
+      takeId: take.id,
+    });
+    infoSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it("does nothing while an export owns playback", async () => {
     seedRepairTrack(0, makeRepairClip());
     useAppStore.getState().actions.setIsExporting(true);

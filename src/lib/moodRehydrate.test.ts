@@ -630,6 +630,28 @@ describe("decodeMoodTakes", () => {
     expect(take?.posterUrl).toMatch(/^blob:test\//);
   });
 
+  it("logs why a take's audio failed to decode", async () => {
+    clearLogs();
+    const piece = cleanMoodPiece();
+    const take = piece.mics[0].takes[0];
+    const decodeAudioData = vi.fn().mockRejectedValue(new Error("decode failed"));
+
+    await decodeMoodTakes(piece, decodeContext(decodeAudioData));
+
+    const failed = getLogs().find((entry) => entry.event === LOG_EVENTS.AUDIO_DECODE_FAILED);
+    expect(failed?.payload).toEqual({
+      scope: "mood",
+      phase: "load",
+      micId: "mic-0",
+      takeId: take.id,
+      hasSidecar: true,
+      blobType: take.videoBlob.type,
+      blobSize: take.videoBlob.size,
+      name: "Error",
+      message: "decode failed",
+    });
+  });
+
   it("heals a persisted-unavailable take quietly when decode succeeds", async () => {
     const piece = cleanMoodPiece();
     piece.mics[0].takes[0] = {

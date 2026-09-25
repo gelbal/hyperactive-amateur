@@ -115,6 +115,29 @@ async function decodeMoodBlob(
   return audioContext.decodeAudioData(buffer.slice(0));
 }
 
+// Why a take's audio could not be decoded, for the on-device log: the take
+// itself only carries its repair state.
+export function logMoodDecodeFailure(
+  phase: "load" | "repair",
+  micId: string,
+  takeId: string,
+  videoBlob: Blob,
+  audioBlob: Blob | null,
+  err: unknown,
+): void {
+  logger.warn(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+    scope: "mood",
+    phase,
+    micId,
+    takeId,
+    hasSidecar: audioBlob !== null,
+    blobType: videoBlob.type,
+    blobSize: videoBlob.size,
+    name: err instanceof Error ? err.name : "",
+    message: err instanceof Error ? err.message : String(err),
+  });
+}
+
 export async function decodeMoodTakeAudio(
   take: Pick<PersistedMoodTake, "videoBlob" | "audioBlob">,
   audioContext: MoodAudioContextLike,
@@ -592,7 +615,8 @@ export async function decodeMoodTakes(
             let audioStatus: MoodTake["audioStatus"] = "ok";
             try {
               audioBuffer = await decodeMoodTakeAudio(take, audioContext);
-            } catch {
+            } catch (err) {
+              logMoodDecodeFailure("load", mic.id, take.id, take.videoBlob, take.audioBlob ?? null, err);
               audioStatus = "unavailable";
               if (!wasUnavailable) warnMoodAudioUnavailable(warnings, mic.id, take.id);
             }
