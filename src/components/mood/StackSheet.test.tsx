@@ -104,12 +104,13 @@ describe("StackSheet", () => {
       "pointer-coarse:mb-0",
       "pointer-coarse:fixed",
       "pointer-coarse:inset-x-3",
-      "pointer-coarse:bottom-3",
+      // Clear of the home indicator on a notched phone.
+      "pointer-coarse:bottom-[calc(0.75rem_+_env(safe-area-inset-bottom))]",
       "w-[min(24rem,calc(100vw-1.5rem))]",
       "max-h-[min(60vh,28rem)]",
       "overflow-x-hidden",
       "overflow-y-auto",
-      "pointer-coarse:max-h-[min(70dvh,32rem)]",
+      "pointer-coarse:max-h-[min(calc(70dvh_-_env(safe-area-inset-bottom)),32rem)]",
     );
 
     const takeRow = screen.getByRole("button", { name: /^Take 1 1\.5s$/i });

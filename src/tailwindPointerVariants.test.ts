@@ -59,10 +59,9 @@ describe("tailwind pointer-coarse variants", () => {
     const css = await builtCss();
     expect(css).toMatch(/\.pointer-coarse\\:fixed\s*{\s*position: fixed;/);
     expect(css).toMatch(/\.pointer-coarse\\:inset-x-3\s*{\s*left: 0\.75rem;\s*right: 0\.75rem;/);
-    expect(css).toMatch(/\.pointer-coarse\\:bottom-3\s*{\s*bottom: 0\.75rem;/);
-    expect(css).toMatch(
-      /\.pointer-coarse\\:max-h-\\\[min\\\(70dvh\\2c 32rem\\\)\\\]\s*{\s*max-height: min\(70dvh, 32rem\);/,
-    );
+    // The coarse sheet clears the home indicator on a notched phone.
+    expect(css).toContain("bottom: calc(0.75rem + env(safe-area-inset-bottom))");
+    expect(css).toContain("max-height: min(calc(70dvh - env(safe-area-inset-bottom)), 32rem)");
     // The fine-pointer sheet anchors upward (bottom-full/mb-2); coarse resets
     // the margin and the mic strip only becomes a scroll container on coarse —
     // an always-on overflow-x-auto clips the anchored popover to the strip box.

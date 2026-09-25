@@ -355,7 +355,7 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
       // Fine pointers open UPWARD over the stage: the fixed-height mood
       // column leaves too little room below the strip, and opening up keeps
       // the sheet clear of the panel with no page scroll.
-      className="absolute left-0 bottom-full z-40 mb-2 flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[min(60vh,28rem)] flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 p-3 shadow-xl pointer-coarse:fixed pointer-coarse:inset-x-3 pointer-coarse:bottom-3 pointer-coarse:top-auto pointer-coarse:mb-0 pointer-coarse:w-auto pointer-coarse:max-w-none pointer-coarse:max-h-[min(70dvh,32rem)] pointer-coarse:rounded-lg"
+      className="absolute left-0 bottom-full z-40 mb-2 flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[min(60vh,28rem)] flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 p-3 shadow-xl pointer-coarse:fixed pointer-coarse:inset-x-3 pointer-coarse:bottom-[calc(0.75rem_+_env(safe-area-inset-bottom))] pointer-coarse:top-auto pointer-coarse:mb-0 pointer-coarse:w-auto pointer-coarse:max-w-none pointer-coarse:max-h-[min(calc(70dvh_-_env(safe-area-inset-bottom)),32rem)] pointer-coarse:rounded-lg"
     >
       <div className="px-1">
         <span className="font-mono text-xs uppercase text-zinc-500">MIC {micNumber}</span>
