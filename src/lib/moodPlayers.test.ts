@@ -1,7 +1,15 @@
 // ABOUTME: moodPlayers tests — phase-lock Mood take loops and shared gain routing.
 // ABOUTME: Tone and Web Audio are mocked so buffer padding and start math stay deterministic.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MoodTake } from "../types";
+
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return { toneHarness: createToneHarness() };
+});
+
+const moodFxMocks = vi.hoisted(() => ({
+  input: { name: "mood-fx-input" },
+}));
 
 const toneMocks = vi.hoisted(() => {
   interface PlayerMock {
@@ -17,13 +25,12 @@ const toneMocks = vi.hoisted(() => {
 
   interface GainMock {
     gain: { value: number };
-    toDestination: ReturnType<typeof vi.fn>;
+    connect: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   }
 
   const players: PlayerMock[] = [];
   const gains: GainMock[] = [];
-  const now = vi.fn(() => 0);
 
   function makePlayer(buffer: AudioBuffer): PlayerMock {
     const player: PlayerMock = {
@@ -43,25 +50,31 @@ const toneMocks = vi.hoisted(() => {
   function makeGain(initialGain: number): GainMock {
     const gain: GainMock = {
       gain: { value: initialGain },
-      toDestination: vi.fn(() => gain),
+      connect: vi.fn(() => gain),
       dispose: vi.fn(),
     };
     gains.push(gain);
     return gain;
   }
 
-  return { gains, makeGain, makePlayer, now, players };
+  return { gains, makeGain, makePlayer, players };
 });
 
-vi.mock("tone", () => ({
-  Gain: vi.fn(function Gain(initialGain: number) {
-    return toneMocks.makeGain(initialGain);
-  }),
-  Player: vi.fn(function Player(buffer: AudioBuffer) {
-    return toneMocks.makePlayer(buffer);
-  }),
-  now: toneMocks.now,
+vi.mock("./moodFx", () => ({
+  getMoodFxInput: () => moodFxMocks.input,
 }));
+
+vi.mock("tone", () => {
+  return {
+    ...toneHarness.createToneModule(),
+    Gain: vi.fn(function Gain(initialGain: number) {
+      return toneMocks.makeGain(initialGain);
+    }),
+    Player: vi.fn(function Player(buffer: AudioBuffer) {
+      return toneMocks.makePlayer(buffer);
+    }),
+  };
+});
 
 const fakeContext = {
   createBuffer: vi.fn((channels: number, length: number, sampleRate: number) => {
@@ -86,6 +99,7 @@ import {
   stopAllMoodPlayers,
   syncMoodPlayers,
 } from "./moodPlayers";
+import { makeMoodTake } from "../test-utils/moodFixtures";
 
 function makeBuffer(
   sampleRate: number,
@@ -108,46 +122,26 @@ function makeBuffer(
   } as unknown as AudioBuffer;
 }
 
-function makeTake(overrides: Partial<MoodTake> = {}): MoodTake {
-  const id = overrides.id ?? "take-1";
-  const audioBuffer =
-    overrides.audioBuffer ??
-    makeBuffer(48000, 1, (_channel, sampleIndex) => sampleIndex / 1000, 48000);
-  const durationSeconds = overrides.durationSeconds ?? audioBuffer.duration;
-
-  return {
-    id,
-    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBlob: null,
-    posterBlob: null,
-    url: `blob:test/${id}`,
-    audioBuffer,
-    audioStatus: "ok",
-    posterUrl: null,
-    trimStartMs: 0,
-    trimEndMs: durationSeconds * 1000,
-    durationSeconds,
-    cycleMultiple: 1,
-    syncOffsetMs: 0,
-    part: null,
-    partSource: null,
-    recordedAt: 1,
-    ...overrides,
-  };
-}
-
 describe("moodPlayers", () => {
+  let defaultAudioBuffer: AudioBuffer;
+
   beforeEach(() => {
     __resetMoodPlayersForTesting();
     toneMocks.players.length = 0;
     toneMocks.gains.length = 0;
-    toneMocks.now.mockReset();
-    toneMocks.now.mockReturnValue(0);
+    toneHarness.setImmediate(0);
+    toneHarness.setLookahead(0);
+    defaultAudioBuffer = makeBuffer(
+      48_000,
+      1,
+      (_channel, sampleIndex) => sampleIndex / 1_000,
+      48_000,
+    );
     vi.mocked(fakeContext.createBuffer).mockClear();
   });
 
   it("diffs by takeId and rebuilds only when the take reference changes", () => {
-    const takeA = makeTake({ id: "take-a" });
+    const takeA = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
     syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
     const first = toneMocks.players[0];
 
@@ -155,7 +149,7 @@ describe("moodPlayers", () => {
     expect(toneMocks.players).toHaveLength(1);
     expect(first.dispose).not.toHaveBeenCalled();
 
-    const replacement = makeTake({ id: "take-a" });
+    const replacement = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
     syncMoodPlayers([{ takeId: "take-a", take: replacement }], 0, 2);
     expect(toneMocks.players).toHaveLength(2);
     expect(first.dispose).toHaveBeenCalledTimes(1);
@@ -167,10 +161,12 @@ describe("moodPlayers", () => {
   });
 
   it("skips unavailable-audio takes without creating a player", () => {
-    const unavailable = makeTake({
+    const unavailable = makeMoodTake({
       id: "take-muted-by-repair",
       audioBuffer: null,
       audioStatus: "unavailable",
+      durationSeconds: 1,
+      trimEndMs: 1_000,
     });
 
     expect(() =>
@@ -183,7 +179,7 @@ describe("moodPlayers", () => {
     const source = makeBuffer(48000, 2, (channel, sampleIndex) => {
       return channel === 0 ? sampleIndex : -sampleIndex;
     }, 48000);
-    const take = makeTake({
+    const take = makeMoodTake({
       id: "long-loop",
       audioBuffer: source,
       trimStartMs: 250,
@@ -214,8 +210,12 @@ describe("moodPlayers", () => {
     { now: 14, offset: 4 },
     { now: 18.1, offset: 0.1 },
   ])("starts immediately with a phase offset for now=$now", (row) => {
-    toneMocks.now.mockReturnValue(row.now);
-    const take = makeTake({ id: `phase-${row.now}`, cycleMultiple: 2 });
+    toneHarness.setImmediate(row.now);
+    const take = makeMoodTake({
+      id: `phase-${row.now}`,
+      audioBuffer: defaultAudioBuffer,
+      cycleMultiple: 2,
+    });
 
     syncMoodPlayers([{ takeId: take.id, take }], 10, 4);
 
@@ -225,8 +225,12 @@ describe("moodPlayers", () => {
   });
 
   it("joins immediately just after a cycle boundary instead of waiting a full cycle", () => {
-    toneMocks.now.mockReturnValue(4.02);
-    const take = makeTake({ id: "late-boundary", cycleMultiple: 1 });
+    toneHarness.setImmediate(4.02);
+    const take = makeMoodTake({
+      id: "late-boundary",
+      audioBuffer: defaultAudioBuffer,
+      cycleMultiple: 1,
+    });
 
     syncMoodPlayers([{ takeId: "late-boundary", take }], 0, 4);
 
@@ -237,8 +241,13 @@ describe("moodPlayers", () => {
   });
 
   it("applies syncOffsetMs to the phase offset and wraps inside the loop", () => {
-    toneMocks.now.mockReturnValue(13.9);
-    const take = makeTake({ id: "nudged", cycleMultiple: 1, syncOffsetMs: 250 });
+    toneHarness.setImmediate(13.9);
+    const take = makeMoodTake({
+      id: "nudged",
+      audioBuffer: defaultAudioBuffer,
+      cycleMultiple: 1,
+      syncOffsetMs: 250,
+    });
 
     syncMoodPlayers([{ takeId: "nudged", take }], 10, 4);
     {
@@ -247,7 +256,12 @@ describe("moodPlayers", () => {
       expect(offset).toBeCloseTo(0.15);
     }
 
-    const early = makeTake({ id: "early", cycleMultiple: 1, syncOffsetMs: -250 });
+    const early = makeMoodTake({
+      id: "early",
+      audioBuffer: defaultAudioBuffer,
+      cycleMultiple: 1,
+      syncOffsetMs: -250,
+    });
     syncMoodPlayers([{ takeId: "early", take: early }], 10, 4);
     {
       const [startAt, offset] = toneMocks.players[1].start.mock.calls[0];
@@ -260,10 +274,10 @@ describe("moodPlayers", () => {
     setCaptureGain(true);
     expect(toneMocks.gains).toHaveLength(1);
     expect(toneMocks.gains[0].gain.value).toBe(0);
-    expect(toneMocks.gains[0].toDestination).toHaveBeenCalledTimes(1);
+    expect(toneMocks.gains[0].connect).toHaveBeenCalledWith(moodFxMocks.input);
 
-    const takeA = makeTake({ id: "take-a" });
-    const takeB = makeTake({ id: "take-b" });
+    const takeA = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
+    const takeB = makeMoodTake({ id: "take-b", audioBuffer: defaultAudioBuffer });
     syncMoodPlayers(
       [
         { takeId: "take-a", take: takeA },
@@ -282,8 +296,8 @@ describe("moodPlayers", () => {
   });
 
   it("stops and disposes every mood player", () => {
-    const takeA = makeTake({ id: "take-a" });
-    const takeB = makeTake({ id: "take-b" });
+    const takeA = makeMoodTake({ id: "take-a", audioBuffer: defaultAudioBuffer });
+    const takeB = makeMoodTake({ id: "take-b", audioBuffer: defaultAudioBuffer });
     syncMoodPlayers(
       [
         { takeId: "take-a", take: takeA },

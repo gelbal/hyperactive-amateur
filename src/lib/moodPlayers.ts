@@ -5,6 +5,7 @@ import type { MoodTake } from "../types";
 import { getAudioContext } from "./audio";
 import { sliceAudioBuffer } from "./audioBufferSlice";
 import { takeLoopPeriod } from "./moodClock";
+import { getMoodFxInput } from "./moodFx";
 
 export interface MoodPlayerLiveTake {
   takeId: string;
@@ -25,7 +26,8 @@ function positiveModulo(value: number, divisor: number): number {
 
 function getCaptureGain(): Tone.Gain {
   if (!captureGain) {
-    captureGain = new Tone.Gain(1).toDestination();
+    captureGain = new Tone.Gain(1);
+    captureGain.connect(getMoodFxInput());
   }
   return captureGain;
 }

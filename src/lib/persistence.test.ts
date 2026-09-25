@@ -7,6 +7,7 @@ import { del, get, keys, set } from "idb-keyval";
 import {
   PERSISTED_SCHEMA_VERSION,
   clearProject,
+  isBlob,
   loadProject,
   loadRecoveryBackup,
   resetPersistenceStore,
@@ -504,5 +505,14 @@ describe("persistence", () => {
     expect(await get(LEGACY_PROJECT_KEY)).toBeUndefined();
     expect(await get(QUARANTINE_KEY)).toBeUndefined();
     expect(await storedBlobKeys()).toEqual([]);
+  });
+
+  it("rejects blob-like values without a size", () => {
+    expect(
+      isBlob({
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        type: "video/webm",
+      }),
+    ).toBe(false);
   });
 });

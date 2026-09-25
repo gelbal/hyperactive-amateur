@@ -106,9 +106,11 @@ vi.mock("./install", () => ({
 
 import {
   COUNTDOWN_MS,
+  RECORD_DURATION_MS,
   __resetPersistenceRequestForTesting,
   cancelCurrentRecording,
   recordIntoTrack,
+  registerChopRecordingInterrupt,
 } from "./recordingFlow";
 import { ACQUIRE_FAILED_COPY, CAMERA_DENIED_COPY } from "./media";
 import { useAppStore } from "../store/useAppStore";
@@ -116,12 +118,14 @@ import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
-import { clearLogs } from "./logger";
+import { clearLogs, logger, LOG_EVENTS } from "./logger";
 import { autoTag } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
+
+let unregisterChopRecordingInterrupt: (() => void) | null = null;
 
 function makeDeferred<T = void>(): {
   promise: Promise<T>;
@@ -260,6 +264,7 @@ describe("recordingFlow", () => {
   let audioSession: ReturnType<typeof installNavigatorAudioSession>;
 
   beforeEach(() => {
+    unregisterChopRecordingInterrupt = registerChopRecordingInterrupt();
     __resetAudioLifecycleForTesting();
     audioSession = installNavigatorAudioSession();
     useAppStore.getState().actions.setIsExporting(false);
@@ -287,6 +292,8 @@ describe("recordingFlow", () => {
 
   afterEach(() => {
     audioSession.uninstall();
+    unregisterChopRecordingInterrupt?.();
+    unregisterChopRecordingInterrupt = null;
     vi.useRealTimers();
   });
 
@@ -396,7 +403,9 @@ describe("recordingFlow", () => {
       state: "preparing",
       activeTrackId: 2,
       countdownEndsAt: null,
+      captureEndsAt: null,
       error: null,
+      lastTakeReceipt: null,
     });
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     await flushMicrotasks();
@@ -632,6 +641,29 @@ describe("recordingFlow", () => {
     setRecordingState.mockRestore();
   });
 
+  it("sets the audio-clock capture deadline at punch-in and clears it in finally", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordIntoTrack(5);
+    await flushMicrotasks();
+    const countdownEndsAt = useAppStore.getState().recording.countdownEndsAt;
+    if (countdownEndsAt === null) throw new Error("missing countdown deadline");
+
+    await advanceCountdownToDeadline();
+
+    expect(useAppStore.getState().recording.captureEndsAt).toBe(
+      countdownEndsAt + RECORD_DURATION_MS / 1000,
+    );
+    expect(useAppStore.getState().recording.state).toBe("recording");
+
+    capture.resolve(makeRecordResult());
+    await expect(promise).resolves.toBe(true);
+
+    expect(useAppStore.getState().recording.captureEndsAt).toBeNull();
+  });
+
   it("clamps saved trim end to the actual captured buffer duration", async () => {
     vi.useFakeTimers();
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult({ durationMs: 500 }));
@@ -750,7 +782,7 @@ describe("recordingFlow", () => {
 
     expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
-    expect(useAppStore.getState().recording.state).toBe("recording");
+    expect(useAppStore.getState().recording.state).toBe("reviewing");
     await expect(observeResolution(promise)).resolves.toEqual({ status: "pending" });
     expect(posterMocks.captureFirstFrame).not.toHaveBeenCalled();
 
@@ -936,6 +968,27 @@ describe("recordingFlow", () => {
     expect(clip).not.toBeNull();
     expect(clip?.posterBlob).toBeNull();
     expect(clip?.posterUrl).toBeNull();
+  });
+
+  it("logs poster extraction failures under the poster capture event", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    posterMocks.captureFirstFrame.mockRejectedValue(new Error("poster failed"));
+
+    const promise = recordIntoTrack(2);
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(promise).resolves.toBe(true);
+      await flushMicrotasks();
+
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.POSTER_CAPTURE_ERROR, {
+        phase: "poster",
+        message: "poster failed",
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("keeps waiting when the audio clock has not reached the countdown deadline", async () => {

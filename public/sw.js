@@ -33,10 +33,42 @@ async function cacheFirst(request, event) {
   return response;
 }
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)),
+// Vite asset URLs are content-hashed, so an /assets/ entry that already
+// exists in the outgoing deploy's cache is byte-identical — copy it instead
+// of re-downloading the whole bundle on every deploy. Shell URLs ("/",
+// "/index.html") change content without changing their URL and always
+// re-fetch through addAll. Any copy failure falls back to addAll.
+async function precacheShell() {
+  const cache = await caches.open(CACHE_NAME);
+  const oldKeys = (await caches.keys()).filter(
+    (k) => k.startsWith(CACHE_PREFIX) && k !== CACHE_NAME,
   );
+  const missing = [];
+  for (const url of PRECACHE_URLS) {
+    let copied = false;
+    if (url.startsWith("/assets/")) {
+      const href = new URL(url, self.location.origin).href;
+      for (const key of oldKeys) {
+        try {
+          const previous = await caches.open(key);
+          const hit = await previous.match(href);
+          if (hit) {
+            await cache.put(new Request(href), hit.clone());
+            copied = true;
+            break;
+          }
+        } catch {
+          // fall through to addAll below
+        }
+      }
+    }
+    if (!copied) missing.push(url);
+  }
+  if (missing.length > 0) await cache.addAll(missing);
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(precacheShell());
   self.skipWaiting();
 });
 

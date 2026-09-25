@@ -2,20 +2,10 @@
 // ABOUTME: Actions are co-located under state.actions so selectors stay stable.
 import { create } from "zustand";
 import type {
-  AppMode,
   AppState,
   Clip,
   CutSubdivision,
   MediaStatus,
-  MoodLens,
-  MoodPiece,
-  MoodPart,
-  MoodSelectionCommit,
-  MoodSelectionEntry,
-  MoodStageId,
-  MoodTake,
-  MoodTimeFeel,
-  MoodVibeId,
   RecordingState,
   StorageDurability,
   Subgenre,
@@ -25,50 +15,21 @@ import type {
 import { clearProject } from "../lib/persistence";
 import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
-import { LOG_EVENTS, logger } from "../lib/logger";
 import {
-  createEmptyMoodPiece,
-  establishCycleFromClick,
-  establishCycleFromTake,
-  MAX_TAKES_PER_MIC,
-  STAGE_DESCRIPTORS,
-} from "../lib/moodStages";
-import {
-  APP_MODE_STORAGE_KEY,
   AUDIO_DEVICE_STORAGE_KEY,
-  createIdleMoodPerformance,
   createInitialState,
   MAX_STEP_COUNT,
   MIN_STEP_COUNT,
-  MOOD_HEADPHONES_STORAGE_KEY,
   STEP_COUNT_INCREMENT,
   VIDEO_DEVICE_STORAGE_KEY,
 } from "./initialState";
+import { createMoodActions, type MoodActions } from "./moodSlice";
 
 function persistDeviceId(key: string, value: string | null): void {
   if (typeof window === "undefined") return;
   try {
     if (value) window.localStorage.setItem(key, value);
     else window.localStorage.removeItem(key);
-  } catch {
-    // localStorage may be disabled in private mode; persistence is best-effort.
-  }
-}
-
-function persistAppMode(mode: AppMode): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
-  } catch {
-    // localStorage may be disabled in private mode; persistence is best-effort.
-  }
-}
-
-function persistMoodHeadphones(enabled: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (enabled) window.localStorage.setItem(MOOD_HEADPHONES_STORAGE_KEY, "1");
-    else window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
   } catch {
     // localStorage may be disabled in private mode; persistence is best-effort.
   }
@@ -92,154 +53,7 @@ function bumpProjectRevision(session: AppState["session"]): AppState["session"] 
   return { ...session, projectRevision: session.projectRevision + 1 };
 }
 
-function bumpMoodRevision(session: AppState["session"]): AppState["session"] {
-  return { ...session, moodRevision: session.moodRevision + 1 };
-}
-
-function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["performance"] {
-  const selections: Record<string, MoodSelectionEntry> = {};
-  const armed: Record<string, MoodSelectionEntry | null> = {};
-  for (const mic of piece.mics) {
-    selections[mic.id] = "off";
-    armed[mic.id] = null;
-  }
-  return {
-    ...createIdleMoodPerformance(),
-    selections,
-    armed,
-  };
-}
-
-// A Mood record that could not be opened stays failed for the session: that
-// state pauses Mood autosave, and a new piece must not unpause it and write
-// over the record.
-function settledMoodHydration(
-  hydration: AppState["mood"]["hydration"],
-): AppState["mood"]["hydration"] {
-  return hydration === "failed" ? "failed" : "ready";
-}
-
-function stopMoodPerformanceState(
-  performance: AppState["mood"]["performance"],
-): AppState["mood"]["performance"] {
-  return {
-    ...performance,
-    isPerforming: false,
-    epoch: null,
-    dropActive: false,
-    hotMicId: null,
-    cycleCount: 0,
-    // The committed mix (selections) survives a stop/mode-switch, but pending
-    // arms do not: stopping resets the boundary queue, so a preserved arm would
-    // pulse forever with no boundary to commit at. Clear armed, keep selections.
-    armed: Object.fromEntries(Object.keys(performance.selections).map((micId) => [micId, null])),
-    armedLens: null,
-    armedDropActive: null,
-  };
-}
-
-function hasPositiveBpm(bpm: number | undefined): bpm is number {
-  return typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0;
-}
-
-function establishCycleForTake(piece: MoodPiece, take: MoodTake): number {
-  if (piece.timeFeel === "click" && piece.bpm !== null && piece.cycleBars !== null) {
-    return establishCycleFromClick(piece.bpm, piece.cycleBars);
-  }
-  return establishCycleFromTake(take.durationSeconds);
-}
-
-function revokeMoodTakeObjectUrls(take: MoodTake): void {
-  if (take.url) URL.revokeObjectURL(take.url);
-  if (take.posterUrl) URL.revokeObjectURL(take.posterUrl);
-}
-
-function revokeMoodPieceObjectUrls(piece: MoodPiece): void {
-  for (const mic of piece.mics) {
-    for (const take of mic.takes) {
-      revokeMoodTakeObjectUrls(take);
-    }
-  }
-}
-
-function clearMoodTakePerformanceRefs(
-  performance: AppState["mood"]["performance"],
-  takeId: string,
-): AppState["mood"]["performance"] {
-  let selections = performance.selections;
-  let armed = performance.armed;
-
-  for (const [micId, entry] of Object.entries(performance.selections)) {
-    if (entry === takeId) {
-      if (selections === performance.selections) selections = { ...performance.selections };
-      selections[micId] = "off";
-    }
-  }
-
-  for (const [micId, entry] of Object.entries(performance.armed)) {
-    if (entry === takeId) {
-      if (armed === performance.armed) armed = { ...performance.armed };
-      armed[micId] = "off";
-    }
-  }
-
-  return selections === performance.selections && armed === performance.armed
-    ? performance
-    : { ...performance, selections, armed };
-}
-
-function commitEntryForExistingMoodTake(
-  piece: MoodPiece | null,
-  micId: string,
-  entry: MoodSelectionEntry,
-): MoodSelectionEntry {
-  if (entry === "off") return entry;
-  const mic = piece?.mics.find((candidate) => candidate.id === micId);
-  return mic?.takes.some((take) => take.id === entry) ? entry : "off";
-}
-
-export interface AppActions {
-  setAppMode: (mode: AppMode) => void;
-  setMoodHydration: (hydration: AppState["mood"]["hydration"]) => void;
-  hydrateMoodPiece: (piece: MoodPiece | null) => void;
-  createMoodPiece: (
-    stage: MoodStageId,
-    timeFeel: MoodTimeFeel,
-    opts?: { bpm?: number; cycleBars?: NonNullable<MoodPiece["cycleBars"]> },
-  ) => void;
-  scratchMoodPiece: () => void;
-  setMoodLens: (lens: MoodLens) => void;
-  setMoodVibe: (vibe: MoodVibeId) => void;
-  setMoodArmedLens: (lens: MoodLens | null) => void;
-  setMoodArmedDrop: (dropActive: boolean | null) => void;
-  setMoodPerforming: (isPerforming: boolean, epoch?: number | null) => void;
-  setMonitorWithHeadphones: (enabled: boolean) => void;
-  armMoodSelection: (micId: string, entry: MoodSelectionEntry) => void;
-  commitMoodSelections: (dueArms: MoodSelectionCommit[]) => void;
-  setMoodDrop: (dropActive: boolean) => void;
-  setMoodHotMic: (micId: string | null) => void;
-  setMoodCycleCount: (cycleCount: number) => void;
-  setMoodTake: (micId: string, take: MoodTake) => void;
-  attachMoodTakePoster: (
-    micId: string,
-    takeId: string,
-    posterBlob: Blob | null,
-    posterUrl: string | null,
-  ) => void;
-  deleteMoodTake: (micId: string, takeId: string) => void;
-  applyMoodSyncOffsetIfCurrent: (
-    micId: string,
-    takeId: string,
-    offsetMs: number,
-    expectedRevision: number,
-  ) => boolean;
-  applyMoodPartIfCurrent: (
-    micId: string,
-    takeId: string,
-    part: MoodPart | null,
-    source: "ai" | "user",
-    expectedRevision: number,
-  ) => boolean;
+export interface AppActions extends MoodActions {
   toggleStep: (trackId: number, stepIndex: number) => void;
   setBpm: (bpm: number) => void;
   setSwing: (swing: number) => void;
@@ -264,13 +78,6 @@ export interface AppActions {
     audioBlob?: Blob | null,
     expectedClip?: Clip,
   ) => void;
-  restoreMoodTakeAudio: (
-    micId: string,
-    takeId: string,
-    audioBuffer: AudioBuffer,
-    audioBlob?: Blob | null,
-    expectedTake?: MoodTake,
-  ) => void;
   clearTrackClip: (trackId: number) => void;
   deleteTrackClip: (trackId: number) => void;
   setTrackVoice: (trackId: number, voice: string) => void;
@@ -293,6 +100,8 @@ export interface AppActions {
   resumeMedia: () => Promise<void>;
   setRecordingState: (state: RecordingState, activeTrackId?: number | null) => void;
   setCountdownEndsAt: (deadline: number | null) => void;
+  setCaptureEndsAt: (deadline: number | null) => void;
+  setLastTakeReceipt: (receipt: AppState["recording"]["lastTakeReceipt"]) => void;
   setRecordingError: (error: string | null) => void;
   hydrateProject: (project: AppState["project"], manuallyTagged?: number[]) => void;
   applyPattern: (grid: boolean[][]) => void;
@@ -317,431 +126,23 @@ export const selectClipCount = (s: AppStore): number =>
 export const selectEditorOpen = (s: Pick<AppState, "project" | "session">): boolean =>
   s.session.editorUnlocked || s.project.tracks.some((t) => t.clip);
 
-export const useAppStore = create<AppStore>((set) => ({
-  ...createInitialState(),
-  actions: {
-    setAppMode: (mode) => {
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        persistAppMode(mode);
-        return {
-          appMode: mode,
-          mood: {
-            ...state.mood,
-            performance: state.mood.piece
-              ? stopMoodPerformanceState(state.mood.performance)
-              : createIdleMoodPerformance(),
-          },
-        };
-      });
-    },
+export const useAppStore = create<AppStore>((set, get) => {
+  const setUnlessExporting = (
+    updater: (state: AppStore) => AppStore | Partial<AppStore>,
+  ): void => {
+    set((state) => {
+      if (state.playback.isExporting) return state;
+      return updater(state);
+    });
+  };
 
-    setMoodHydration: (hydration) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          hydration,
-        },
-      })),
-
-    hydrateMoodPiece: (piece) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        if (state.mood.piece && state.mood.piece !== piece) {
-          revokeMoodPieceObjectUrls(state.mood.piece);
-        }
-        return {
-          mood: {
-            ...state.mood,
-            piece,
-            hydration: "ready",
-            performance: piece
-              ? createMoodPerformanceForPiece(piece)
-              : createIdleMoodPerformance(),
-          },
-        };
-      }),
-
-    createMoodPiece: (stage, timeFeel, opts) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        if (timeFeel === "click" && !hasPositiveBpm(opts?.bpm)) {
-          logger.warn(LOG_EVENTS.MOOD_CLICK_BPM_REJECTED, {
-            stage,
-            bpm: opts?.bpm ?? null,
-          });
-          return state;
-        }
-        if (state.mood.piece) {
-          revokeMoodPieceObjectUrls(state.mood.piece);
-        }
-        const piece = createEmptyMoodPiece(stage, timeFeel, opts);
-        return {
-          mood: {
-            ...state.mood,
-            piece,
-            hydration: settledMoodHydration(state.mood.hydration),
-            performance: createMoodPerformanceForPiece(piece),
-          },
-          session: bumpMoodRevision(state.session),
-        };
-      }),
-
-    scratchMoodPiece: () =>
-      set((state) => {
-        if (state.playback.isExporting || state.mood.performance.isPerforming) return state;
-        if (!state.mood.piece) return state;
-        revokeMoodPieceObjectUrls(state.mood.piece);
-        return {
-          mood: {
-            ...state.mood,
-            piece: null,
-            hydration: settledMoodHydration(state.mood.hydration),
-            performance: createIdleMoodPerformance(),
-          },
-          session: bumpMoodRevision(state.session),
-        };
-      }),
-
-    setMoodLens: (lens) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        const piece = state.mood.piece;
-        if (!piece || piece.lens === lens) return state;
-        return {
-          mood: {
-            ...state.mood,
-            piece: {
-              ...piece,
-              lens,
-              updatedAt: Date.now(),
-            },
-          },
-        };
-      }),
-
-    setMoodVibe: (vibe) =>
-      set((state) => {
-        if (
-          state.playback.isExporting ||
-          state.mood.performance.isPerforming ||
-          state.recording.state !== "idle"
-        ) {
-          return state;
-        }
-        const piece = state.mood.piece;
-        if (!piece || piece.vibe === vibe) return state;
-        return {
-          mood: {
-            ...state.mood,
-            piece: {
-              ...piece,
-              vibe,
-              updatedAt: Date.now(),
-            },
-          },
-        };
-      }),
-
-    setMoodArmedLens: (lens) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: {
-            ...state.mood.performance,
-            armedLens: lens,
-          },
-        },
-      })),
-
-    setMoodPerforming: (isPerforming, epoch = null) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: isPerforming
-            ? {
-                ...state.mood.performance,
-                isPerforming: true,
-                epoch,
-                dropActive: state.mood.piece?.vibe !== "clean",
-                armedDropActive: null,
-                hotMicId: null,
-                cycleCount: 0,
-              }
-            : stopMoodPerformanceState(state.mood.performance),
-        },
-      })),
-
-    setMonitorWithHeadphones: (enabled) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        persistMoodHeadphones(enabled);
-        return {
-          mood: {
-            ...state.mood,
-            monitorWithHeadphones: enabled,
-          },
-        };
-      }),
-
-    armMoodSelection: (micId, entry) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: {
-            ...state.mood.performance,
-            armed: { ...state.mood.performance.armed, [micId]: entry },
-          },
-        },
-      })),
-
-    commitMoodSelections: (dueArms) =>
-      set((state) => {
-        if (dueArms.length === 0) return state;
-        const selections = { ...state.mood.performance.selections };
-        const armed = { ...state.mood.performance.armed };
-        for (const { micId, entry } of dueArms) {
-          selections[micId] = commitEntryForExistingMoodTake(state.mood.piece, micId, entry);
-          armed[micId] = null;
-        }
-        return {
-          mood: {
-            ...state.mood,
-            performance: {
-              ...state.mood.performance,
-              selections,
-              armed,
-            },
-          },
-        };
-      }),
-
-    setMoodDrop: (dropActive) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: { ...state.mood.performance, dropActive },
-        },
-      })),
-    setMoodArmedDrop: (dropActive) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: { ...state.mood.performance, armedDropActive: dropActive },
-        },
-      })),
-
-    setMoodHotMic: (hotMicId) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: { ...state.mood.performance, hotMicId },
-        },
-      })),
-
-    setMoodCycleCount: (cycleCount) =>
-      set((state) => ({
-        mood: {
-          ...state.mood,
-          performance: { ...state.mood.performance, cycleCount },
-        },
-      })),
-
-    setMoodTake: (micId, take) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        const micIndex = piece.mics.findIndex((mic) => mic.id === micId);
-        if (micIndex === -1) return state;
-        const mic = piece.mics[micIndex];
-        if (mic.takes.length >= MAX_TAKES_PER_MIC) {
-          logger.warn(LOG_EVENTS.MOOD_TAKE_LIMIT_REJECTED, {
-            micId,
-            takeId: take.id,
-            maxTakes: MAX_TAKES_PER_MIC,
-          });
-          return state;
-        }
-
-        let mics = piece.mics.map((candidate, index) =>
-          index === micIndex ? { ...candidate, takes: [...candidate.takes, take] } : candidate,
-        );
-        let performance = state.mood.performance;
-        const descriptor = STAGE_DESCRIPTORS[piece.stage];
-        if (
-          descriptor.linearAxis &&
-          mics.length < descriptor.maxMics &&
-          mics.every((candidate) => candidate.takes.length > 0)
-        ) {
-          const nextMicId = `mic-${mics.length}`;
-          mics = [...mics, { id: nextMicId, takes: [] }];
-          performance = {
-            ...performance,
-            selections: { ...performance.selections, [nextMicId]: "off" },
-            armed: { ...performance.armed, [nextMicId]: null },
-          };
-        }
-
-        const cyclePatch =
-          piece.cycleSeconds === null
-            ? {
-                cycleSeconds: establishCycleForTake(piece, take),
-                oneMicId: micId,
-                oneTakeId: take.id,
-              }
-            : {};
-
-        return {
-          mood: {
-            ...state.mood,
-            piece: {
-              ...piece,
-              ...cyclePatch,
-              mics,
-              updatedAt: Date.now(),
-            },
-            performance,
-          },
-          session: bumpMoodRevision(state.session),
-        };
-      }),
-
-    attachMoodTakePoster: (micId, takeId, posterBlob, posterUrl) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        let attached = false;
-        const mics = piece.mics.map((mic) => {
-          if (mic.id !== micId) return mic;
-          const takes = mic.takes.map((take) => {
-            if (take.id !== takeId) return take;
-            attached = true;
-            if (take.posterUrl && take.posterUrl !== posterUrl) {
-              URL.revokeObjectURL(take.posterUrl);
-            }
-            return { ...take, posterBlob, posterUrl };
-          });
-          return attached ? { ...mic, takes } : mic;
-        });
-        if (!attached) return state;
-        return {
-          mood: {
-            ...state.mood,
-            piece: { ...piece, mics, updatedAt: Date.now() },
-          },
-        };
-      }),
-
-    deleteMoodTake: (micId, takeId) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        let deleted: MoodTake | null = null;
-        const mics = piece.mics.map((mic) => {
-          if (mic.id !== micId) return mic;
-          const takes = mic.takes.filter((take) => {
-            if (take.id !== takeId) return true;
-            deleted = take;
-            return false;
-          });
-          return takes.length === mic.takes.length ? mic : { ...mic, takes };
-        });
-        if (!deleted) return state;
-
-        revokeMoodTakeObjectUrls(deleted);
-        const remainingTakeCount = mics.reduce((count, mic) => count + mic.takes.length, 0);
-        const deletedTheOne = piece.oneMicId === micId && piece.oneTakeId === takeId;
-        const onePatch =
-          remainingTakeCount === 0
-            ? { cycleSeconds: null, oneMicId: null, oneTakeId: null }
-            : deletedTheOne
-              ? { oneMicId: null, oneTakeId: null }
-              : {};
-
-        return {
-          mood: {
-            ...state.mood,
-            piece: {
-              ...piece,
-              ...onePatch,
-              mics,
-              updatedAt: Date.now(),
-            },
-            performance: clearMoodTakePerformanceRefs(state.mood.performance, takeId),
-          },
-          session: bumpMoodRevision(state.session),
-        };
-      }),
-
-    applyMoodSyncOffsetIfCurrent: (micId, takeId, offsetMs, expectedRevision) => {
-      let applied = false;
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        if (state.session.moodRevision !== expectedRevision) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        let found = false;
-        const mics = piece.mics.map((mic) => {
-          if (mic.id !== micId) return mic;
-          const takes = mic.takes.map((take) => {
-            if (take.id !== takeId) return take;
-            found = true;
-            return { ...take, syncOffsetMs: offsetMs };
-          });
-          return found ? { ...mic, takes } : mic;
-        });
-        if (!found) return state;
-        applied = true;
-        return {
-          mood: {
-            ...state.mood,
-            piece: { ...piece, mics, updatedAt: Date.now() },
-          },
-        };
-      });
-      return applied;
-    },
-
-    applyMoodPartIfCurrent: (micId, takeId, part, source, expectedRevision) => {
-      let applied = false;
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        if (state.session.moodRevision !== expectedRevision) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        let found = false;
-        let blockedByManualPart = false;
-        const mics = piece.mics.map((mic) => {
-          if (mic.id !== micId) return mic;
-          const takes = mic.takes.map((take) => {
-            if (take.id !== takeId) return take;
-            found = true;
-            if (source === "ai" && take.partSource === "user") {
-              blockedByManualPart = true;
-              return take;
-            }
-            return { ...take, part, partSource: source };
-          });
-          return found && !blockedByManualPart ? { ...mic, takes } : mic;
-        });
-        if (!found || blockedByManualPart) return state;
-        applied = true;
-        return {
-          mood: {
-            ...state.mood,
-            piece: { ...piece, mics, updatedAt: Date.now() },
-          },
-        };
-      });
-      return applied;
-    },
+  return {
+    ...createInitialState(),
+    actions: {
+      ...createMoodActions({ set, setUnlessExporting, get }),
 
     toggleStep: (trackId, stepIndex) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         return {
           project: {
             ...state.project,
@@ -810,8 +211,7 @@ export const useAppStore = create<AppStore>((set) => ({
       ),
 
     extendSteps: () =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const next = Math.min(MAX_STEP_COUNT, state.project.stepCount + STEP_COUNT_INCREMENT);
         if (next === state.project.stepCount) return state;
         const padding = next - state.project.stepCount;
@@ -829,8 +229,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     removeStepColumn: (stepIndex) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         if (state.project.stepCount <= MIN_STEP_COUNT) return state;
         if (stepIndex < 0 || stepIndex >= state.project.stepCount) return state;
         const removeStart = Math.floor(stepIndex / STEP_COUNT_INCREMENT) * STEP_COUNT_INCREMENT;
@@ -854,8 +253,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setTrackVolume: (trackId, volume) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         return {
           project: {
             ...state.project,
@@ -867,8 +265,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setTrackMuted: (trackId, muted) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         return {
           project: {
             ...state.project,
@@ -902,8 +299,7 @@ export const useAppStore = create<AppStore>((set) => ({
       })),
 
     setTrackClip: (trackId, clip) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const previousTrack = state.project.tracks[trackId];
         const previous = previousTrack?.clip;
         if (previous && previous.url && previous.url !== clip.url) {
@@ -949,8 +345,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setTrackPoster: (trackId, posterBlob, expectedClip) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const current = state.project.tracks[trackId]?.clip;
         if (!current) return state;
         if (expectedClip && current !== expectedClip) return state;
@@ -980,8 +375,7 @@ export const useAppStore = create<AppStore>((set) => ({
     // fact (see lib/audioRepair.ts). Mirrors setTrackClip's repair-mute rule:
     // only a repair-owned mute is released; user mutes stay.
     restoreTrackAudio: (trackId, audioBuffer, audioBlob, expectedClip) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const track = state.project.tracks[trackId];
         const clip = track?.clip;
         if (!clip || clip.audioStatus !== "unavailable") return state;
@@ -1015,41 +409,8 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
-    restoreMoodTakeAudio: (micId, takeId, audioBuffer, audioBlob, expectedTake) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
-        const piece = state.mood.piece;
-        if (!piece) return state;
-        let restored = false;
-        const mics = piece.mics.map((mic) => {
-          if (mic.id !== micId) return mic;
-          const takes = mic.takes.map((take) => {
-            if (take.id !== takeId) return take;
-            if (take.audioStatus !== "unavailable") return take;
-            if (expectedTake && take !== expectedTake) return take;
-            restored = true;
-            return {
-              ...take,
-              audioBuffer,
-              audioStatus: "ok" as const,
-              audioBlob: audioBlob !== undefined ? audioBlob : take.audioBlob,
-            };
-          });
-          return restored ? { ...mic, takes } : mic;
-        });
-        if (!restored) return state;
-        return {
-          mood: {
-            ...state.mood,
-            piece: { ...piece, mics, updatedAt: Date.now() },
-          },
-          session: bumpMoodRevision(state.session),
-        };
-      }),
-
     clearTrackClip: (trackId) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
         if (previous && previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
@@ -1093,8 +454,7 @@ export const useAppStore = create<AppStore>((set) => ({
     // made: the next clip on this track starts fresh. The voice, steps,
     // volume, a video toggle the user made and a user mute stay.
     deleteTrackClip: (trackId) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const previous = state.project.tracks[trackId]?.clip;
         if (!previous) return state;
         if (previous.url) URL.revokeObjectURL(previous.url);
@@ -1132,8 +492,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setTrackVoice: (trackId, voice) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         return {
           project: {
             ...state.project,
@@ -1146,8 +505,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     setTrackTag: (trackId, tag, source = "user") =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const prevTrack = state.project.tracks[trackId];
         const tagUnchanged = prevTrack?.tag === tag;
         const wouldClaim =
@@ -1177,18 +535,26 @@ export const useAppStore = create<AppStore>((set) => ({
         if (wouldClearReasoning) {
           project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
         }
-        return { project, session: bumpProjectRevision(session) };
+        // Only user picks invalidate pending AI pattern applies. System
+        // (auto-tag) writes race the Suggest round-trip on a fresh project —
+        // bumping here made the first Suggest after recording reject its own
+        // response ("Beat changed while Gemini was thinking").
+        return {
+          project,
+          session: source === "user" ? bumpProjectRevision(session) : session,
+        };
       }),
 
+    // Reasoning strings are only ever written by the auto-tag pipeline
+    // (applyClassifiedTag), so they never bump projectRevision: a system
+    // write landing mid-flight must not invalidate a pending pattern apply.
     setTrackTagReasoning: (trackId, reasoning) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const current = state.project.tagReasoning;
         if (reasoning === null || reasoning === "") {
           if (!(trackId in current)) return state;
           return {
             project: { ...state.project, tagReasoning: omitKey(current, trackId) },
-            session: bumpProjectRevision(state.session),
           };
         }
         if (current[trackId] === reasoning) return state;
@@ -1197,13 +563,11 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning: { ...current, [trackId]: reasoning },
           },
-          session: bumpProjectRevision(state.session),
         };
       }),
 
     setTrackShowVideo: (trackId, showVideo, source = "user") =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const next = state.project.tracks.map((track) =>
           track.id === trackId ? { ...track, showVideo } : track,
         );
@@ -1292,6 +656,16 @@ export const useAppStore = create<AppStore>((set) => ({
         recording: { ...state.recording, countdownEndsAt: deadline },
       })),
 
+    setCaptureEndsAt: (deadline) =>
+      set((state) => ({
+        recording: { ...state.recording, captureEndsAt: deadline },
+      })),
+
+    setLastTakeReceipt: (receipt) =>
+      set((state) => ({
+        recording: { ...state.recording, lastTakeReceipt: receipt },
+      })),
+
     setRecordingError: (error) =>
       set((state) => ({
         recording: { ...state.recording, error },
@@ -1304,8 +678,7 @@ export const useAppStore = create<AppStore>((set) => ({
       set((state) => ({ session: { ...state.session, recordingStationDismissed: false } })),
 
     hydrateProject: (project, manuallyTagged) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         // If the rehydrated project has anything to play (a recorded clip, or
         // steps on the drum kit alone), the user is past the first-recording
         // walkthrough; suppress the in-viewport station (and its permission
@@ -1336,8 +709,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }),
 
     applyPattern: (grid) =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         if (!Array.isArray(grid) || grid.length !== 8) return state;
         const expectedLen = state.project.stepCount;
         let changed = false;
@@ -1359,8 +731,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
     applyPatternIfCurrent: (grid, expectedProjectRevision, expectedStepCount) => {
       let applied = false;
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         if (
           state.session.projectRevision !== expectedProjectRevision ||
           state.project.stepCount !== expectedStepCount
@@ -1418,8 +789,7 @@ export const useAppStore = create<AppStore>((set) => ({
     },
 
     reset: () =>
-      set((state) => {
-        if (state.playback.isExporting) return state;
+      setUnlessExporting((state) => {
         const next = createInitialState();
         return {
           ...next,
@@ -1429,5 +799,6 @@ export const useAppStore = create<AppStore>((set) => ({
           },
         };
       }),
-  },
-}));
+    },
+  };
+});

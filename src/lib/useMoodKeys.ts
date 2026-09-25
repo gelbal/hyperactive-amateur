@@ -3,6 +3,15 @@
 import { useEffect } from "react";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodMic, MoodSelectionEntry } from "../types";
+import {
+  pressMoodBrake,
+  pressMoodGate,
+  pressMoodHarmonize,
+  releaseMoodBrake,
+  releaseMoodGate,
+  releaseMoodHarmonize,
+  triggerMoodEcho,
+} from "./moodFx";
 import { armDrop, armSelection } from "./moodPerformance";
 
 function isEditable(target: EventTarget | null): boolean {
@@ -31,6 +40,13 @@ function nextStackEntry(mic: MoodMic, current: MoodSelectionEntry): MoodSelectio
 
 export function useMoodKeys(): void {
   useEffect(() => {
+    const heldFxKeys = new Set<"KeyB" | "KeyG" | "KeyH">();
+    const releaseHeldFx = (code: "KeyB" | "KeyG" | "KeyH") => {
+      if (!heldFxKeys.delete(code)) return;
+      if (code === "KeyG") releaseMoodGate();
+      else if (code === "KeyB") releaseMoodBrake();
+      else releaseMoodHarmonize();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
       if (isEditable(event.target)) return;
@@ -41,6 +57,30 @@ export function useMoodKeys(): void {
       if (event.code === "KeyD") {
         event.preventDefault();
         armDrop();
+        return;
+      }
+
+      if (event.code === "KeyG") {
+        event.preventDefault();
+        if (pressMoodGate()) heldFxKeys.add("KeyG");
+        return;
+      }
+
+      if (event.code === "KeyE") {
+        event.preventDefault();
+        triggerMoodEcho();
+        return;
+      }
+
+      if (event.code === "KeyB") {
+        event.preventDefault();
+        if (pressMoodBrake()) heldFxKeys.add("KeyB");
+        return;
+      }
+
+      if (event.code === "KeyH") {
+        event.preventDefault();
+        if (pressMoodHarmonize()) heldFxKeys.add("KeyH");
         return;
       }
 
@@ -59,7 +99,27 @@ export function useMoodKeys(): void {
       armSelection(mic.id, event.shiftKey ? "off" : nextStackEntry(mic, current));
     };
 
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "KeyG" && event.code !== "KeyB" && event.code !== "KeyH") return;
+      if (!heldFxKeys.has(event.code)) return;
+      event.preventDefault();
+      releaseHeldFx(event.code);
+    };
+
+    const releaseAllHeldFx = () => {
+      releaseHeldFx("KeyG");
+      releaseHeldFx("KeyB");
+      releaseHeldFx("KeyH");
+    };
+
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", releaseAllHeldFx);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", releaseAllHeldFx);
+      releaseAllHeldFx();
+    };
   }, []);
 }

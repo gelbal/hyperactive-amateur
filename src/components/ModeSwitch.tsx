@@ -14,6 +14,12 @@ export function ModeSwitch() {
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const recordingState = useAppStore((s) => s.recording.state);
   const disabled = isExporting || recordingState !== "idle";
+  const disabledTitle =
+    recordingState !== "idle"
+      ? "locked during capture"
+      : isExporting
+        ? "frozen during export"
+        : undefined;
 
   const switchMode = (nextMode: AppMode) => {
     if (disabled || nextMode === appMode) return;
@@ -42,6 +48,7 @@ export function ModeSwitch() {
             type="button"
             aria-pressed={active}
             disabled={disabled}
+            title={disabledTitle}
             onClick={() => switchMode(mode.id)}
             className={
               "px-3 py-1.5 pointer-coarse:min-h-11 text-sm font-medium rounded-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +

@@ -1,8 +1,14 @@
 // ABOUTME: Pure Mood take snap policy for One capture and cycle-multiple loops.
 // ABOUTME: Computes non-destructive durations and trim targets without store or engine imports.
-export type MoodTakeCycleMultiple = 0.5 | 1 | 2 | 4;
+import {
+  MOOD_TAKE_CYCLE_MULTIPLES,
+  type MoodTakeCycleMultiple,
+} from "../types";
+import { MOOD_ONE_MIN_SECONDS, MOOD_TAKE_HARD_CAP_SECONDS } from "./moodStages";
 
-export type MoodTakeSnapResult =
+export type { MoodTakeCycleMultiple } from "../types";
+
+type MoodTakeSnapResult =
   | {
       ok: true;
       isOne: true;
@@ -22,9 +28,6 @@ export type MoodTakeSnapResult =
     };
 
 const MIN_CONTENT_SECONDS = 0.25;
-const MIN_ONE_SECONDS = 1;
-const MAX_ONE_SECONDS = 20;
-const CYCLE_MULTIPLES: readonly MoodTakeCycleMultiple[] = [0.5, 1, 2, 4];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -46,7 +49,11 @@ export function snapTake(
     return {
       ok: true,
       isOne: true,
-      durationSeconds: clamp(contentSeconds, MIN_ONE_SECONDS, MAX_ONE_SECONDS),
+      durationSeconds: clamp(
+        contentSeconds,
+        MOOD_ONE_MIN_SECONDS,
+        MOOD_TAKE_HARD_CAP_SECONDS,
+      ),
     };
   }
 
@@ -63,7 +70,9 @@ export function snapTake(
   }
 
   const cycleMultiple =
-    CYCLE_MULTIPLES.find((multiple) => multiple * cycleSeconds >= contentSeconds) ?? 4;
+    MOOD_TAKE_CYCLE_MULTIPLES.find(
+      (multiple) => multiple * cycleSeconds >= contentSeconds,
+    ) ?? 4;
 
   return {
     ok: true,

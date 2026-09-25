@@ -9,6 +9,11 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      screens: {
+        panel: "896px",
+        wide: "1120px",
+        tall: { raw: "(min-height: 640px)" },
+      },
       gridTemplateColumns: {
         16: "repeat(16, minmax(0, 1fr))",
       },

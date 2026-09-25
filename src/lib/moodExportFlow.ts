@@ -2,7 +2,7 @@
 // ABOUTME: Owns the stop signal, boundary-aligned recorder start, and exportSong's mood drive hooks.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { waitMs } from "./async";
+import { waitUntilAudioTime } from "./async";
 import { getAudioContext } from "./audio";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
 import { getActiveExportSession } from "./exportSession";
@@ -10,12 +10,12 @@ import { nextCycleBoundary } from "./moodClock";
 import { startMoodPerformanceForExportFlow, stopMoodPerformance } from "./moodTransport";
 import { getActiveCanvas } from "./videoEngine";
 
-export interface MoodExportOptions {
+interface MoodExportOptions {
   mimeType: string;
   onProgress?: (fraction: number) => void;
 }
 
-export interface MoodExportHandle {
+interface MoodExportHandle {
   result: Promise<ExportResult>;
   // Ends the render (a SUCCESS — the take is done); the performance keeps
   // running. Resolve-only: exportSong's stop signal must never reject.
@@ -24,19 +24,6 @@ export interface MoodExportHandle {
   // roll — the UI must not offer finish before this (an early finish would
   // stop a recorder that captured nothing).
   recordingStarted: Promise<void>;
-}
-
-// No abort signal on purpose: exportSong races prepare against its own
-// abort promise, so a dangling wait after an abort resolves harmlessly.
-async function waitUntilAudioTime(
-  deadlineSeconds: number,
-  audioContext: Pick<BaseAudioContext, "currentTime">,
-): Promise<void> {
-  for (;;) {
-    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
-    if (remainingMs <= 0) return;
-    await waitMs(remainingMs);
-  }
 }
 
 export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
@@ -110,6 +97,8 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
           audioContext.currentTime <= epoch
             ? epoch
             : nextCycleBoundary(epoch, cycleSeconds, Tone.now());
+        // No abort signal on purpose: exportSong races prepare against its own
+        // abort promise, so a dangling wait after an abort resolves harmlessly.
         await waitUntilAudioTime(boundaryTime, audioContext);
         markRecordingStarted();
       },

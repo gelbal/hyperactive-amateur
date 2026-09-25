@@ -14,6 +14,8 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { loadProject, clearProject } from "./persistence";
 import { clearLogs, getLogs, LOG_EVENTS } from "./logger";
+import { decodeMoodTakes, rehydrateMoodFromStorage } from "./moodRehydrate";
+import { makeMoodTake } from "../test-utils/moodFixtures";
 
 function makeDeferred<T = void>(): {
   promise: Promise<T>;
@@ -30,6 +32,7 @@ describe("autoSave", () => {
   beforeEach(async () => {
     stopAutoSave();
     useAppStore.getState().actions.reset();
+    await moodPersistence.clearMoodPiece();
     await clearProject();
     clearLogs();
     vi.useFakeTimers();
@@ -101,6 +104,114 @@ describe("autoSave", () => {
 
     expect(clearMoodSpy).not.toHaveBeenCalled();
     expect(saveMoodSpy).not.toHaveBeenCalled();
+  });
+
+  it("debounces a stopped Mood selection commit with the current mix snapshot", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+    await __flushAutoSaveForTesting();
+    saveMoodSpy.mockClear();
+
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "off" }]);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    expect(saveMoodSpy).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ "mic-0": "off" }),
+    );
+  });
+
+  it("post-recording flush captures the auto-armed selection, not the pre-arm mix", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    await __flushAutoSaveForTesting();
+    saveMoodSpy.mockClear();
+    actions.setRecordingState("recording", 0);
+    actions.setMoodTake("mic-1", makeMoodTake({ id: "take-new" }));
+
+    // Finalize order in the flow: idle first, arm on the next statement. The
+    // flush must snapshot AFTER the arm lands.
+    actions.setRecordingState("idle", null);
+    actions.commitMoodSelections([{ micId: "mic-1", entry: "take-new" }]);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveMoodSpy).toHaveBeenCalled();
+    const lastCall = saveMoodSpy.mock.calls[saveMoodSpy.mock.calls.length - 1];
+    expect(lastCall[1]).toMatchObject({ "mic-1": "take-new" });
+  });
+
+  it("mid-recording saves omit the hot mic from the persisted mix", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+    await __flushAutoSaveForTesting();
+    saveMoodSpy.mockClear();
+    actions.setRecordingState("recording", 0);
+    actions.setMoodHotMic("mic-1");
+    actions.setMoodTake("mic-1", makeMoodTake({ id: "take-new" }));
+
+    await saveNow("mood");
+
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+    const snapshot = saveMoodSpy.mock.calls[0][1] as Record<string, string>;
+    expect(snapshot["mic-0"]).toBe("take-live");
+    expect(snapshot).not.toHaveProperty("mic-1");
+  });
+
+  it("keeps performing-time Mood arms transient and out of autosave", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+    await __flushAutoSaveForTesting();
+    saveMoodSpy.mockClear();
+
+    actions.setMoodPerforming(true, 4);
+    actions.armMoodSelection("mic-0", "off");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveMoodSpy).not.toHaveBeenCalled();
+  });
+
+  it("round-trips an off mic through the real Mood save and rehydrate path", async () => {
+    vi.useRealTimers();
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-live" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "take-live" }]);
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "off" }]);
+    await __flushAutoSaveForTesting();
+    stopAutoSave();
+    actions.reset();
+
+    const loaded = await rehydrateMoodFromStorage();
+    if (!loaded.ok || !loaded.piece) throw new Error("Expected a saved Mood piece");
+    const decoded = await decodeMoodTakes(loaded.piece, {
+      decodeAudioData: vi
+        .fn()
+        .mockResolvedValue({ duration: 2, sampleRate: 48_000 } as AudioBuffer),
+    });
+    useAppStore.getState().actions.hydrateMoodPiece(decoded.piece);
+
+    expect(useAppStore.getState().mood.piece?.savedSelections).toEqual({
+      "mic-0": "off",
+      "mic-1": "off",
+    });
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
   });
 
   it("Chop and Mood dirty scopes coalesce independently", async () => {

@@ -18,7 +18,9 @@ let kit: Array<{ id: string; voice: DrumVoice } | undefined> = [];
 // Tone has already scheduled in its lookahead still play.
 const VOICE_RETIRE_MS = 1500;
 const retiring = new Map<DrumVoice, ReturnType<typeof setTimeout>>();
-let countInClick: Tone.MembraneSynth | null = null;
+let moodCountInStrike: Tone.MembraneSynth | null = null;
+let moodCountInNoise: Tone.NoiseSynth | null = null;
+let moodCountInNoiseFilter: Tone.Filter | null = null;
 let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
@@ -118,11 +120,64 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
   useAppStore.getState().actions.markTriggered(trackId);
 }
 
-// The Mood count-in click has its own voice: an empty track plays a drum,
-// so a kit voice here would count the take in on a kick.
-export function triggerCountInClick(when: number): void {
-  countInClick ??= new Tone.MembraneSynth({ volume: -10 }).toDestination();
-  countInClick.triggerAttackRelease("C2", "16n", when, 0.35);
+type MoodCountInVoice = {
+  pitch: string;
+  strikeVelocity: number;
+  noiseVelocity: number;
+};
+
+const MOOD_COUNT_IN_BASE: MoodCountInVoice = {
+  pitch: "C5",
+  strikeVelocity: 0.36,
+  noiseVelocity: 0.18,
+};
+const MOOD_COUNT_IN_RISE: Record<1 | 2 | 3, MoodCountInVoice> = {
+  3: { pitch: "D5", strikeVelocity: 0.4, noiseVelocity: 0.2 },
+  2: { pitch: "E5", strikeVelocity: 0.42, noiseVelocity: 0.21 },
+  1: { pitch: "G5", strikeVelocity: 0.45, noiseVelocity: 0.23 },
+};
+const MOOD_COUNT_IN_ACCENT: MoodCountInVoice = {
+  pitch: "A5",
+  strikeVelocity: 0.6,
+  noiseVelocity: 0.32,
+};
+
+function ensureMoodCountInVoice(): void {
+  if (moodCountInStrike && moodCountInNoise && moodCountInNoiseFilter) return;
+
+  moodCountInStrike = new Tone.MembraneSynth({
+    volume: -10,
+    pitchDecay: 0.006,
+    octaves: 2,
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.001, decay: 0.045, sustain: 0, release: 0.02 },
+  }).toDestination();
+  moodCountInNoiseFilter = new Tone.Filter({
+    frequency: 4_500,
+    type: "highpass",
+    Q: 1,
+  }).toDestination();
+  moodCountInNoise = new Tone.NoiseSynth({
+    volume: -18,
+    noise: { type: "white" },
+    envelope: { attack: 0.001, decay: 0.025, sustain: 0, release: 0.01 },
+  });
+  moodCountInNoise.connect(moodCountInNoiseFilter);
+}
+
+export function triggerMoodCountInTick(
+  when: number,
+  opts: { beatsRemaining: number; accent: boolean },
+): void {
+  ensureMoodCountInVoice();
+  const voice = opts.accent
+    ? MOOD_COUNT_IN_ACCENT
+    : opts.beatsRemaining > 3
+      ? MOOD_COUNT_IN_BASE
+      : MOOD_COUNT_IN_RISE[Math.max(1, opts.beatsRemaining) as 1 | 2 | 3];
+
+  moodCountInStrike?.triggerAttackRelease(voice.pitch, "32n", when, voice.strikeVelocity);
+  moodCountInNoise?.triggerAttackRelease(0.025, when, voice.noiseVelocity);
 }
 
 export async function triggerTrackNow(trackId: number): Promise<void> {
@@ -271,11 +326,15 @@ export function __resetAudioForTesting(): void {
     tracksUnsubscribe = null;
   }
   for (const player of players.values()) player.dispose();
+  moodCountInStrike?.dispose();
+  moodCountInNoise?.dispose();
+  moodCountInNoiseFilter?.dispose();
+  moodCountInStrike = null;
+  moodCountInNoise = null;
+  moodCountInNoiseFilter = null;
   players = new Map();
   lastClips = new Map();
   for (const entry of kit) entry?.voice.dispose();
-  countInClick?.dispose();
-  countInClick = null;
   kit = [];
   for (const [voice, timer] of retiring) {
     clearTimeout(timer);

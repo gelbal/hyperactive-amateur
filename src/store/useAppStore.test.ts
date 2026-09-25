@@ -7,11 +7,18 @@ const audioLifecycleMocks = vi.hoisted(() => ({
   noteMicReleased: vi.fn(),
   noteMicAcquireStarted: vi.fn(() => () => undefined),
 }));
+const moodFxMocks = vi.hoisted(() => ({
+  resetMoodDropFilter: vi.fn(),
+}));
 
 vi.mock("../lib/audioLifecycle", () => ({
   noteMicHeld: audioLifecycleMocks.noteMicHeld,
   noteMicReleased: audioLifecycleMocks.noteMicReleased,
   noteMicAcquireStarted: audioLifecycleMocks.noteMicAcquireStarted,
+}));
+
+vi.mock("../lib/moodFx", () => ({
+  resetMoodDropFilter: moodFxMocks.resetMoodDropFilter,
 }));
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
@@ -98,6 +105,7 @@ describe("useAppStore", () => {
   let originalMediaDevices: MediaDevices | undefined;
 
   beforeEach(() => {
+    moodFxMocks.resetMoodDropFilter.mockReset();
     __resetMediaForTesting();
     originalMediaDevices = (navigator as Navigator & { mediaDevices?: MediaDevices }).mediaDevices;
     get().actions.setIsExporting(false);
@@ -778,6 +786,34 @@ describe("useAppStore", () => {
     expect(get().session.projectRevision).toBeGreaterThan(revision);
   });
 
+  it("system tag writes do not invalidate a pending AI pattern apply (auto-tag racing Suggest)", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    // Auto-tag results from freshly recorded clips land while Suggest is in
+    // flight; they write with source "system" plus a reasoning string.
+    // Neither is a user edit of the beat, so the captured revision must
+    // still be current when the pattern arrives.
+    get().actions.setTrackTag(0, "kick", "system");
+    get().actions.setTrackTagReasoning(0, "low percussive thump");
+    expect(get().session.projectRevision).toBe(revision);
+
+    const applied = get().actions.applyPatternIfCurrent(grid, revision, 16);
+
+    expect(applied).toBe(true);
+    expect(get().project.tracks[0].steps.every(Boolean)).toBe(true);
+  });
+
+  it("user tag picks still invalidate a pending AI pattern apply", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    get().actions.setTrackTag(0, "kick", "user");
+
+    expect(get().session.projectRevision).toBeGreaterThan(revision);
+    expect(get().actions.applyPatternIfCurrent(grid, revision, 16)).toBe(false);
+  });
+
   describe("mood slice", () => {
     it("defaults to Chop mode and persists the last selected mode", () => {
       expect(get().appMode).toBe("chop");
@@ -865,7 +901,7 @@ describe("useAppStore", () => {
       expect(get().mood.hydration).toBe("ready");
       expect(get().mood.piece).toBe(hydratedPiece);
       expect(get().mood.performance.selections).toEqual({
-        "mic-0": "off",
+        "mic-0": "take-1",
         "mic-1": "off",
       });
     });
@@ -880,6 +916,104 @@ describe("useAppStore", () => {
       get().actions.scratchMoodPiece();
       expect(get().mood.piece).toBeNull();
       expect(get().mood.hydration).toBe("failed");
+    });
+
+    it("hydrates the latest playable take ahead of a newer unavailable take", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const hydratedPiece = {
+        ...piece,
+        cycleSeconds: 1.5,
+        oneMicId: "mic-0",
+        oneTakeId: "take-ok",
+        mics: piece.mics.map((mic, index) =>
+          index === 0
+            ? {
+                ...mic,
+                takes: [
+                  makeMoodTake({ id: "take-ok", recordedAt: 1 }),
+                  makeMoodTake({
+                    id: "take-unavailable",
+                    audioStatus: "unavailable",
+                    audioBuffer: null,
+                    recordedAt: 2,
+                  }),
+                ],
+              }
+            : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece(hydratedPiece);
+
+      expect(get().mood.performance.selections["mic-0"]).toBe("take-ok");
+    });
+
+    it("hydrates the latest take when every take has playable audio", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const hydratedPiece = {
+        ...piece,
+        cycleSeconds: 1.5,
+        oneMicId: "mic-0",
+        oneTakeId: "take-1",
+        mics: piece.mics.map((mic, index) =>
+          index === 0
+            ? {
+                ...mic,
+                takes: [
+                  makeMoodTake({ id: "take-1", recordedAt: 1 }),
+                  makeMoodTake({ id: "take-2", recordedAt: 2 }),
+                ],
+              }
+            : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece(hydratedPiece);
+
+      expect(get().mood.performance.selections["mic-0"]).toBe("take-2");
+    });
+
+    it("prefers a saved off selection over the latest playable take", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const hydratedPiece = {
+        ...piece,
+        savedSelections: { "mic-0": "off" },
+        mics: piece.mics.map((mic, index) =>
+          index === 0
+            ? {
+                ...mic,
+                takes: [makeMoodTake({ id: "take-live" })],
+              }
+            : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece(hydratedPiece);
+
+      expect(get().mood.performance.selections["mic-0"]).toBe("off");
+    });
+
+    it("falls back to the latest playable take for a stale saved selection", () => {
+      const piece = createEmptyMoodPiece("row", "pocket");
+      const hydratedPiece = {
+        ...piece,
+        savedSelections: { "mic-0": "missing-take" },
+        mics: piece.mics.map((mic, index) =>
+          index === 0
+            ? {
+                ...mic,
+                takes: [
+                  makeMoodTake({ id: "take-1", recordedAt: 1 }),
+                  makeMoodTake({ id: "take-2", recordedAt: 2 }),
+                ],
+              }
+            : mic,
+        ),
+      };
+
+      get().actions.hydrateMoodPiece(hydratedPiece);
+
+      expect(get().mood.performance.selections["mic-0"]).toBe("take-2");
     });
 
     it("rejects a Click piece without positive bpm and logs an HA event", () => {
@@ -956,6 +1090,85 @@ describe("useAppStore", () => {
       get().actions.setRecordingState("idle", null);
     });
 
+    it("keeps the recording-flow hot mic when performance auto-starts", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      get().actions.setMoodHotMic("mic-2");
+
+      get().actions.setMoodPerforming(true, 4);
+
+      // The recording flow owns hotMicId from its synchronous claim through
+      // its finally cleanup; performance start must not erase capture UI.
+      expect(get().mood.performance.hotMicId).toBe("mic-2");
+    });
+
+    it("initializes Credits randomly only on first enable without bumping moodRevision", () => {
+      const random = vi.spyOn(Math, "random").mockReturnValue(0.74);
+      get().actions.createMoodPiece("corners", "pocket");
+      const revision = get().session.moodRevision;
+
+      get().actions.setMoodCredits({ enabled: true });
+
+      expect(get().mood.piece?.credits).toEqual({
+        enabled: true,
+        names: {},
+        styleIndex: 3,
+      });
+      expect(get().session.moodRevision).toBe(revision);
+
+      get().actions.setMoodCredits({ enabled: false });
+      get().actions.setMoodCredits({ enabled: true });
+
+      expect(get().mood.piece?.credits?.styleIndex).toBe(3);
+      expect(random).toHaveBeenCalledTimes(1);
+    });
+
+    it("partially updates Credit names/style and freezes the writer during export", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      get().actions.setMoodCredits({ enabled: true });
+      get().actions.setMoodCredits({
+        names: { "mic-0": "Bass", "mic-missing": "Nope" },
+        styleIndex: 3,
+        mode: "together",
+      });
+
+      expect(get().mood.piece?.credits).toMatchObject({
+        enabled: true,
+        names: { "mic-0": "Bass" },
+        styleIndex: 3,
+        mode: "together",
+      });
+
+      get().actions.setMoodCredits({ names: { "mic-1": "Voice" } });
+      expect(get().mood.piece?.credits?.mode).toBe("together");
+
+      const pieceBeforeExport = get().mood.piece;
+      get().actions.setIsExporting(true);
+      get().actions.setMoodCredits({
+        names: { "mic-0": "Frozen" },
+        styleIndex: 0,
+        mode: "sequence",
+      });
+
+      expect(get().mood.piece).toBe(pieceBeforeExport);
+      get().actions.setIsExporting(false);
+    });
+
+    it("opens the Mood Drop filter only when scratch succeeds", () => {
+      get().actions.createMoodPiece("corners", "pocket");
+      get().actions.setMoodPerforming(true, 4);
+
+      get().actions.scratchMoodPiece();
+
+      expect(moodFxMocks.resetMoodDropFilter).not.toHaveBeenCalled();
+      expect(get().mood.piece).not.toBeNull();
+
+      get().actions.setMoodPerforming(false);
+      get().actions.scratchMoodPiece();
+
+      expect(moodFxMocks.resetMoodDropFilter).toHaveBeenCalledTimes(1);
+      expect(get().mood.piece).toBeNull();
+    });
+
     it("freezes piece writers during export while performance actions remain live", () => {
       get().actions.createMoodPiece("corners", "pocket");
       get().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-a" }));
@@ -1009,7 +1222,9 @@ describe("useAppStore", () => {
         armedLens: null,
         armedDropActive: null,
         dropActive: false,
-        hotMicId: null,
+        // The recording flow owns hotMicId and clears it in finally; stopping
+        // performance or changing modes must not erase active capture UI.
+        hotMicId: "mic-2",
         cycleCount: 0,
       });
     });
@@ -1124,6 +1339,37 @@ describe("useAppStore", () => {
         ]);
       });
 
+      it("allocates distinct linear mic ids across persisted gaps", () => {
+        get().actions.createMoodPiece("row", "pocket");
+        const take0 = makeMoodTake({ id: "take-0" });
+        const take2 = makeMoodTake({ id: "take-2" });
+        useAppStore.setState((state) => ({
+          mood: {
+            ...state.mood,
+            piece: {
+              ...state.mood.piece!,
+              mics: [
+                { id: "mic-0", takes: [take0] },
+                { id: "mic-2", takes: [take2] },
+              ],
+            },
+            performance: {
+              ...state.mood.performance,
+              selections: { "mic-0": take0.id, "mic-2": take2.id },
+              armed: { "mic-0": null, "mic-2": null },
+            },
+          },
+        }));
+
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "trigger" }));
+
+        const micIds = get().mood.piece!.mics.map((mic) => mic.id);
+        const freshMicId = micIds[2];
+        expect(micIds).toEqual([...new Set(micIds)]);
+        expect(get().mood.performance.selections[freshMicId]).toBe("off");
+        expect(get().mood.performance.armed[freshMicId]).toBeNull();
+      });
+
       it("rejects takes over the per-mic stack limit with an HA log event", () => {
         const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
         get().actions.createMoodPiece("corners", "pocket");
@@ -1198,6 +1444,17 @@ describe("useAppStore", () => {
           }),
         );
         get().actions.setMoodTake("mic-1", makeMoodTake({ id: "other" }));
+        const moodSessionId = get().session.moodSessionId;
+        get().actions.applyMoodArtDirectionIfCurrent(
+          "one",
+          { fxPreset: "wash", creditPalette: "heat", source: "ai" },
+          moodSessionId,
+        );
+        get().actions.applyMoodKeyEstimateIfCurrent(
+          "one",
+          { key: "A", mode: "minor", confidence: 0.91 },
+          moodSessionId,
+        );
         get().actions.armMoodSelection("mic-0", "one");
         get().actions.commitMoodSelections([{ micId: "mic-0", entry: "one" }]);
         get().actions.armMoodSelection("mic-1", "one");
@@ -1212,6 +1469,8 @@ describe("useAppStore", () => {
           cycleSeconds: 3,
           oneMicId: null,
           oneTakeId: null,
+          artDirection: undefined,
+          keyEstimate: undefined,
         });
         expect(get().mood.piece?.mics.find((mic) => mic.id === "mic-1")?.takes).toHaveLength(1);
 
@@ -1224,6 +1483,61 @@ describe("useAppStore", () => {
         });
         expect(get().mood.piece?.mics.every((mic) => mic.takes.length === 0)).toBe(true);
         revoke.mockRestore();
+      });
+
+      it("guards One aesthetics by session and One identity instead of moodRevision", () => {
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "one-a" }));
+        const moodSessionId = get().session.moodSessionId;
+        const revision = get().session.moodRevision;
+
+        get().actions.setMoodTake("mic-1", makeMoodTake({ id: "overdub" }));
+        expect(get().session.moodRevision).toBeGreaterThan(revision);
+        expect(get().actions.applyMoodArtDirectionIfCurrent(
+          "one-a",
+          { fxPreset: "sweep", creditPalette: "print", source: "ai" },
+          moodSessionId,
+        )).toBe(true);
+        expect(get().actions.applyMoodKeyEstimateIfCurrent(
+          "one-a",
+          { key: "F#", mode: "minor", confidence: 0.82 },
+          moodSessionId,
+        )).toBe(true);
+
+        expect(get().actions.applyMoodArtDirectionIfCurrent(
+          "one-a",
+          { fxPreset: "wash", creditPalette: "heat", source: "user" },
+          moodSessionId,
+        )).toBe(true);
+        expect(get().actions.applyMoodArtDirectionIfCurrent(
+          "one-a",
+          { fxPreset: "neutral", creditPalette: "signal", source: "ai" },
+          moodSessionId,
+        )).toBe(false);
+        expect(get().mood.piece?.artDirection).toEqual({
+          fxPreset: "wash",
+          creditPalette: "heat",
+          source: "user",
+        });
+
+        get().actions.deleteMoodTake("mic-0", "one-a");
+        get().actions.deleteMoodTake("mic-1", "overdub");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "one-b" }));
+        expect(get().mood.piece?.oneTakeId).toBe("one-b");
+        expect(get().actions.applyMoodKeyEstimateIfCurrent(
+          "one-a",
+          { key: "C", mode: "major", confidence: 0.99 },
+          moodSessionId,
+        )).toBe(false);
+
+        get().actions.scratchMoodPiece();
+        get().actions.createMoodPiece("corners", "pocket");
+        get().actions.setMoodTake("mic-0", makeMoodTake({ id: "one-a" }));
+        expect(get().actions.applyMoodArtDirectionIfCurrent(
+          "one-a",
+          { fxPreset: "neutral", creditPalette: "signal", source: "ai" },
+          moodSessionId,
+        )).toBe(false);
       });
 
       it("revokes all take object URLs when scratching or replacing a piece", () => {

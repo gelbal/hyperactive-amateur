@@ -5,6 +5,7 @@ import { MissingApiKeyError } from "./aiErrors";
 import { clearLogs, getLogs } from "./logger";
 import {
   classifyPart,
+  MOOD_KEY_CONFIDENCE_THRESHOLD,
   MOOD_PART_CONFIDENCE_THRESHOLD,
   MOOD_PART_MODEL,
   validateMoodPartTag,
@@ -112,7 +113,7 @@ describe("classifyPart", () => {
       return { text: JSON.stringify({ part: "beatbox", confidence: 0.86 }) };
     });
 
-    const result = await classifyPart(makeTake(), client);
+    const result = await classifyPart(makeTake(), false, client);
 
     expect(result).toEqual({ part: "beatbox", confidence: 0.86 });
     expect(MOOD_PART_MODEL).toBe("gemini-3.1-flash-lite");
@@ -148,11 +149,113 @@ describe("classifyPart", () => {
     expect(audioMocks.context.createBuffer).toHaveBeenCalledWith(1, 1000, 1000);
   });
 
+  it("appends art direction and key fields only for the One", async () => {
+    let captured: Record<string, unknown> = {};
+    const client = makeClient(async (params) => {
+      captured = params as Record<string, unknown>;
+      return {
+        text: JSON.stringify({
+          part: "lead",
+          confidence: 0.91,
+          fxPreset: "wash",
+          creditPalette: "heat",
+          key: "A",
+          mode: "minor",
+          keyConfidence: 0.84,
+        }),
+      };
+    });
+
+    const result = await classifyPart(makeTake(), true, client);
+
+    expect(result).toEqual({
+      part: "lead",
+      confidence: 0.91,
+      artDirection: { fxPreset: "wash", creditPalette: "heat", source: "ai" },
+      keyEstimate: { key: "A", mode: "minor", confidence: 0.84 },
+    });
+    expect(captured).toMatchObject({
+      config: {
+        responseSchema: {
+          properties: {
+            fxPreset: { type: "STRING", enum: ["neutral", "sweep", "wash"] },
+            creditPalette: { type: "STRING", enum: ["signal", "print", "heat"] },
+            key: {
+              type: "STRING",
+              enum: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
+            },
+            mode: { type: "STRING", enum: ["major", "minor"] },
+            keyConfidence: { type: "NUMBER" },
+          },
+          required: [
+            "part",
+            "confidence",
+            "fxPreset",
+            "creditPalette",
+            "key",
+            "mode",
+            "keyConfidence",
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(captured)).toContain("Also return fxPreset, creditPalette, key, mode, and keyConfidence");
+    expect(getLogs().map((entry) => entry.event)).toEqual(
+      expect.arrayContaining(["mood-part.result", "mood-art.result", "mood-key.result"]),
+    );
+  });
+
+  it("fails One-only art direction and key estimates open per field", async () => {
+    expect(MOOD_KEY_CONFIDENCE_THRESHOLD).toBe(0.6);
+    const badPalette = await classifyPart(
+      makeTake(),
+      true,
+      makeClient(async () => ({
+        text: JSON.stringify({
+          part: "harmony",
+          confidence: 0.88,
+          fxPreset: "sweep",
+          creditPalette: "neon",
+          key: "F#",
+          mode: "minor",
+          keyConfidence: 0.79,
+        }),
+      })),
+    );
+    const lowKey = await classifyPart(
+      makeTake(),
+      true,
+      makeClient(async () => ({
+        text: JSON.stringify({
+          part: "harmony",
+          confidence: 0.88,
+          fxPreset: "sweep",
+          creditPalette: "print",
+          key: "F#",
+          mode: "minor",
+          keyConfidence: 0.59,
+        }),
+      })),
+    );
+
+    expect(badPalette).toEqual({
+      part: "harmony",
+      confidence: 0.88,
+      keyEstimate: { key: "F#", mode: "minor", confidence: 0.79 },
+    });
+    expect(lowKey).toEqual({
+      part: "harmony",
+      confidence: 0.88,
+      artDirection: { fxPreset: "sweep", creditPalette: "print", source: "ai" },
+    });
+  });
+
   it("drops below-threshold responses without applying a part", async () => {
     expect(MOOD_PART_CONFIDENCE_THRESHOLD).toBe(0.6);
 
     const result = await classifyPart(
       makeTake(),
+      false,
       makeClient(async () => ({ text: JSON.stringify({ part: "lead", confidence: 0.59 }) })),
     );
 
@@ -164,11 +267,16 @@ describe("classifyPart", () => {
   it("fails open quietly for malformed responses, missing audio, and no key", async () => {
     const malformed = await classifyPart(
       makeTake(),
+      false,
       makeClient(async () => ({ text: JSON.stringify({ part: "lead" }) })),
     );
-    const missingAudio = await classifyPart(makeTake({ audioStatus: "unavailable", audioBuffer: null }));
+    const missingAudio = await classifyPart(
+      makeTake({ audioStatus: "unavailable", audioBuffer: null }),
+      false,
+    );
     const noKey = await classifyPart(
       makeTake(),
+      false,
       makeClient(async () => {
         throw new MissingApiKeyError();
       }),

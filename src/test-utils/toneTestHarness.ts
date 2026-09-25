@@ -15,6 +15,7 @@ type DrawTask = {
 type OnceTask = {
   id: number;
   time: number;
+  absoluteTime: number;
   callback: TransportCallback;
 };
 
@@ -32,6 +33,8 @@ function findByIdOrIndex<T extends { id: number }>(tasks: T[], idOrIndex: number
 export function createToneHarness() {
   let immediateTime = 0;
   let lookahead = 0.1;
+  let transportPosition: number | string = 0;
+  let transportSeconds = 0;
   let nextId = 1;
   let nextOrder = 1;
   const drawTasks: DrawTask[] = [];
@@ -59,7 +62,8 @@ export function createToneHarness() {
 
   const scheduleOnce = vi.fn((callback: TransportCallback, time: number) => {
     const id = nextId++;
-    onceTasks.push({ id, time, callback });
+    const absoluteTime = immediateTime + (time - transportSeconds);
+    onceTasks.push({ id, time, absoluteTime, callback });
     return id;
   });
 
@@ -86,10 +90,28 @@ export function createToneHarness() {
     );
   });
 
+  const start = vi.fn(async () => undefined);
+  const transportStart = vi.fn();
+  const transportStop = vi.fn();
+
   const transport = {
     clear,
     scheduleOnce,
     scheduleRepeat,
+    start: transportStart,
+    stop: transportStop,
+    get position() {
+      return transportPosition;
+    },
+    set position(value: number | string) {
+      transportPosition = value;
+    },
+    get seconds() {
+      return transportSeconds;
+    },
+    set seconds(value: number) {
+      transportSeconds = value;
+    },
     get onceCallbacks() {
       return onceTasks.map((task) => task.callback);
     },
@@ -102,7 +124,7 @@ export function createToneHarness() {
         throw new Error(`No captured Transport.scheduleOnce task for ${idOrIndex}`);
       }
       onceTasks.splice(onceTasks.indexOf(task), 1);
-      task.callback(fireTime ?? task.time);
+      task.callback(fireTime ?? task.absoluteTime);
     },
     fireRepeat(idOrIndex: number, fireTime: number) {
       const task = findByIdOrIndex(repeatTasks, idOrIndex);
@@ -114,9 +136,13 @@ export function createToneHarness() {
     reset() {
       onceTasks.length = 0;
       repeatTasks.length = 0;
+      transportPosition = 0;
+      transportSeconds = 0;
       clear.mockClear();
       scheduleOnce.mockClear();
       scheduleRepeat.mockClear();
+      transportStart.mockClear();
+      transportStop.mockClear();
     },
   };
 
@@ -145,10 +171,12 @@ export function createToneHarness() {
     setLookahead(seconds: number) {
       lookahead = seconds;
     },
+    start,
     draw,
     transport,
     createToneModule() {
       return {
+        start,
         now: () => immediateTime + lookahead,
         immediate: () => immediateTime,
         getDraw: () => ({ schedule: drawSchedule }),
@@ -156,6 +184,20 @@ export function createToneHarness() {
           clear,
           scheduleOnce,
           scheduleRepeat,
+          start: transportStart,
+          stop: transportStop,
+          get position() {
+            return transportPosition;
+          },
+          set position(value: number | string) {
+            transportPosition = value;
+          },
+          get seconds() {
+            return transportSeconds;
+          },
+          set seconds(value: number) {
+            transportSeconds = value;
+          },
         }),
       };
     },

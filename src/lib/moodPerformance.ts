@@ -4,7 +4,13 @@ import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
 import { canStartMoodPerformanceTap } from "./audibleActionGate";
-import { nextBeatBoundary, nextCycleBoundary, takeLoopPeriod } from "./moodClock";
+import {
+  DROP_BEATS_PER_CYCLE,
+  nextBeatBoundary,
+  nextCycleBoundary,
+  takeLoopPeriod,
+} from "./moodClock";
+import { scheduleMoodDropFilter } from "./moodFx";
 import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
 import {
   armMoodDropCommit,
@@ -68,7 +74,7 @@ function liveVideoTakesIncludingArmed(
   return [...live.values()];
 }
 
-export function livePlayerTakesFromSelections(
+function livePlayerTakesFromSelections(
   piece: MoodPiece,
   selections: SelectionMap,
 ): MoodPlayerLiveTake[] {
@@ -90,16 +96,18 @@ export function syncCommittedMoodEngines(
   const piece = state.mood.piece;
   if (!piece) return;
 
-  const { performance } = state.mood;
-  syncPool(liveTakesFromSelections(piece, performance.selections, performance.epoch));
+  const { performance: performanceState } = state.mood;
+  syncPool(
+    liveTakesFromSelections(piece, performanceState.selections, performanceState.epoch),
+  );
 
   if (options.syncPlayers === false) return;
-  if (!performance.isPerforming || performance.epoch === null) return;
+  if (!performanceState.isPerforming || performanceState.epoch === null) return;
   if (piece.cycleSeconds === null) return;
 
   syncMoodPlayers(
-    livePlayerTakesFromSelections(piece, performance.selections),
-    performance.epoch,
+    livePlayerTakesFromSelections(piece, performanceState.selections),
+    performanceState.epoch,
     piece.cycleSeconds,
   );
 }
@@ -119,22 +127,26 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
   state.actions.armMoodSelection(micId, entry);
 
   const armedState = useAppStore.getState();
-  const performance = armedState.mood.performance;
-  if (!performance.isPerforming || performance.epoch === null || piece.cycleSeconds === null) {
+  const performanceState = armedState.mood.performance;
+  if (
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
     armedState.actions.commitMoodSelections([commit]);
     syncCommittedMoodEngines({ syncPlayers: false });
     return;
   }
 
   const now = Tone.now();
-  const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodSelectionCommit(commit, boundaryTime, now);
   syncPool(
     liveVideoTakesIncludingArmed(
       piece,
-      performance.selections,
-      performance.armed,
-      performance.epoch,
+      performanceState.selections,
+      performanceState.armed,
+      performanceState.epoch,
     ),
   );
   if (entry !== "off") {
@@ -150,15 +162,19 @@ export function armLens(lens: MoodLens): void {
   const piece = state.mood.piece;
   if (!piece) return;
 
-  const performance = state.mood.performance;
-  if (!performance.isPerforming || performance.epoch === null || piece.cycleSeconds === null) {
+  const performanceState = state.mood.performance;
+  if (
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
     state.actions.setMoodLens(lens);
     return;
   }
 
   state.actions.setMoodArmedLens(lens === piece.lens ? null : lens);
   const now = Tone.now();
-  const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodLensCommit(lens, boundaryTime, now);
 }
 
@@ -167,20 +183,25 @@ export function armDrop(): void {
   if (!canStartMoodPerformanceTap(state)) return;
 
   const piece = state.mood.piece;
-  const performance = state.mood.performance;
+  const performanceState = state.mood.performance;
   if (
     !piece ||
     piece.vibe === "clean" ||
-    !performance.isPerforming ||
-    performance.epoch === null ||
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
     piece.cycleSeconds === null
   ) {
     return;
   }
 
-  const nextActive = !(performance.armedDropActive ?? performance.dropActive);
+  const nextActive = !(performanceState.armedDropActive ?? performanceState.dropActive);
   state.actions.setMoodArmedDrop(nextActive);
   const now = Tone.now();
-  const boundaryTime = nextBeatBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextBeatBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodDropCommit(nextActive, boundaryTime, now);
+  scheduleMoodDropFilter(
+    nextActive,
+    boundaryTime,
+    piece.cycleSeconds / DROP_BEATS_PER_CYCLE,
+  );
 }

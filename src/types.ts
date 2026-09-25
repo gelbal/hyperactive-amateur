@@ -1,5 +1,5 @@
-// ABOUTME: Shared type definitions for Hyperactive Amateur's domain (clips, tracks, app state).
-// ABOUTME: Pure types — no runtime values. Mutations live in the store actions module.
+// ABOUTME: Shared type definitions for Hyperactive Amateur's domain (clips, tracks, app state),
+// ABOUTME: plus the TAGS taxonomy constant. Mutations live in the store actions module.
 
 export const TAGS = ["kick", "snare", "hat", "vocal", "fx"] as const;
 export type Tag = (typeof TAGS)[number];
@@ -33,7 +33,7 @@ export interface Track {
   clip: Clip | null;
   // In-memory media revision. Bumped when clip/poster blob references change.
   blobRevision?: number;
-  // Length-16 array of step toggles (one bar of 16th notes).
+  // Step toggles; length always equals project.stepCount.
   steps: boolean[];
   // 0..1 linear volume.
   volume: number;
@@ -58,13 +58,68 @@ export type MoodStageId = "corners" | "row" | "stack";
 // cycleSeconds: null through the clock module, not a dead enum value here.
 export type MoodTimeFeel = "pocket" | "click";
 
-export type MoodLens = "wall" | "splits";
+export const MOOD_LENS_IDS = ["wall", "splits", "solo"] as const;
+export type MoodLens = (typeof MOOD_LENS_IDS)[number];
 
-export type MoodVibeId = "clean" | "print" | "mixtape" | "blocks" | "camcorder";
+export const MOOD_VIBE_IDS = [
+  "clean",
+  "print",
+  "mixtape",
+  "blocks",
+  "camcorder",
+  "kaleido",
+  "weave",
+  "crossroll",
+  "ghost",
+  "solar",
+] as const;
+// Mood visual treatment; unrelated to the chop Vibe AI pattern-style hint.
+export type MoodVibeId = (typeof MOOD_VIBE_IDS)[number];
 
 export type MoodPart = "lead" | "harmony" | "bass" | "beatbox" | "adlib";
 
+export const MOOD_FX_PRESET_IDS = ["neutral", "sweep", "wash"] as const;
+export type MoodFxPreset = (typeof MOOD_FX_PRESET_IDS)[number];
+
+export const MOOD_CREDIT_PALETTE_IDS = ["signal", "print", "heat"] as const;
+export type MoodCreditPalette = (typeof MOOD_CREDIT_PALETTE_IDS)[number];
+
+export const MOOD_CREDIT_MODE_IDS = ["sequence", "together"] as const;
+export type MoodCreditMode = (typeof MOOD_CREDIT_MODE_IDS)[number];
+
+export const MOOD_KEY_IDS = [
+  "C",
+  "C#",
+  "D",
+  "D#",
+  "E",
+  "F",
+  "F#",
+  "G",
+  "G#",
+  "A",
+  "A#",
+  "B",
+] as const;
+export type MoodKey = (typeof MOOD_KEY_IDS)[number];
+export type MoodKeyMode = "major" | "minor";
+
+export interface MoodArtDirection {
+  fxPreset: MoodFxPreset;
+  creditPalette: MoodCreditPalette;
+  source: "ai" | "user";
+}
+
+export interface MoodKeyEstimate {
+  key: MoodKey;
+  mode: MoodKeyMode;
+  confidence: number;
+}
+
 export type AppMode = "chop" | "mood";
+
+export const MOOD_TAKE_CYCLE_MULTIPLES = [0.5, 1, 2, 4] as const;
+export type MoodTakeCycleMultiple = (typeof MOOD_TAKE_CYCLE_MULTIPLES)[number];
 
 export interface MoodTake {
   id: string;
@@ -84,7 +139,7 @@ export interface MoodTake {
   trimEndMs: number;
   // Silence-trimmed content length: (trimEndMs - trimStartMs) / 1000.
   durationSeconds: number;
-  cycleMultiple: 0.5 | 1 | 2 | 4;
+  cycleMultiple: MoodTakeCycleMultiple;
   syncOffsetMs: number;
   part: MoodPart | null;
   partSource: "ai" | "user" | null;
@@ -96,17 +151,31 @@ export interface MoodMic {
   takes: MoodTake[];
 }
 
+export interface MoodCredits {
+  enabled: boolean;
+  names: Record<string, string>;
+  styleIndex: number;
+  mode?: MoodCreditMode;
+}
+
+export const MOOD_CYCLE_BARS = [1, 2, 4] as const;
+
 export interface MoodPiece {
   moodSchemaVersion: 1;
   stage: MoodStageId;
   timeFeel: MoodTimeFeel;
   bpm: number | null;
-  cycleBars: 1 | 2 | 4 | null;
+  cycleBars: (typeof MOOD_CYCLE_BARS)[number] | null;
   cycleSeconds: number | null;
   oneMicId: string | null;
   oneTakeId: string | null;
   vibe: MoodVibeId;
   lens: MoodLens;
+  credits?: MoodCredits;
+  artDirection?: MoodArtDirection;
+  keyEstimate?: MoodKeyEstimate;
+  // Last stopped mix; optional so legacy schema-1 pieces keep live defaults.
+  savedSelections?: Record<string, MoodSelectionEntry>;
   mics: MoodMic[];
   updatedAt: number;
 }
@@ -136,17 +205,16 @@ export interface MoodSlice {
   piece: MoodPiece | null;
   hydration: MoodHydrationState;
   monitorWithHeadphones: boolean;
+  // Take ids currently awaiting Part Tags. Transient and session-scoped.
+  partCheckingTakeIds: string[];
   performance: MoodPerformanceState;
 }
 
 export type RecordingState = "idle" | "preparing" | "countdown" | "recording" | "reviewing";
 
-export interface ActiveTrigger {
-  trackId: number;
-  // audioContext.currentTime when the trigger was fired.
-  startedAt: number;
-  durationMs: number;
-}
+export type TakeReceipt =
+  | { kind: "kept"; seconds: number; multiple: number }
+  | { kind: "too-short" };
 
 // Tone.js note-value notation for the visual cut subdivision.
 export type CutSubdivision = "16n" | "8n" | "4n" | "2n" | "1m";
@@ -158,6 +226,7 @@ export type Subgenre = "boom-bap" | "trap" | "lo-fi" | "phonk";
 // - tight: dense, all 8 tracks engaged, classic boom-bap repetition.
 // - varied: fewer tracks per loop, asymmetric placement, more breathing room.
 // - breaky: sparse last quarter — drop most hits there for a sense of rest.
+// This chop AI pattern-style hint is unrelated to MoodVibeId's visual treatment.
 export type Vibe = "tight" | "varied" | "breaky";
 
 export interface ProjectState {
@@ -196,10 +265,8 @@ export interface PlaybackState {
   // True while a real-time export render owns the Transport. User playback
   // controls are ignored so they cannot silently corrupt the captured output.
   isExporting: boolean;
-  // 0..15 — drives the playhead UI.
+  // 0..stepCount-1 — drives the playhead UI.
   currentStep: number;
-  // Recent trigger events the renderer consumes.
-  activeTriggers: ActiveTrigger[];
   // Monotonically increments per track on every trigger; pads subscribe to
   // the relevant slot to drive a brief flash animation.
   triggerSeq: number[];
@@ -208,7 +275,9 @@ export interface PlaybackState {
 export interface RecordingSlice {
   activeTrackId: number | null;
   countdownEndsAt: number | null;
+  captureEndsAt: number | null;
   error: string | null;
+  lastTakeReceipt: TakeReceipt | null;
   state: RecordingState;
 }
 
@@ -241,6 +310,8 @@ export interface SessionSlice {
   // Monotonic in-memory counter for Mood piece edits that make async
   // refinements stale. Performance-only state does not bump it.
   moodRevision: number;
+  // Identifies the current Mood piece session without changing for overdubs.
+  moodSessionId: number;
   // Browser storage durability for this session. Not persisted because it is
   // a property of the current browser bucket, not the project.
   storageDurability: StorageDurability;

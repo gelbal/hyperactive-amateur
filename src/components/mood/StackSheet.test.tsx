@@ -1,10 +1,9 @@
 // ABOUTME: StackSheet tests — pins Mood take sheet layout, dismissal, and row arming.
 // ABOUTME: Covers the coarse-pointer bottom sheet contract and disabled recording affordance.
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StackSheet } from "./StackSheet";
 import { useAppStore } from "../../store/useAppStore";
-import { MOOD_HEADPHONES_STORAGE_KEY } from "../../store/initialState";
 import * as moodPerformance from "../../lib/moodPerformance";
 import { MAX_TAKES_PER_MIC } from "../../lib/moodStages";
 import type { MoodMic, MoodTake } from "../../types";
@@ -57,6 +56,7 @@ function setupMood(): MoodMic {
     makeTake("take-b", {
       durationSeconds: 2,
       trimEndMs: 2000,
+      cycleMultiple: 2,
       posterUrl: null,
       part: "lead",
       partSource: "ai",
@@ -74,7 +74,6 @@ function setupMoodBeforeTheOne(): MoodMic {
 
 describe("StackSheet", () => {
   beforeEach(() => {
-    window.localStorage.removeItem(MOOD_HEADPHONES_STORAGE_KEY);
     useAppStore.getState().actions.reset();
     vi.mocked(moodPerformance.armSelection).mockReset();
     vi.mocked(moodPerformance.armSelection).mockImplementation((micId, entry) => {
@@ -95,13 +94,21 @@ describe("StackSheet", () => {
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
     const sheet = screen.getByRole("dialog", { name: "Mic 1 stack" });
+    // Fine pointers anchor UPWARD (bottom-full) so the mic strip's coarse-only
+    // scroll clip and the fixed-height panel can never swallow the popover.
     expect(sheet).toHaveClass(
       "absolute",
       "left-0",
-      "top-full",
+      "bottom-full",
+      "mb-2",
+      "pointer-coarse:mb-0",
       "pointer-coarse:fixed",
       "pointer-coarse:inset-x-3",
       "pointer-coarse:bottom-3",
+      "w-[min(24rem,calc(100vw-1.5rem))]",
+      "max-h-[min(60vh,28rem)]",
+      "overflow-x-hidden",
+      "overflow-y-auto",
       "pointer-coarse:max-h-[min(70dvh,32rem)]",
     );
 
@@ -112,13 +119,19 @@ describe("StackSheet", () => {
       "focus-visible:ring-2",
       "focus-visible:ring-orange-500",
     );
-    expect(screen.getByRole("button", { name: /Take 2 2\.0s Lead/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Take 2 2\.0s$/i })).toBeInTheDocument();
+    expect(screen.queryByText("Lead")).not.toBeInTheDocument();
     expect(screen.queryByText("No part yet")).not.toBeInTheDocument();
-    for (const part of ["lead", "harmony", "bass", "beatbox", "adlib", "none"]) {
-      expect(screen.getByRole("button", { name: `part ${part} for take 1` })).toHaveClass(
-        "pointer-coarse:min-h-11",
-      );
-    }
+    expect(screen.getByRole("button", { name: "part for take 1: none — change" })).toHaveClass(
+      "pointer-coarse:min-h-11",
+    );
+    expect(screen.getByRole("button", {
+      name: "part for take 2: lead, AI suggestion",
+    })).toHaveClass("pointer-coarse:min-h-11");
+    expect(screen.getByRole("button", {
+      name: "part for take 2: lead, AI suggestion",
+    })).toHaveTextContent("AI");
+    expect(screen.queryByRole("button", { name: "part lead for take 1" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove take 1" })).toHaveClass(
       "pointer-coarse:h-11",
       "pointer-coarse:w-11",
@@ -129,28 +142,120 @@ describe("StackSheet", () => {
     );
 
     const newTake = screen.getByRole("button", {
-      name: "new take records on the One",
+      name: "new take starts at the top of the loop",
     });
     expect(newTake).not.toBeDisabled();
     expect(newTake).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
     expect(screen.getByText("new take")).toBeInTheDocument();
   });
 
-  it("lets the row part picker write user-owned parts including none", () => {
+  it("shows checking only while a take classification is in flight", () => {
+    const mic = setupMood();
+    act(() => {
+      useAppStore.getState().actions.setMoodPartChecking("take-a", true);
+    });
+    const { rerender } = render(
+      <StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByRole("button", {
+      name: "part for take 1: none, checking",
+    })).toHaveTextContent("part? · checking");
+
+    act(() => {
+      useAppStore.getState().actions.setMoodPartChecking("take-a", false);
+    });
+    rerender(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "part for take 1: none — change" }))
+      .toHaveTextContent("part?");
+  });
+
+  it("hides the default cycle multiple and shows non-default multiples", () => {
     const mic = setupMood();
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "part harmony for take 1" }));
+    expect(screen.queryByText("×1")).not.toBeInTheDocument();
+    expect(screen.getByText("×2")).toHaveClass("font-mono", "text-zinc-500");
+  });
+
+  it("opens one row part picker, then closes and updates its compact chip after a pick", () => {
+    const mic = setupMood();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    const closedChip = screen.getByRole("button", { name: "part for take 1: none — change" });
+    expect(closedChip).toHaveTextContent("part?");
+    expect(closedChip).toHaveAttribute("aria-expanded", "false");
+    const optionGroupId = closedChip.getAttribute("aria-controls");
+    expect(optionGroupId).toBeTruthy();
+
+    fireEvent.click(closedChip);
+
+    expect(closedChip).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("group", { name: "parts for take 1" })).toHaveAttribute(
+      "id",
+      optionGroupId,
+    );
+    const optionGroup = screen.getByRole("group", { name: "parts for take 1" });
+    const takeEntry = closedChip.closest("[data-take-entry]");
+    const takeRow = takeEntry?.querySelector("[data-take-row]");
+    expect(takeEntry).not.toBeNull();
+    expect(takeRow).not.toBeNull();
+    expect(optionGroup.parentElement).toBe(takeEntry);
+    expect(optionGroup.previousElementSibling).toBe(takeRow);
+    expect(takeRow).not.toContainElement(optionGroup);
+    expect(optionGroup).toHaveClass("w-full", "flex", "flex-wrap");
+    for (const part of ["lead", "harmony", "bass", "beatbox", "adlib", "none"]) {
+      expect(screen.getByRole("button", { name: `part ${part} for take 1` })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+    expect(screen.getByRole("button", { name: "part lead for take 1" })).toHaveFocus();
+
+    const harmonyOption = screen.getByRole("button", { name: "part harmony for take 1" });
+    fireEvent.mouseDown(harmonyOption);
+    fireEvent.click(harmonyOption);
 
     let take = useAppStore.getState().mood.piece?.mics[0].takes[0];
     expect(take?.part).toBe("harmony");
     expect(take?.partSource).toBe("user");
+    const harmonyChip = screen.getByRole("button", {
+      name: "part for take 1: harmony — change",
+    });
+    expect(harmonyChip).toHaveTextContent("harm");
+    expect(harmonyChip).toHaveAttribute("aria-expanded", "false");
+    expect(harmonyChip).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "part harmony for take 1" })).not.toBeInTheDocument();
 
+    fireEvent.click(harmonyChip);
     fireEvent.click(screen.getByRole("button", { name: "part none for take 1" }));
 
     take = useAppStore.getState().mood.piece?.mics[0].takes[0];
     expect(take?.part).toBeNull();
     expect(take?.partSource).toBe("user");
+    expect(screen.getByRole("button", { name: "part for take 1: none — change" })).toHaveTextContent(
+      "part?",
+    );
+  });
+
+  it("closes an open part picker when tapping elsewhere in the sheet", () => {
+    const mic = setupMood();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "part for take 1: none — change" }));
+    expect(screen.getByRole("button", { name: "part lead for take 1" })).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByText("MIC 1"));
+
+    expect(screen.queryByRole("button", { name: "part lead for take 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "part for take 1: none — change" })).toHaveFocus();
+  });
+
+  it("uses only the mic identity in the sheet header", () => {
+    const mic = setupMood();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    expect(screen.getByText("MIC 1")).toBeInTheDocument();
+    expect(screen.queryByText("Stack")).not.toBeInTheDocument();
   });
 
   it("disables the new take row with a stack full reason when the mic stack is full", () => {
@@ -182,13 +287,27 @@ describe("StackSheet", () => {
 
   it("disables the new take row with an exporting reason", () => {
     const mic = setupMood();
-    useAppStore.getState().actions.setIsExporting(true);
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "part for take 1: none — change" }));
+    act(() => {
+      useAppStore.getState().actions.setIsExporting(true);
+    });
 
     const newTake = screen.getByRole("button", {
       name: "new take exporting",
     });
     expect(newTake).toBeDisabled();
+    expect(newTake).toHaveAttribute("title", "frozen during export");
+    const partChip = screen.getByRole("button", { name: "part for take 1: none — change" });
+    expect(partChip).toBeDisabled();
+    expect(partChip).toHaveAttribute("title", "frozen during export");
+    for (const option of within(
+      screen.getByRole("group", { name: "parts for take 1" }),
+    ).getAllByRole("button")) {
+      expect(option).toBeDisabled();
+      expect(option).toHaveAttribute("title", "frozen during export");
+    }
     expect(screen.getAllByText("exporting").length).toBeGreaterThan(0);
   });
 
@@ -216,32 +335,25 @@ describe("StackSheet", () => {
 
     fireEvent.click(recordOne);
 
-    expect(moodRecordingMocks.recordMoodTake).toHaveBeenCalledWith("mic-0");
+    expect(moodRecordingMocks.recordMoodTake).toHaveBeenCalledWith("mic-0", {
+      onError: expect.any(Function),
+    });
+    act(() => {
+      const options = moodRecordingMocks.recordMoodTake.mock.calls[0]?.[1];
+      options?.onError("camera permission denied");
+    });
+    expect(useAppStore.getState().recording.error).toBe("camera permission denied");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a functional headphone monitoring toggle beside the record affordance", () => {
+  it("does not render the headphone monitoring preference in the sheet", () => {
     const mic = setupMoodBeforeTheOne();
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
-    const toggle = screen.getByLabelText("I've got headphones on");
-
-    expect(toggle).not.toBeChecked();
+    expect(screen.queryByLabelText("I've got headphones on")).not.toBeInTheDocument();
     expect(
-      screen.getByText("no headphones: loops go silent while you record"),
-    ).toBeInTheDocument();
-
-    fireEvent.click(toggle);
-
-    expect(toggle).toBeChecked();
-    expect(useAppStore.getState().mood.monitorWithHeadphones).toBe(true);
-    expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBe("1");
-
-    fireEvent.click(toggle);
-
-    expect(toggle).not.toBeChecked();
-    expect(useAppStore.getState().mood.monitorWithHeadphones).toBe(false);
-    expect(window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY)).toBeNull();
+      screen.queryByText("no headphones: loops go silent while you record"),
+    ).not.toBeInTheDocument();
   });
 
   it("dismisses through outside mousedown and Escape using the shared hook", () => {

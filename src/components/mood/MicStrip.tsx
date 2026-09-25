@@ -1,12 +1,13 @@
 // ABOUTME: MicStrip — compact Mood mic chips under the stage.
 // ABOUTME: Shows live/armed/off/hot state and opens each mic's take stack sheet.
 import { useEffect, useState } from "react";
-import { Mic2, Square } from "lucide-react";
+import { Square } from "lucide-react";
 import { getAudioContext } from "../../lib/audio";
 import { countInBeatSeconds, stopMoodTakeEarly } from "../../lib/moodRecordingFlow";
 import { cancelActiveRecordingByUser } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPiece, MoodSelectionEntry, MoodTake } from "../../types";
+import { EmptyMicThumb } from "./EmptyMicThumb";
 import { StackSheet } from "./StackSheet";
 
 const COUNTDOWN_TICK_MS = 100;
@@ -90,15 +91,7 @@ function MicThumb({
     );
   }
 
-  return (
-    <span
-      data-testid={`mic-${micId}-empty`}
-      aria-hidden="true"
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-950 text-zinc-600"
-    >
-      <Mic2 size={16} />
-    </span>
-  );
+  return <EmptyMicThumb testId={`mic-${micId}-empty`} />;
 }
 
 export function MicStrip({ piece }: MicStripProps) {
@@ -124,7 +117,11 @@ export function MicStrip({ piece }: MicStripProps) {
     <div
       role="group"
       aria-label="Mood mics"
-      className="flex w-full items-start gap-2 overflow-x-auto px-1 pb-1"
+      // overflow-x-auto creates a clip box that swallows the anchored
+      // StackSheet popover on fine pointers (it renders as a fixed bottom
+      // sheet on coarse, which escapes the clip) — so the strip scrolls
+      // only where the popover cannot be clipped by it.
+      className="flex w-full flex-wrap items-start gap-2 px-1 pb-1 pointer-coarse:flex-nowrap pointer-coarse:overflow-x-auto"
     >
       {piece.mics.map((mic, index) => {
         const micNumber = index + 1;

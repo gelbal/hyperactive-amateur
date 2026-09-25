@@ -25,7 +25,6 @@ function state(
       audioState: "unknown",
       isExporting: false,
       currentStep: 0,
-      activeTriggers: [],
       triggerSeq: new Array(8).fill(0),
       ...playback,
     },
@@ -33,7 +32,9 @@ function state(
       state: "idle" as const,
       activeTrackId: null,
       countdownEndsAt: null,
+      captureEndsAt: null,
       error: null,
+      lastTakeReceipt: null,
       ...recording,
     },
   };
@@ -224,5 +225,43 @@ describe("spec section 7 audible gate policy matrix", () => {
 
   it("Mood performance taps x Exporting: allowed during the performance export", () => {
     expect(canStartMoodPerformanceTap(moodState(true, { isExporting: true }))).toBe(true);
+  });
+});
+
+describe("canStartAudibleAction truth table", () => {
+  it.each([
+    [false, false, false, false, true],
+    [false, false, false, true, false],
+    [false, false, true, false, false],
+    [false, false, true, true, false],
+    [false, true, false, false, false],
+    [false, true, false, true, false],
+    [false, true, true, false, false],
+    [false, true, true, true, false],
+    [true, false, false, false, false],
+    [true, false, false, true, false],
+    [true, false, true, false, false],
+    [true, false, true, true, false],
+    [true, true, false, false, false],
+    [true, true, false, true, false],
+    [true, true, true, false, false],
+    [true, true, true, true, false],
+  ])(
+    "playing=%s exporting=%s recording=%s performing=%s returns %s",
+    (isPlaying, isExporting, isRecording, isPerforming, expected) => {
+      expect(
+        canStartAudibleAction(
+          moodState(
+            isPerforming,
+            { isPlaying, isExporting },
+            isRecording ? { state: "recording", activeTrackId: 1 } : {},
+          ),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it("treats an absent mood slice as idle when the other channels are idle", () => {
+    expect(canStartAudibleAction(state())).toBe(true);
   });
 });

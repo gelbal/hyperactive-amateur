@@ -10,6 +10,7 @@ import {
 } from "./audibleActionGate";
 import { ensureAudioRunning } from "./audioLifecycle";
 import { getActiveExportSession } from "./exportSession";
+import { initializeMoodFxForPerformance, resetMoodDropFilter } from "./moodFx";
 import { stopAllMoodPlayers } from "./moodPlayers";
 import {
   createBoundaryQueue,
@@ -103,6 +104,7 @@ async function startMoodPerformanceTransport(): Promise<boolean> {
   const transport = Tone.getTransport();
   transport.position = 0;
   scheduledBoundaryEventId = transport.scheduleRepeat(onCycleBoundary, cycleSeconds);
+  initializeMoodFxForPerformance(cycleSeconds);
   useAppStore.getState().actions.setMoodPerforming(true, activeEpoch);
   const { syncCommittedMoodEngines } = await import("./moodPerformance");
   syncCommittedMoodEngines();
@@ -150,6 +152,7 @@ export function stopMoodPerformance(): void {
   clearScheduledBoundaryRepeat();
   resetBoundaryState();
   activeEpoch = null;
+  resetMoodDropFilter();
   const transport = Tone.getTransport();
   transport.stop();
   transport.position = 0;

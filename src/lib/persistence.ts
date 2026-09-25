@@ -165,12 +165,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isBlob(value: unknown): value is Blob {
-  const maybeBlob = value as unknown as Blob;
+  if (typeof Blob !== "undefined" && value instanceof Blob) return true;
   return (
-    value instanceof Blob ||
-    (isRecord(value) &&
-      typeof maybeBlob.arrayBuffer === "function" &&
-      typeof maybeBlob.type === "string")
+    isRecord(value) &&
+    typeof value.arrayBuffer === "function" &&
+    typeof value.size === "number" &&
+    typeof value.type === "string"
   );
 }
 

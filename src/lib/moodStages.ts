@@ -13,6 +13,7 @@ interface MoodStageDescriptor {
 type MoodCycleBars = NonNullable<MoodPiece["cycleBars"]>;
 
 export const MAX_TAKES_PER_MIC = 6;
+export const MOOD_ONE_MIN_SECONDS = 1;
 export const MOOD_TAKE_HARD_CAP_SECONDS = 20;
 
 // Canvas sizes use the fallback defaults until .claude/mood/spikes.md S2
@@ -41,7 +42,10 @@ export const STAGE_DESCRIPTORS: Record<MoodStageId, MoodStageDescriptor> = {
 };
 
 export function establishCycleFromTake(durationSeconds: number): number {
-  return Math.min(Math.max(durationSeconds, 1), MOOD_TAKE_HARD_CAP_SECONDS);
+  return Math.min(
+    Math.max(durationSeconds, MOOD_ONE_MIN_SECONDS),
+    MOOD_TAKE_HARD_CAP_SECONDS,
+  );
 }
 
 export function establishCycleFromClick(bpm: number, bars: MoodCycleBars): number {

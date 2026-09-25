@@ -29,6 +29,8 @@ export const LOG_EVENTS = {
   MOOD_PART_RESULT: "mood-part.result",
   MOOD_PART_MISS: "mood-part.miss",
   MOOD_PART_BELOW_THRESHOLD: "mood-part.below-threshold",
+  MOOD_ART_RESULT: "mood-art.result",
+  MOOD_KEY_RESULT: "mood-key.result",
   SUGGEST_ERROR: "suggest.error",
   SUGGEST_MISS: "suggest.miss",
   SUGGEST_RETRY: "suggest.retry",
@@ -47,11 +49,15 @@ export const LOG_EVENTS = {
   RECOVERY_MIGRATION_FAILED: "recovery.migration-failed",
   RECOVERY_QUARANTINED: "recovery.quarantined",
   RECOVERY_LOAD_FAILED: "recovery.load-failed",
+  POSTER_CAPTURE_ERROR: "poster.capture-error",
   VIDEO_DRAW_ERROR: "video.draw-error",
   AUTOSAVE_FLUSH: "autosave.flush",
   MOOD_CLICK_BPM_REJECTED: "mood.click-bpm-rejected",
   MOOD_TAKE_LIMIT_REJECTED: "mood.take-limit-rejected",
+  MOOD_TAKE_FAILED: "mood.take-failed",
   MOOD_PRINT_DEGRADED: "mood.print-degraded",
+  MOOD_CREDIT_WINDOW: "mood-credit.window",
+  MOOD_CREDIT_SKIP: "mood-credit.skip",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
 

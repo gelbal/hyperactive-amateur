@@ -272,6 +272,63 @@ describe("mood persistence", () => {
     expect(loaded?.missingBlobs).toBeUndefined();
   });
 
+  it("round-trips additive optional Credits metadata", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(5),
+      credits: {
+        enabled: true,
+        names: { "mic-0": "Bass", "mic-1": "Ferro" },
+        styleIndex: 2,
+        mode: "together",
+      },
+    };
+
+    expect(snapshotMood(piece).credits).toEqual(piece.credits);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).credits).toEqual(piece.credits);
+    expect((await loadMoodMeta())?.credits).toEqual(piece.credits);
+  });
+
+  it("round-trips cloned additive One aesthetics in schema 1", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(6),
+      artDirection: { fxPreset: "sweep", creditPalette: "print", source: "user" },
+      keyEstimate: { key: "D#", mode: "minor", confidence: 0.88 },
+    };
+
+    const snapshot = snapshotMood(piece);
+    expect(snapshot.artDirection).toEqual(piece.artDirection);
+    expect(snapshot.artDirection).not.toBe(piece.artDirection);
+    expect(snapshot.keyEstimate).toEqual(piece.keyEstimate);
+    expect(snapshot.keyEstimate).not.toBe(piece.keyEstimate);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).artDirection).toEqual(piece.artDirection);
+    expect((await storedMoodMeta()).keyEstimate).toEqual(piece.keyEstimate);
+    expect((await loadMoodMeta())?.artDirection).toEqual(piece.artDirection);
+    expect((await loadMoodMeta())?.keyEstimate).toEqual(piece.keyEstimate);
+  });
+
+  it("round-trips cloned additive saved selections without a schema bump", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(7),
+      savedSelections: { "mic-0": "off", "mic-1": "off" },
+    };
+
+    const snapshot = snapshotMood(piece);
+    expect(snapshot.moodSchemaVersion).toBe(1);
+    expect(snapshot.savedSelections).toEqual(piece.savedSelections);
+    expect(snapshot.savedSelections).not.toBe(piece.savedSelections);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).savedSelections).toEqual(piece.savedSelections);
+    expect((await loadMoodMeta())?.savedSelections).toEqual(piece.savedSelections);
+  });
+
   it("deduplicates identical take blob bytes under one content-addressed key", async () => {
     const sharedBytes = [7, 7, 7];
     const firstTake = moodTake(10, {

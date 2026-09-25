@@ -3,13 +3,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  __resetRecordingInterruptHandlersForTesting,
   interruptActiveRecording,
   registerRecordingInterruptHandler,
 } from "./recordingInterrupt";
 
 describe("recordingInterrupt", () => {
   afterEach(() => {
-    registerRecordingInterruptHandler(null);
+    __resetRecordingInterruptHandlersForTesting();
+  });
+
+  it("resets registered handlers for testing", () => {
+    registerRecordingInterruptHandler({
+      isActive: () => true,
+      interrupt: vi.fn(),
+    });
+
+    expect(interruptActiveRecording("user")).toBe(true);
+    __resetRecordingInterruptHandlersForTesting();
+    expect(interruptActiveRecording("user")).toBe(false);
   });
 
   it("keeps multiple registered handlers and dispatches only to the active one", () => {

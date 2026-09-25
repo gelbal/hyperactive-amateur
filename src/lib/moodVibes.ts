@@ -2,24 +2,38 @@
 // ABOUTME: Owns reusable offscreen resources so per-frame painting stays allocation-free.
 import type { MoodStageId, MoodVibeId } from "../types";
 import { STAGE_DESCRIPTORS } from "./moodStages";
-import { CAMCORDER, CAMCORDER_NOISE_TILE_COUNT, MIXTAPE, PRINT } from "./moodVibePalettes";
+import {
+  CAMCORDER,
+  CAMCORDER_NOISE_HOLD_SECONDS,
+  CAMCORDER_NOISE_TILE_COUNT,
+  CROSSROLL,
+  GHOST,
+  MIXTAPE,
+  PRINT,
+  SOLAR,
+  WEAVE,
+  WEAVE_SCRATCH_TILE_COUNT,
+} from "./moodVibePalettes";
 
 type VibeApplier = (
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   resources: VibeResources,
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
 ) => void;
 
-export interface BlocksVibeResources {
+interface BlocksVibeResources {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
 }
 
-export interface MixtapeVibeResources {
+interface MixtapeVibeResources {
   ready: true;
 }
 
-export interface CamcorderVibeResources {
+interface CamcorderVibeResources {
   frameCanvas: HTMLCanvasElement;
   frameCtx: CanvasRenderingContext2D;
   tintCanvas: HTMLCanvasElement;
@@ -28,32 +42,75 @@ export interface CamcorderVibeResources {
   scanlinePattern: CanvasPattern;
   noiseTiles: HTMLCanvasElement[];
   noisePatterns: CanvasPattern[];
-  frameCounter: number;
 }
 
-export type PrintDensity = "normal" | "degraded";
+interface KaleidoVibeResources {
+  snapshotCanvas: HTMLCanvasElement;
+  snapshotCtx: CanvasRenderingContext2D;
+}
+
+interface WeaveVibeResources {
+  frameCanvas: HTMLCanvasElement;
+  frameCtx: CanvasRenderingContext2D;
+  gateCanvas: HTMLCanvasElement;
+  gateCtx: CanvasRenderingContext2D;
+  scratchTiles: HTMLCanvasElement[];
+  scratchPatterns: CanvasPattern[];
+}
+
+interface CrossrollVibeResources {
+  frameCanvas: HTMLCanvasElement;
+  frameCtx: CanvasRenderingContext2D;
+  seamCanvas: HTMLCanvasElement;
+  seamCtx: CanvasRenderingContext2D;
+}
+
+interface GhostTransform {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface GhostVibeResources {
+  feedbackCanvas: HTMLCanvasElement;
+  feedbackCtx: CanvasRenderingContext2D;
+  vignetteCanvas: HTMLCanvasElement;
+  vignetteCtx: CanvasRenderingContext2D;
+  transforms: readonly [GhostTransform, GhostTransform, GhostTransform];
+}
+
+interface SolarVibeResources {
+  plates: {
+    pale: HTMLCanvasElement;
+    orange: HTMLCanvasElement;
+    zinc: HTMLCanvasElement;
+  };
+}
+
+type PrintDensity = "normal" | "degraded";
 
 // Lattice cells across the stage canvas's LONG axis per density. The
-// degraded lattice is the frame-budget fallback the renderer's watchdog
-// drops to on weak devices (spec §14 S5).
+// degraded lattice deliberately keeps the approved 84-cell geometry, so
+// the frame-budget watchdog falls back to a known-good source-fidelity level.
 export const PRINT_LATTICE_LONG_AXIS: Record<PrintDensity, number> = {
-  normal: 48,
-  degraded: 32,
+  normal: 128,
+  degraded: 84,
 };
 
 // Dots smaller than this read as noise, not halftone — skip them.
 const PRINT_MIN_DOT_RADIUS_PX = 0.4;
 // Slight overlap at full darkness so shadows print solid, not dotted.
-const PRINT_MAX_RADIUS_CELL_SHARE = 0.62;
+const PRINT_MAX_RADIUS_CELL_SHARE = 0.58;
 
-export interface PrintLatticeResources {
+interface PrintLatticeResources {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   centers: Float32Array;
   maxRadius: number;
 }
 
-export interface PrintVibeResources {
+interface PrintVibeResources {
   normal: PrintLatticeResources;
   degraded: PrintLatticeResources;
 }
@@ -63,6 +120,11 @@ export interface VibeResources {
   mixtape: MixtapeVibeResources;
   camcorder: CamcorderVibeResources;
   print: PrintVibeResources;
+  kaleido: KaleidoVibeResources;
+  weave: WeaveVibeResources;
+  crossroll: CrossrollVibeResources;
+  ghost: GhostVibeResources;
+  solar: SolarVibeResources;
 }
 
 // The degrade knob is session-scoped: once the renderer's watchdog trips
@@ -130,6 +192,155 @@ function createNoiseTile(): HTMLCanvasElement {
   return tile;
 }
 
+function createWeaveScratchTile(): HTMLCanvasElement {
+  const tile = createResourceCanvas(WEAVE.scratchTileSize, WEAVE.scratchTileSize);
+  const ctx = getResourceContext(tile, "Mood Weave scratch vibe");
+  ctx.fillStyle = WEAVE.scratch;
+
+  for (let index = 0; index < 12; index++) {
+    const x = Math.floor(Math.random() * tile.width);
+    const y = Math.floor(Math.random() * tile.height);
+    const scratchHeight = 4 + Math.floor(Math.random() * 22);
+    ctx.fillRect(x, y, 1, scratchHeight);
+  }
+  for (let index = 0; index < 28; index++) {
+    const x = Math.floor(Math.random() * tile.width);
+    const y = Math.floor(Math.random() * tile.height);
+    const dustSize = Math.random() > 0.82 ? 2 : 1;
+    ctx.fillRect(x, y, dustSize, dustSize);
+  }
+
+  return tile;
+}
+
+function createWeaveResources(width: number, height: number): WeaveVibeResources {
+  const frameCanvas = createResourceCanvas(width, height);
+  const frameCtx = getResourceContext(frameCanvas, "Mood Weave frame snapshot vibe");
+  const gateCanvas = createResourceCanvas(width, height);
+  const gateCtx = getResourceContext(gateCanvas, "Mood Weave gate vignette vibe");
+  const innerRadius = Math.min(width, height) * 0.18;
+  const outerRadius = Math.hypot(width, height) * 0.64;
+  const gate = gateCtx.createRadialGradient(
+    width * 0.5,
+    height * 0.48,
+    innerRadius,
+    width * 0.5,
+    height * 0.48,
+    outerRadius,
+  );
+  gate.addColorStop(0, "rgba(255, 255, 255, 1)");
+  gate.addColorStop(0.58, "rgba(255, 255, 255, 0.94)");
+  gate.addColorStop(1, WEAVE.gate);
+  gateCtx.fillStyle = gate;
+  gateCtx.fillRect(0, 0, width, height);
+
+  const scratchTiles = Array.from(
+    { length: WEAVE_SCRATCH_TILE_COUNT },
+    createWeaveScratchTile,
+  );
+  const scratchPatterns = scratchTiles.map((tile) =>
+    createResourcePattern(frameCtx, tile, "Mood Weave scratch vibe"),
+  );
+
+  return {
+    frameCanvas,
+    frameCtx,
+    gateCanvas,
+    gateCtx,
+    scratchTiles,
+    scratchPatterns,
+  };
+}
+
+function createCrossrollResources(width: number, height: number): CrossrollVibeResources {
+  const frameCanvas = createResourceCanvas(width, height);
+  const frameCtx = getResourceContext(frameCanvas, "Mood Crossroll frame snapshot vibe");
+  const seamCanvas = createResourceCanvas(width, CROSSROLL.seamHeightPx);
+  const seamCtx = getResourceContext(seamCanvas, "Mood Crossroll seam vibe");
+  seamCtx.fillStyle = CROSSROLL.bar;
+  seamCtx.fillRect(0, 0, seamCanvas.width, seamCanvas.height);
+  seamCtx.fillStyle = CROSSROLL.sprocket;
+  seamCtx.beginPath();
+  for (
+    let x = CROSSROLL.sprocketGapPx / 2;
+    x < seamCanvas.width;
+    x += CROSSROLL.sprocketGapPx
+  ) {
+    seamCtx.moveTo(x + CROSSROLL.sprocketRadiusPx, seamCanvas.height / 2);
+    seamCtx.arc(
+      x,
+      seamCanvas.height / 2,
+      CROSSROLL.sprocketRadiusPx,
+      0,
+      Math.PI * 2,
+    );
+  }
+  seamCtx.fill();
+
+  return {
+    frameCanvas,
+    frameCtx,
+    seamCanvas,
+    seamCtx,
+  };
+}
+
+function createGhostResources(width: number, height: number): GhostVibeResources {
+  const feedbackCanvas = createResourceCanvas(width, height);
+  const feedbackCtx = getResourceContext(feedbackCanvas, "Mood Ghost feedback vibe");
+  const vignetteCanvas = createResourceCanvas(width, height);
+  const vignetteCtx = getResourceContext(vignetteCanvas, "Mood Ghost vignette vibe");
+  const vanishingX = width * 0.5;
+  const vanishingY = height * 0.38;
+  const innerRadius = Math.min(width, height) * 0.2;
+  const outerRadius = Math.hypot(width, height) * 0.62;
+  const vignette = vignetteCtx.createRadialGradient(
+    vanishingX,
+    vanishingY,
+    innerRadius,
+    vanishingX,
+    vanishingY,
+    outerRadius,
+  );
+  vignette.addColorStop(0, "rgba(255, 255, 255, 1)");
+  vignette.addColorStop(0.72, "rgba(255, 255, 255, 0.88)");
+  vignette.addColorStop(1, "rgba(255, 255, 255, 0)");
+  vignetteCtx.fillStyle = vignette;
+  vignetteCtx.fillRect(0, 0, width, height);
+
+  const transformFor = (scale: number, translateX: number, translateY: number) => ({
+    x: vanishingX - vanishingX * scale + translateX,
+    y: vanishingY - vanishingY * scale + translateY,
+    w: width * scale,
+    h: height * scale,
+  });
+
+  return {
+    feedbackCanvas,
+    feedbackCtx,
+    vignetteCanvas,
+    vignetteCtx,
+    transforms: [
+      transformFor(1.012, 1, -1),
+      transformFor(1.024, -1, 0),
+      transformFor(1.036, 0, 1),
+    ],
+  };
+}
+
+function createSolarPlate(
+  width: number,
+  height: number,
+  color: string,
+  label: string,
+): HTMLCanvasElement {
+  const canvas = createResourceCanvas(width, height);
+  const ctx = getResourceContext(canvas, label);
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, width, height);
+  return canvas;
+}
+
 function createPrintLattice(
   canvasW: number,
   canvasH: number,
@@ -169,15 +380,25 @@ function fillFullCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
+// Snapshot the live stage frame into an offscreen ctx with clean compositing
+// state, so a vibe can re-read it while it repaints the main canvas.
+function snapshotInto(target: CanvasRenderingContext2D, source: HTMLCanvasElement): void {
+  target.globalAlpha = 1;
+  target.globalCompositeOperation = "source-over";
+  target.drawImage(source, 0, 0);
+}
+
 export function initVibeResources(stage: MoodStageId): VibeResources {
   const descriptor = STAGE_DESCRIPTORS[stage];
-  const blocksWidth = Math.max(1, Math.round(descriptor.canvasSize.w / 12));
-  const blocksHeight = Math.max(1, Math.round(descriptor.canvasSize.h / 12));
+  const stageWidth = descriptor.canvasSize.w;
+  const stageHeight = descriptor.canvasSize.h;
+  const blocksWidth = Math.max(1, Math.round(descriptor.canvasSize.w / 6));
+  const blocksHeight = Math.max(1, Math.round(descriptor.canvasSize.h / 6));
   const blocksCanvas = createResourceCanvas(blocksWidth, blocksHeight);
   const blocksCtx = getResourceContext(blocksCanvas, "Mood Blocks vibe");
-  const frameCanvas = createResourceCanvas(descriptor.canvasSize.w, descriptor.canvasSize.h);
+  const frameCanvas = createResourceCanvas(stageWidth, stageHeight);
   const frameCtx = getResourceContext(frameCanvas, "Mood Camcorder frame snapshot vibe");
-  const tintCanvas = createResourceCanvas(descriptor.canvasSize.w, descriptor.canvasSize.h);
+  const tintCanvas = createResourceCanvas(stageWidth, stageHeight);
   const tintCtx = getResourceContext(tintCanvas, "Mood Camcorder chroma tint vibe");
   const scanlineCanvas = createScanlineCanvas();
   const scanlinePattern = createResourcePattern(
@@ -189,6 +410,10 @@ export function initVibeResources(stage: MoodStageId): VibeResources {
   const noisePatterns = noiseTiles.map((tile) =>
     createResourcePattern(frameCtx, tile, "Mood Camcorder noise vibe"),
   );
+  const kaleidoSnapshotCanvas = createResourceCanvas(stageWidth, stageHeight);
+  const weave = createWeaveResources(stageWidth, stageHeight);
+  const crossroll = createCrossrollResources(stageWidth, stageHeight);
+  const ghost = createGhostResources(stageWidth, stageHeight);
 
   return {
     blocks: {
@@ -207,15 +432,36 @@ export function initVibeResources(stage: MoodStageId): VibeResources {
       scanlinePattern,
       noiseTiles,
       noisePatterns,
-      frameCounter: 0,
     },
     print: {
-      normal: createPrintLattice(descriptor.canvasSize.w, descriptor.canvasSize.h, "normal"),
+      normal: createPrintLattice(stageWidth, stageHeight, "normal"),
       degraded: createPrintLattice(
-        descriptor.canvasSize.w,
-        descriptor.canvasSize.h,
+        stageWidth,
+        stageHeight,
         "degraded",
       ),
+    },
+    kaleido: {
+      snapshotCanvas: kaleidoSnapshotCanvas,
+      snapshotCtx: getResourceContext(
+        kaleidoSnapshotCanvas,
+        "Mood Kaleido snapshot vibe",
+      ),
+    },
+    weave,
+    crossroll,
+    ghost,
+    solar: {
+      plates: {
+        pale: createSolarPlate(stageWidth, stageHeight, SOLAR.pale, "Mood Solar pale plate"),
+        orange: createSolarPlate(
+          stageWidth,
+          stageHeight,
+          SOLAR.orange,
+          "Mood Solar orange plate",
+        ),
+        zinc: createSolarPlate(stageWidth, stageHeight, SOLAR.zinc, "Mood Solar zinc plate"),
+      },
     },
   };
 }
@@ -296,6 +542,7 @@ function applyCamcorder(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   resources: VibeResources,
+  audioTime: number,
 ): void {
   const camcorder = resources.camcorder;
   camcorder.frameCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
@@ -311,8 +558,11 @@ function applyCamcorder(
   drawChromaGhost(ctx, canvas, camcorder, CAMCORDER.chromaLeft, -CAMCORDER.chromaOffsetPx);
   drawChromaGhost(ctx, canvas, camcorder, CAMCORDER.chromaRight, CAMCORDER.chromaOffsetPx);
 
-  const noisePattern = camcorder.noisePatterns[camcorder.frameCounter];
-  camcorder.frameCounter = (camcorder.frameCounter + 1) % camcorder.noisePatterns.length;
+  const noiseStep = Math.floor(
+    (Number.isFinite(audioTime) && audioTime >= 0 ? audioTime : 0) /
+      CAMCORDER_NOISE_HOLD_SECONDS,
+  );
+  const noisePattern = camcorder.noisePatterns[noiseStep % camcorder.noisePatterns.length];
   ctx.globalCompositeOperation = "overlay";
   ctx.globalAlpha = CAMCORDER.noiseAlpha;
   ctx.fillStyle = noisePattern;
@@ -359,12 +609,241 @@ function applyPrint(
   ctx.restore();
 }
 
+const VIBE_BOUNDARY_EPSILON_SECONDS = 1e-9;
+
+function validVibeBeatGrid(
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
+): beatSeconds is number {
+  return (
+    Number.isFinite(audioTime) &&
+    Number.isFinite(gridStartTime) &&
+    beatSeconds !== null &&
+    Number.isFinite(beatSeconds) &&
+    beatSeconds > 0
+  );
+}
+
+function vibeBeatIndex(audioTime: number, gridStartTime: number, beatSeconds: number): number {
+  const rawIndex = (audioTime - gridStartTime) / beatSeconds;
+  const nearestIndex = Math.round(rawIndex);
+  if (Math.abs(rawIndex - nearestIndex) <= VIBE_BOUNDARY_EPSILON_SECONDS) {
+    return nearestIndex;
+  }
+  return Math.floor(rawIndex);
+}
+
+function vibeBeatPhase(audioTime: number, gridStartTime: number, beatSeconds: number): number {
+  const beatIndex = vibeBeatIndex(audioTime, gridStartTime, beatSeconds);
+  const phase = (audioTime - (gridStartTime + beatIndex * beatSeconds)) / beatSeconds;
+  return Math.max(0, Math.min(1 - Number.EPSILON, phase));
+}
+
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function applyKaleido(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  resources: VibeResources,
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
+): void {
+  let sourceIndex = 0;
+  if (validVibeBeatGrid(audioTime, gridStartTime, beatSeconds)) {
+    sourceIndex = positiveModulo(
+      vibeBeatIndex(audioTime, gridStartTime, beatSeconds),
+      4,
+    );
+  }
+
+  const kaleido = resources.kaleido;
+  const halfWidth = canvas.width / 2;
+  const halfHeight = canvas.height / 2;
+  const sourceX = (sourceIndex % 2) * halfWidth;
+  const sourceY = Math.floor(sourceIndex / 2) * halfHeight;
+  snapshotInto(kaleido.snapshotCtx, canvas);
+
+  for (let quadrant = 0; quadrant < 4; quadrant++) {
+    const column = quadrant % 2;
+    const row = Math.floor(quadrant / 2);
+    ctx.save();
+    ctx.translate(column === 0 ? 0 : canvas.width, row === 0 ? 0 : canvas.height);
+    ctx.scale(column === 0 ? 1 : -1, row === 0 ? 1 : -1);
+    ctx.drawImage(
+      kaleido.snapshotCanvas,
+      sourceX,
+      sourceY,
+      halfWidth,
+      halfHeight,
+      0,
+      0,
+      halfWidth,
+      halfHeight,
+    );
+    ctx.restore();
+  }
+}
+
+function applyWeave(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  resources: VibeResources,
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
+): void {
+  let beatIndex = 0;
+  let phase = 0;
+  if (validVibeBeatGrid(audioTime, gridStartTime, beatSeconds)) {
+    beatIndex = vibeBeatIndex(audioTime, gridStartTime, beatSeconds);
+    phase = vibeBeatPhase(audioTime, gridStartTime, beatSeconds);
+  }
+
+  const weave = resources.weave;
+  const swayAngle = TWO_PI * phase + beatIndex;
+  const splice = positiveModulo(beatIndex, 8) === 0 ? 1 - phase : 0;
+  const dx = WEAVE.swayXPx * Math.sin(swayAngle) + WEAVE.spliceBumpPx * splice;
+  const dy =
+    WEAVE.swayYPx * Math.cos(swayAngle) - WEAVE.spliceBumpPx * 0.25 * splice;
+  const scratchPattern =
+    weave.scratchPatterns[positiveModulo(beatIndex, weave.scratchPatterns.length)];
+
+  snapshotInto(weave.frameCtx, canvas);
+
+  ctx.save();
+  clipFullCanvas(ctx, canvas);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.drawImage(weave.frameCanvas, dx, dy, canvas.width, canvas.height);
+
+  ctx.globalAlpha = WEAVE.washAlpha;
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = WEAVE.wash;
+  fillFullCanvas(ctx, canvas);
+
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "multiply";
+  ctx.drawImage(weave.gateCanvas, 0, 0);
+
+  ctx.globalAlpha = WEAVE.scratchAlpha;
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = scratchPattern;
+  fillFullCanvas(ctx, canvas);
+  ctx.restore();
+}
+
+function applyCrossroll(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  resources: VibeResources,
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
+): void {
+  if (!validVibeBeatGrid(audioTime, gridStartTime, beatSeconds)) return;
+  const beatIndex = vibeBeatIndex(audioTime, gridStartTime, beatSeconds);
+  if (positiveModulo(beatIndex, 8) !== 7) return;
+
+  const crossroll = resources.crossroll;
+  const phase = vibeBeatPhase(audioTime, gridStartTime, beatSeconds);
+  const wrapY = phase * canvas.height;
+  snapshotInto(crossroll.frameCtx, canvas);
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.drawImage(crossroll.frameCanvas, 0, wrapY);
+  ctx.drawImage(crossroll.frameCanvas, 0, wrapY - canvas.height);
+  ctx.drawImage(
+    crossroll.seamCanvas,
+    0,
+    wrapY - CROSSROLL.seamHeightPx / 2,
+  );
+  ctx.restore();
+}
+
+function applyGhost(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  resources: VibeResources,
+): void {
+  const ghost = resources.ghost;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for (let index = 0; index < ghost.transforms.length; index++) {
+    const transform = ghost.transforms[index];
+    ctx.globalAlpha = GHOST.echoAlphas[index];
+    ctx.drawImage(
+      ghost.feedbackCanvas,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+      transform.x,
+      transform.y,
+      transform.w,
+      transform.h,
+    );
+  }
+  ctx.restore();
+
+  ghost.feedbackCtx.save();
+  ghost.feedbackCtx.globalAlpha = 1;
+  ghost.feedbackCtx.globalCompositeOperation = "destination-in";
+  ghost.feedbackCtx.drawImage(ghost.vignetteCanvas, 0, 0);
+  ghost.feedbackCtx.globalAlpha = GHOST.feedbackAlpha;
+  ghost.feedbackCtx.globalCompositeOperation = "source-over";
+  ghost.feedbackCtx.drawImage(canvas, 0, 0);
+  ghost.feedbackCtx.restore();
+}
+
+function drawSolarPlate(
+  ctx: CanvasRenderingContext2D,
+  plate: HTMLCanvasElement,
+  composite: GlobalCompositeOperation,
+  alpha: number,
+): void {
+  ctx.save();
+  ctx.globalCompositeOperation = composite;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(plate, 0, 0);
+  ctx.restore();
+}
+
+function applySolar(
+  ctx: CanvasRenderingContext2D,
+  _canvas: HTMLCanvasElement,
+  resources: VibeResources,
+  audioTime: number,
+  gridStartTime: number,
+  beatSeconds: number | null,
+): void {
+  if (!validVibeBeatGrid(audioTime, gridStartTime, beatSeconds)) return;
+  const subdivision = Math.floor(vibeBeatPhase(audioTime, gridStartTime, beatSeconds) * 4);
+  if (subdivision === 1) {
+    drawSolarPlate(ctx, resources.solar.plates.pale, "difference", 1);
+  } else if (subdivision === 2) {
+    drawSolarPlate(ctx, resources.solar.plates.orange, "screen", SOLAR.orangeAlpha);
+  } else if (subdivision === 3) {
+    drawSolarPlate(ctx, resources.solar.plates.zinc, "multiply", SOLAR.zincAlpha);
+  }
+}
+
 const VIBE_APPLIERS = {
   clean: applyIdentity,
-  blocks: applyBlocks,
-  mixtape: applyMixtape,
-  camcorder: applyCamcorder,
   print: applyPrint,
+  mixtape: applyMixtape,
+  blocks: applyBlocks,
+  camcorder: applyCamcorder,
+  kaleido: applyKaleido,
+  weave: applyWeave,
+  crossroll: applyCrossroll,
+  ghost: applyGhost,
+  solar: applySolar,
 } satisfies Record<MoodVibeId, VibeApplier>;
 
 export function applyVibe(
@@ -372,6 +851,16 @@ export function applyVibe(
   canvas: HTMLCanvasElement,
   vibeId: MoodVibeId,
   resources: VibeResources,
+  audioTime = 0,
+  gridStartTime = 0,
+  beatSeconds: number | null = null,
 ): void {
-  VIBE_APPLIERS[vibeId](ctx, canvas, resources);
+  VIBE_APPLIERS[vibeId](
+    ctx,
+    canvas,
+    resources,
+    audioTime,
+    gridStartTime,
+    beatSeconds,
+  );
 }

@@ -20,71 +20,16 @@ const audioMocks = vi.hoisted(() => ({
     }),
   },
   getAudioContext: vi.fn(() => audioMocks.context),
-  triggerCountInClick: vi.fn(),
+  triggerMoodCountInTick: vi.fn(),
 }));
 
-const toneMocks = vi.hoisted(() => ({
-  make() {
-    let nextScheduleOnceId = 501;
-    const scheduleOnceTimers = new Map<number, ReturnType<typeof setTimeout>>();
-    const transportState = { seconds: 0 };
-    const tone = {
-      draw: {
-        schedule: vi.fn((callback: () => void) => {
-          callback();
-          return 301;
-        }),
-      },
-      now: vi.fn(() => audioMocks.context.currentTime),
-      start: vi.fn(),
-      transport: {
-        cancel: vi.fn(),
-        clear: vi.fn((eventId: number) => {
-          const timer = scheduleOnceTimers.get(eventId);
-          if (timer !== undefined) {
-            clearTimeout(timer);
-            scheduleOnceTimers.delete(eventId);
-          }
-        }),
-        position: 0 as number | string,
-        // Real Tone semantics: scheduleOnce's time argument is TRANSPORT time
-        // (seconds since position 0), not absolute audio-clock time.
-        get seconds() {
-          return transportState.seconds;
-        },
-        set seconds(value: number) {
-          transportState.seconds = value;
-        },
-        scheduleOnce: vi.fn((callback: (time: number) => void, time: number) => {
-          const eventId = nextScheduleOnceId;
-          nextScheduleOnceId += 1;
-          const delayMs = Math.max(0, Math.round((time - transportState.seconds) * 1000));
-          // Real Tone passes the callback ABSOLUTE AudioContext time, not the
-          // transport position it was scheduled at.
-          const absoluteTime =
-            audioMocks.context.currentTime + (time - transportState.seconds);
-          const timer = setTimeout(() => {
-            scheduleOnceTimers.delete(eventId);
-            callback(absoluteTime);
-          }, delayMs);
-          scheduleOnceTimers.set(eventId, timer);
-          return eventId;
-        }),
-        scheduleRepeat: vi.fn(() => 401),
-        start: vi.fn(),
-        stop: vi.fn(),
-      },
-      resetScheduleOnceTimers() {
-        for (const timer of scheduleOnceTimers.values()) {
-          clearTimeout(timer);
-        }
-        scheduleOnceTimers.clear();
-        nextScheduleOnceId = 501;
-      },
-    };
-    return tone;
-  },
-}).make());
+const { toneHarness, toneSpies } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return {
+    toneHarness: createToneHarness(),
+    toneSpies: { transportCancel: vi.fn() },
+  };
+});
 
 const mediaMocks = vi.hoisted(() => ({
   acquireRecordingStream: vi.fn(),
@@ -100,6 +45,10 @@ const recorderMocks = vi.hoisted(() => ({
 
 const autoTrimMocks = vi.hoisted(() => ({
   autoTrim: vi.fn(),
+}));
+
+const moodFxMocks = vi.hoisted(() => ({
+  suspendMoodPadsForCapture: vi.fn(),
 }));
 
 const snapMocks = vi.hoisted(() => ({
@@ -140,20 +89,30 @@ const moodVideoPoolMocks = vi.hoisted(() => ({
 
 vi.mock("./audio", () => ({
   getAudioContext: audioMocks.getAudioContext,
-  triggerCountInClick: audioMocks.triggerCountInClick,
+  triggerMoodCountInTick: audioMocks.triggerMoodCountInTick,
 }));
 
-vi.mock("tone", () => ({
-  getDraw: vi.fn(() => toneMocks.draw),
-  getTransport: vi.fn(() => toneMocks.transport),
-  now: toneMocks.now,
-  start: toneMocks.start,
-}));
+vi.mock("tone", () => {
+  const toneModule = toneHarness.createToneModule();
+  const transport = toneModule.getTransport();
+  Object.defineProperty(transport, "cancel", { value: toneSpies.transportCancel });
+  return {
+    ...toneModule,
+    getTransport: () => transport,
+  };
+});
 
 vi.mock("./moodPlayers", () => ({
   setCaptureGain: vi.fn(),
   stopAllMoodPlayers: vi.fn(),
   syncMoodPlayers: vi.fn(),
+}));
+
+vi.mock("./moodFx", () => ({
+  initializeMoodFxForPerformance: vi.fn(),
+  resetMoodDropFilter: vi.fn(),
+  scheduleMoodDropFilter: vi.fn(),
+  suspendMoodPadsForCapture: moodFxMocks.suspendMoodPadsForCapture,
 }));
 
 vi.mock("./moodVideoPool", () => ({
@@ -221,15 +180,18 @@ vi.mock("./aiClient", () => ({
 
 import {
   __resetMoodRecordingFlowForTesting,
+  backfillMoodOneClassification,
   cancelCurrentMoodTake,
   recordMoodTake,
+  registerMoodRecordingInterrupt,
   stopMoodTakeEarly,
 } from "./moodRecordingFlow";
 import { setCaptureGain, stopAllMoodPlayers, syncMoodPlayers } from "./moodPlayers";
 import { setCaptureVideoPolicy } from "./moodVideoPool";
-import { logger, LOG_EVENTS } from "./logger";
+import { clearLogs, getLogs, logger, LOG_EVENTS } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 import { MOOD_HEADPHONES_STORAGE_KEY } from "../store/initialState";
+import { makeMoodTake } from "../test-utils/moodFixtures";
 import { __resetAudioLifecycleForTesting } from "./audioLifecycle";
 import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import {
@@ -316,6 +278,10 @@ async function advanceCountdownToDeadline(): Promise<void> {
   if (deadline === null) throw new Error("missing countdown deadline");
   const now = audioMocks.context.currentTime;
   audioMocks.context.currentTime = deadline;
+  toneHarness.setImmediate(deadline);
+  while (toneHarness.transport.onceCallbacks.length > 0) {
+    toneHarness.transport.fireOnce(0);
+  }
   await vi.advanceTimersByTimeAsync(Math.ceil(Math.max(0, deadline - now) * 1000));
   await flushMicrotasks();
 }
@@ -324,12 +290,9 @@ function seedMoodCycle(cycleSeconds = 2): void {
   const samples = new Float32Array(Math.max(1, Math.round(cycleSeconds * 1000)));
   useAppStore.getState().actions.setMoodTake(
     "mic-0",
-    {
+    makeMoodTake({
       id: "the-one",
-      videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
       audioBlob: new Blob([new Uint8Array([2])], { type: "audio/wav" }),
-      posterBlob: null,
-      url: "blob:test/the-one",
       audioBuffer: {
         duration: cycleSeconds,
         length: samples.length,
@@ -337,17 +300,9 @@ function seedMoodCycle(cycleSeconds = 2): void {
         sampleRate: 1000,
         getChannelData: () => samples,
       } as unknown as AudioBuffer,
-      audioStatus: "ok",
-      posterUrl: null,
-      trimStartMs: 0,
       trimEndMs: Math.round(cycleSeconds * 1000),
       durationSeconds: cycleSeconds,
-      cycleMultiple: 1,
-      syncOffsetMs: 0,
-      part: null,
-      partSource: null,
-      recordedAt: 1,
-    },
+    }),
   );
 }
 
@@ -372,6 +327,7 @@ function makeAbortableRecordClip() {
 
 describe("moodRecordingFlow", () => {
   beforeEach(() => {
+    clearLogs();
     __resetAudioLifecycleForTesting();
     __resetMoodRecordingFlowForTesting();
     __resetMoodTransportForTesting();
@@ -383,22 +339,15 @@ describe("moodRecordingFlow", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     audioMocks.context.state = "running";
     audioMocks.context.currentTime = 5;
+    toneHarness.setImmediate(5);
+    toneHarness.setLookahead(0);
     audioMocks.context.createBuffer.mockClear();
-    toneMocks.start.mockReset();
-    toneMocks.start.mockResolvedValue(undefined);
-    toneMocks.now.mockReset();
-    toneMocks.now.mockImplementation(() => audioMocks.context.currentTime);
-    toneMocks.draw.schedule.mockClear();
-    toneMocks.transport.cancel.mockClear();
-    toneMocks.transport.clear.mockClear();
-    toneMocks.transport.position = 0;
-    toneMocks.transport.seconds = 0;
-    toneMocks.resetScheduleOnceTimers();
-    toneMocks.transport.scheduleOnce.mockClear();
-    toneMocks.transport.scheduleRepeat.mockClear();
-    toneMocks.transport.start.mockClear();
-    toneMocks.transport.stop.mockClear();
-    audioMocks.triggerCountInClick.mockClear();
+    toneHarness.start.mockReset();
+    toneHarness.start.mockResolvedValue(undefined);
+    toneHarness.draw.reset();
+    toneHarness.transport.reset();
+    toneSpies.transportCancel.mockClear();
+    audioMocks.triggerMoodCountInTick.mockClear();
     mediaMocks.acquireRecordingStream.mockReset();
     mediaMocks.acquireRecordingStream.mockResolvedValue(makeStream());
     mediaMocks.releaseRecordingStream.mockReset();
@@ -407,6 +356,7 @@ describe("moodRecordingFlow", () => {
     vi.mocked(stopAllMoodPlayers).mockClear();
     vi.mocked(syncMoodPlayers).mockClear();
     vi.mocked(setCaptureVideoPolicy).mockClear();
+    moodFxMocks.suspendMoodPadsForCapture.mockClear();
     recorderMocks.recordClip.mockReset();
     recorderMocks.recordClip.mockResolvedValue(makeRecordResult());
     recorderMocks.createRecordClipStopController.mockReset();
@@ -444,7 +394,7 @@ describe("moodRecordingFlow", () => {
 
     expect(useAppStore.getState().recording.state).toBe("idle");
     expect(useAppStore.getState().mood.performance.hotMicId).toBeNull();
-    expect(toneMocks.start).not.toHaveBeenCalled();
+    expect(toneHarness.start).not.toHaveBeenCalled();
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
@@ -481,8 +431,9 @@ describe("moodRecordingFlow", () => {
   });
 
   it("claims preparing and hot mic before awaiting audio startup", async () => {
-    const audioStarted = makeDeferred();
-    toneMocks.start.mockReturnValue(audioStarted.promise);
+    useAppStore.getState().actions.setLastTakeReceipt({ kind: "too-short" });
+    const audioStarted = makeDeferred<undefined>();
+    toneHarness.start.mockReturnValue(audioStarted.promise);
 
     const promise = recordMoodTake("mic-1");
 
@@ -490,9 +441,12 @@ describe("moodRecordingFlow", () => {
       state: "preparing",
       activeTrackId: null,
       countdownEndsAt: null,
+      captureEndsAt: null,
       error: null,
+      lastTakeReceipt: null,
     });
     expect(useAppStore.getState().mood.performance.hotMicId).toBe("mic-1");
+    expect(moodFxMocks.suspendMoodPadsForCapture).toHaveBeenCalledTimes(1);
     expect(mediaMocks.acquireRecordingStream).not.toHaveBeenCalled();
 
     cancelCurrentMoodTake();
@@ -501,6 +455,32 @@ describe("moodRecordingFlow", () => {
     await expect(promise).resolves.toBe(false);
     expect(useAppStore.getState().recording.state).toBe("idle");
     expect(useAppStore.getState().mood.performance.hotMicId).toBeNull();
+  });
+
+  it("shows interrupted copy only after the muted-track grace elapses", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const audioTrack = makeTrack("audio");
+    Object.assign(audioTrack, { muted: true });
+    mediaMocks.acquireRecordingStream.mockResolvedValue(
+      makeStream([audioTrack, makeTrack("video")]),
+    );
+
+    const promise = recordMoodTake("mic-0", { onError });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(1_999);
+
+    expect(useAppStore.getState().recording.state).toBe("preparing");
+    expect(useAppStore.getState().recording.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.state).toBe("idle");
+    expect(useAppStore.getState().recording.error).toBe(INTERRUPTION_COPY);
+    expect(onError).toHaveBeenCalledWith(INTERRUPTION_COPY);
+    expect(recorderMocks.recordClip).not.toHaveBeenCalled();
   });
 
   it("records the One in trim-snap-store-save-poster order", async () => {
@@ -629,7 +609,7 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
   });
 
-  it("schedules count-in synth clicks on the audio clock and stops before punch-in", async () => {
+  it("schedules a 3-beat first-take count-in on the audio clock and accents beat 1", async () => {
     vi.useFakeTimers();
     useAppStore.getState().actions.createMoodPiece("row", "click", { bpm: 120, cycleBars: 2 });
 
@@ -637,13 +617,20 @@ describe("moodRecordingFlow", () => {
     await flushMicrotasks();
 
     expect(useAppStore.getState().recording.countdownEndsAt).toBe(6.5);
-    expect(audioMocks.triggerCountInClick.mock.calls).toEqual([[5], [5.5], [6]]);
+    expect(audioMocks.triggerMoodCountInTick.mock.calls).toEqual([
+      [5, { beatsRemaining: 3, accent: false }],
+      [5.5, { beatsRemaining: 2, accent: false }],
+      [6, { beatsRemaining: 1, accent: true }],
+    ]);
 
     await advanceCountdownToDeadline();
     await expect(promise).resolves.toBe(true);
 
-    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalledWith(6.5);
-    expect(audioMocks.triggerCountInClick).toHaveBeenCalledTimes(3);
+    expect(audioMocks.triggerMoodCountInTick).not.toHaveBeenCalledWith(
+      6.5,
+      expect.anything(),
+    );
+    expect(audioMocks.triggerMoodCountInTick).toHaveBeenCalledTimes(3);
   });
 
   it("mutes the capture gain only for the capture window when headphone monitoring is off", async () => {
@@ -667,6 +654,27 @@ describe("moodRecordingFlow", () => {
     await expect(promise).resolves.toBe(true);
 
     expect(vi.mocked(setCaptureGain).mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("sets the mood cap deadline at punch-in and clears it in finally", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    const countdownEndsAt = useAppStore.getState().recording.countdownEndsAt;
+    if (countdownEndsAt === null) throw new Error("missing countdown deadline");
+
+    await advanceCountdownToDeadline();
+
+    expect(useAppStore.getState().recording.captureEndsAt).toBe(countdownEndsAt + 20);
+    expect(useAppStore.getState().recording.state).toBe("recording");
+
+    capture.resolve(makeRecordResult());
+    await expect(promise).resolves.toBe(true);
+
+    expect(useAppStore.getState().recording.captureEndsAt).toBeNull();
   });
 
   it("opens and closes the capture video pause policy without touching audio players", async () => {
@@ -771,6 +779,7 @@ describe("moodRecordingFlow", () => {
     seedMoodCycle(4);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     audioMocks.context.currentTime = 16.6;
+    toneHarness.setImmediate(16.6);
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
@@ -790,6 +799,7 @@ describe("moodRecordingFlow", () => {
     seedMoodCycle(4);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     audioMocks.context.currentTime = 17.75;
+    toneHarness.setImmediate(17.75);
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
@@ -797,6 +807,25 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().recording.state).toBe("countdown");
     expect(useAppStore.getState().recording.countdownEndsAt).toBe(22);
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
+    expect(toneHarness.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
+      0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4,
+    ]);
+
+    const scheduledCallbacks = toneHarness.transport.scheduleOnce.mock.calls.map(
+      ([callback]) => callback,
+    );
+    scheduledCallbacks.forEach((callback, index) => callback(17.75 + index * 0.5));
+    expect(audioMocks.triggerMoodCountInTick.mock.calls).toEqual([
+      [17.75, { beatsRemaining: 9, accent: false }],
+      [18.25, { beatsRemaining: 8, accent: false }],
+      [18.75, { beatsRemaining: 7, accent: false }],
+      [19.25, { beatsRemaining: 6, accent: false }],
+      [19.75, { beatsRemaining: 5, accent: false }],
+      [20.25, { beatsRemaining: 4, accent: false }],
+      [20.75, { beatsRemaining: 3, accent: false }],
+      [21.25, { beatsRemaining: 2, accent: false }],
+      [21.75, { beatsRemaining: 1, accent: true }],
+    ]);
 
     cancelCurrentMoodTake();
     await expect(promise).resolves.toBe(false);
@@ -807,8 +836,8 @@ describe("moodRecordingFlow", () => {
   it("auto-starts a stopped cycle after claiming recording while public starts stay blocked", async () => {
     vi.useFakeTimers();
     seedMoodCycle(2);
-    const audioStarted = makeDeferred();
-    toneMocks.start.mockReturnValueOnce(audioStarted.promise);
+    const audioStarted = makeDeferred<undefined>();
+    toneHarness.start.mockReturnValueOnce(audioStarted.promise);
 
     const promise = recordMoodTake("mic-1");
 
@@ -816,7 +845,7 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
 
     await startMoodPerformance();
-    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneHarness.transport.start).not.toHaveBeenCalled();
 
     audioStarted.resolve();
     await vi.dynamicImportSettled();
@@ -825,13 +854,49 @@ describe("moodRecordingFlow", () => {
     expect(useAppStore.getState().mood.performance).toMatchObject({
       isPerforming: true,
       epoch: 5,
+      hotMicId: "mic-1",
     });
-    expect(toneMocks.transport.scheduleRepeat).toHaveBeenCalledWith(expect.any(Function), 2);
-    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+    expect(toneHarness.transport.scheduleRepeat).toHaveBeenCalledWith(expect.any(Function), 2);
+    expect(toneHarness.transport.start).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().recording.state).toBe("countdown");
 
     cancelCurrentMoodTake();
     await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    expect(toneHarness.transport.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an auto-started performance running after a successful overdub", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(2);
+    autoTrimMocks.autoTrim.mockReturnValue({ trimStartMs: 0, trimEndMs: 2100 });
+    snapMocks.snapTake.mockReturnValue({
+      ok: true,
+      isOne: false,
+      durationSeconds: 2,
+      cycleMultiple: 1,
+      trimTo: 2,
+    });
+
+    const promise = recordMoodTake("mic-1");
+    await vi.dynamicImportSettled();
+    await flushMicrotasks(10);
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(true);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+    expect(toneHarness.transport.stop).not.toHaveBeenCalled();
+  });
+
+  it("never stops a user-started performance when the recording flow fails", async () => {
+    seedMoodCycle(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 5);
+    mediaMocks.acquireRecordingStream.mockRejectedValue(new Error("camera permission denied"));
+
+    await expect(recordMoodTake("mic-1", { onError: vi.fn() })).resolves.toBe(false);
+
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+    expect(toneHarness.transport.stop).not.toHaveBeenCalled();
   });
 
   it("records an overdub with the cycle cap, snap multiple, save boundary, and auto-arm", async () => {
@@ -872,10 +937,35 @@ describe("moodRecordingFlow", () => {
     });
     expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBe(savedTake?.id);
     expect(useAppStore.getState().mood.performance.selections["mic-1"]).toBe("off");
-    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
-    expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
-    expect(toneMocks.transport.clear).not.toHaveBeenCalled();
+    expect(toneHarness.transport.stop).not.toHaveBeenCalled();
+    expect(toneSpies.transportCancel).not.toHaveBeenCalled();
+    expect(toneHarness.transport.clear).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+    expect(useAppStore.getState().recording.lastTakeReceipt).toEqual({
+      kind: "kept",
+      seconds: 4,
+      multiple: 2,
+    });
+  });
+
+  it("leaves a too-short receipt when snap rejects the take", async () => {
+    vi.useFakeTimers();
+    snapMocks.snapTake.mockReturnValue({
+      ok: false,
+      reason: "too-short",
+      minDurationSeconds: 0.25,
+    });
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.lastTakeReceipt).toEqual({
+      kind: "too-short",
+    });
+    expect(useAppStore.getState().mood.piece?.mics[0].takes).toHaveLength(0);
+    expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
   });
 
   it("fires sync assist after save and poster kickoff without awaiting it, then applies current results", async () => {
@@ -1095,6 +1185,7 @@ describe("moodRecordingFlow", () => {
     expect(savedTake?.part).toBeNull();
     expect(moodPartMocks.classifyPart).toHaveBeenCalledWith(
       expect.objectContaining({ id: savedTake?.id }),
+      false,
       undefined,
       expect.any(AbortSignal),
     );
@@ -1107,6 +1198,238 @@ describe("moodRecordingFlow", () => {
     expect(taggedTake?.partSource).toBe("ai");
     sync.resolve(null);
     poster.resolve(null);
+  });
+
+  it("keeps the One checking until enriched classification settles across an overdub bump", async () => {
+    vi.useFakeTimers();
+    const part = makeDeferred<{
+      part: "lead";
+      confidence: number;
+      artDirection: {
+        fxPreset: "wash";
+        creditPalette: "heat";
+        source: "ai";
+      };
+      keyEstimate: { key: "A"; mode: "minor"; confidence: number };
+    } | null>();
+    moodPartMocks.classifyPart.mockReturnValue(part.promise);
+
+    const promise = recordMoodTake("mic-0");
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    await expect(promise).resolves.toBe(true);
+
+    const oneTakeId = useAppStore.getState().mood.piece?.oneTakeId;
+    expect(oneTakeId).toBeTruthy();
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledWith(
+      expect.objectContaining({ id: oneTakeId }),
+      true,
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(useAppStore.getState().mood.partCheckingTakeIds).toEqual([oneTakeId]);
+
+    useAppStore.getState().actions.setMoodTake(
+      "mic-1",
+      makeMoodTake({ id: "later-overdub" }),
+    );
+    part.resolve({
+      part: "lead",
+      confidence: 0.92,
+      artDirection: { fxPreset: "wash", creditPalette: "heat", source: "ai" },
+      keyEstimate: { key: "A", mode: "minor", confidence: 0.87 },
+    });
+    await flushMicrotasks(6);
+
+    expect(useAppStore.getState().mood.partCheckingTakeIds).toEqual([]);
+    expect(useAppStore.getState().mood.piece?.artDirection).toEqual({
+      fxPreset: "wash",
+      creditPalette: "heat",
+      source: "ai",
+    });
+    expect(useAppStore.getState().mood.piece?.keyEstimate).toEqual({
+      key: "A",
+      mode: "minor",
+      confidence: 0.87,
+    });
+  });
+
+  it("backfills missing One enrichment once without replacing an existing AI part", async () => {
+    const classification = makeDeferred<{
+      part: "harmony";
+      confidence: number;
+      artDirection: {
+        fxPreset: "sweep";
+        creditPalette: "print";
+        source: "ai";
+      };
+      keyEstimate: { key: "C"; mode: "major"; confidence: number };
+    } | null>();
+    moodPartMocks.classifyPart.mockReturnValue(classification.promise);
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "saved-one", part: "bass", partSource: "ai" }),
+    );
+
+    backfillMoodOneClassification();
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(1);
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "saved-one" }),
+      true,
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(useAppStore.getState().mood.partCheckingTakeIds).toEqual(["saved-one"]);
+
+    classification.resolve({
+      part: "harmony",
+      confidence: 0.91,
+      artDirection: { fxPreset: "sweep", creditPalette: "print", source: "ai" },
+      keyEstimate: { key: "C", mode: "major", confidence: 0.89 },
+    });
+    await flushMicrotasks(6);
+
+    expect(useAppStore.getState().mood.piece?.mics[0].takes[0]).toMatchObject({
+      id: "saved-one",
+      part: "bass",
+      partSource: "ai",
+    });
+    expect(useAppStore.getState().mood.piece).toMatchObject({
+      artDirection: { fxPreset: "sweep", creditPalette: "print", source: "ai" },
+      keyEstimate: { key: "C", mode: "major", confidence: 0.89 },
+    });
+    expect(useAppStore.getState().mood.partCheckingTakeIds).toEqual([]);
+  });
+
+  it("retries a missed One backfill later in the same session", async () => {
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "saved-one" }),
+    );
+    moodPartMocks.classifyPart.mockResolvedValue(null);
+
+    backfillMoodOneClassification();
+    await flushMicrotasks(6);
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an aborted One backfill marked instead of retrying it", async () => {
+    const first = makeDeferred<null>();
+    const replacement = makeDeferred<null>();
+    moodPartMocks.classifyPart
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(replacement.promise);
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "saved-one" }),
+    );
+
+    backfillMoodOneClassification();
+    const firstSignal = moodPartMocks.classifyPart.mock.calls[0]?.[3] as AbortSignal;
+    useAppStore.getState().actions.scratchMoodPiece();
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "replacement-one" }),
+    );
+    backfillMoodOneClassification();
+    expect(firstSignal.aborted).toBe(true);
+
+    first.resolve(null);
+    await flushMicrotasks(6);
+    useAppStore.getState().actions.scratchMoodPiece();
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "saved-one" }),
+    );
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(2);
+    replacement.resolve(null);
+  });
+
+  it("does not launch or spend a One backfill while exporting", () => {
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "saved-one" }),
+    );
+    useAppStore.getState().actions.setIsExporting(true);
+
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).not.toHaveBeenCalled();
+    useAppStore.getState().actions.setIsExporting(false);
+    backfillMoodOneClassification();
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend the backfill attempt until the One has decoded audio", async () => {
+    const unavailableTake = makeMoodTake({
+      id: "saved-one",
+      audioStatus: "unavailable",
+      audioBuffer: null,
+    });
+    useAppStore.getState().actions.setMoodTake("mic-0", unavailableTake);
+
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).not.toHaveBeenCalled();
+
+    const restoredBuffer = makeRecordResult().audioBuffer;
+    useAppStore
+      .getState()
+      .actions.restoreMoodTakeAudio("mic-0", "saved-one", restoredBuffer, undefined, unavailableTake);
+    backfillMoodOneClassification();
+
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips complete enrichment, aborts a prior backfill, and resets its session guard", () => {
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "saved-one" }));
+    const sessionId = useAppStore.getState().session.moodSessionId;
+    useAppStore.getState().actions.applyMoodArtDirectionIfCurrent(
+      "saved-one",
+      { fxPreset: "neutral", creditPalette: "signal", source: "ai" },
+      sessionId,
+    );
+    useAppStore.getState().actions.applyMoodKeyEstimateIfCurrent(
+      "saved-one",
+      { key: "G", mode: "minor", confidence: 0.8 },
+      sessionId,
+    );
+
+    backfillMoodOneClassification();
+    expect(moodPartMocks.classifyPart).not.toHaveBeenCalled();
+
+    const piece = useAppStore.getState().mood.piece;
+    if (!piece) throw new Error("Expected Mood piece");
+    useAppStore.getState().actions.hydrateMoodPiece({ ...piece, keyEstimate: undefined });
+
+    backfillMoodOneClassification();
+    const firstSignal = moodPartMocks.classifyPart.mock.calls[0]?.[3] as AbortSignal;
+    expect(firstSignal.aborted).toBe(false);
+
+    useAppStore.getState().actions.scratchMoodPiece();
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeMoodTake({ id: "replacement-one" }),
+    );
+    backfillMoodOneClassification();
+
+    const secondSignal = moodPartMocks.classifyPart.mock.calls[1]?.[3] as AbortSignal;
+    expect(firstSignal.aborted).toBe(true);
+    expect(secondSignal.aborted).toBe(false);
+
+    __resetMoodRecordingFlowForTesting();
+    expect(secondSignal.aborted).toBe(true);
+    backfillMoodOneClassification();
+    expect(moodPartMocks.classifyPart).toHaveBeenCalledTimes(3);
   });
 
   it("drops stale sync assist results through the real moodRevision guard", async () => {
@@ -1144,6 +1467,7 @@ describe("moodRecordingFlow", () => {
     seedMoodCycle(4);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     audioMocks.context.currentTime = 16.6;
+    toneHarness.setImmediate(16.6);
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
@@ -1160,8 +1484,8 @@ describe("moodRecordingFlow", () => {
     expect(recorderMocks.recordClip).not.toHaveBeenCalled();
     expect(autoSaveMocks.saveNow).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.piece?.mics[1].takes).toHaveLength(0);
-    expect(toneMocks.transport.stop).not.toHaveBeenCalled();
-    expect(toneMocks.transport.cancel).not.toHaveBeenCalled();
+    expect(toneHarness.transport.stop).not.toHaveBeenCalled();
+    expect(toneSpies.transportCancel).not.toHaveBeenCalled();
   });
 
   it("cancels overdub count-in ticks when an abort lands mid-count-in", async () => {
@@ -1169,11 +1493,12 @@ describe("moodRecordingFlow", () => {
     seedMoodCycle(4);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     audioMocks.context.currentTime = 16.6;
+    toneHarness.setImmediate(16.6);
     // Transport time and audio-clock time have different origins: the
     // transport was re-positioned to 0 at performance start. Ticks must be
     // scheduled TRANSPORT-relative or they fire late by the epoch offset.
-    toneMocks.transport.seconds = 100;
-    toneMocks.transport.scheduleOnce
+    toneHarness.transport.seconds = 100;
+    toneHarness.transport.scheduleOnce
       .mockReturnValueOnce(601)
       .mockReturnValueOnce(602)
       .mockReturnValueOnce(603);
@@ -1182,23 +1507,25 @@ describe("moodRecordingFlow", () => {
     await flushMicrotasks();
 
     expect(useAppStore.getState().recording.state).toBe("countdown");
-    expect(toneMocks.transport.scheduleOnce).toHaveBeenCalledTimes(3);
+    expect(toneHarness.transport.scheduleOnce).toHaveBeenCalledTimes(3);
     // Ticks intended for audio times 16.6/17.1/17.6 land at transport
     // positions 100/100.5/101.
-    expect(toneMocks.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
+    expect(toneHarness.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
       100, 100.5, 101,
     ]);
-    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalled();
+    expect(audioMocks.triggerMoodCountInTick).not.toHaveBeenCalled();
 
     cancelCurrentMoodTake();
 
     await expect(promise).resolves.toBe(false);
-    expect(toneMocks.transport.clear.mock.calls).toEqual([[601], [602], [603]]);
+    expect(toneHarness.transport.clear.mock.calls).toEqual([[601], [602], [603]]);
 
-    const scheduledCallbacks = toneMocks.transport.scheduleOnce.mock.calls.map(([callback]) => callback);
+    const scheduledCallbacks = toneHarness.transport.scheduleOnce.mock.calls.map(
+      ([callback]) => callback,
+    );
     scheduledCallbacks.forEach((callback, index) => callback(16.6 + index * 0.5));
 
-    expect(audioMocks.triggerCountInClick).not.toHaveBeenCalled();
+    expect(audioMocks.triggerMoodCountInTick).not.toHaveBeenCalled();
   });
 
   it("exposes tap-to-stop through the active recordClip stop controller", async () => {
@@ -1213,12 +1540,89 @@ describe("moodRecordingFlow", () => {
     await advanceCountdownToDeadline();
 
     expect(useAppStore.getState().recording.state).toBe("recording");
+    audioMocks.context.currentTime = 9.25;
     expect(stopMoodTakeEarly()).toBe(true);
+    expect(useAppStore.getState().recording.captureEndsAt).toBe(9.25);
     expect(stop).toHaveBeenCalledTimes(1);
 
     capture.resolve(makeRecordResult());
     await expect(promise).resolves.toBe(true);
     expect(stopMoodTakeEarly()).toBe(false);
+  });
+
+  it("turns an instant punch-out decode failure into the too-short receipt", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    const stop = vi.fn();
+    const onError = vi.fn();
+    recorderMocks.createRecordClipStopController.mockReturnValue({ stop });
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0", { onError });
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    audioMocks.context.currentTime += 0.1;
+
+    expect(stopMoodTakeEarly()).toBe(true);
+    capture.reject(new Error("Failed to decode recorded audio: empty fragment"));
+
+    await expect(promise).resolves.toBe(false);
+    expect(useAppStore.getState().recording.lastTakeReceipt).toEqual({ kind: "too-short" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(
+      getLogs().some((entry) => entry.event === LOG_EVENTS.MOOD_TAKE_FAILED),
+    ).toBe(false);
+  });
+
+  it("surfaces and logs a decode failure after a real-length capture", async () => {
+    vi.useFakeTimers();
+    const capture = makeDeferred<ReturnType<typeof makeRecordResult>>();
+    const stop = vi.fn();
+    const onError = vi.fn();
+    recorderMocks.createRecordClipStopController.mockReturnValue({ stop });
+    recorderMocks.recordClip.mockReturnValue(capture.promise);
+
+    const promise = recordMoodTake("mic-0", { onError });
+    await flushMicrotasks();
+    await advanceCountdownToDeadline();
+    audioMocks.context.currentTime += 0.3;
+
+    expect(stopMoodTakeEarly()).toBe(true);
+    capture.reject(new Error("Failed to decode recorded audio: bad container"));
+
+    await expect(promise).resolves.toBe(false);
+    expect(onError).toHaveBeenCalledWith("Failed to decode recorded audio: bad container");
+    expect(getLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warn",
+          event: LOG_EVENTS.MOOD_TAKE_FAILED,
+          payload: { reason: "Failed to decode recorded audio: bad container" },
+        }),
+      ]),
+    );
+  });
+
+  it("surfaces and logs media permission failures", async () => {
+    const onError = vi.fn();
+    mediaMocks.acquireRecordingStream.mockRejectedValue(
+      new DOMException("camera permission denied", "NotAllowedError"),
+    );
+
+    await expect(recordMoodTake("mic-0", { onError })).resolves.toBe(false);
+
+    const deniedCopy =
+      "Camera blocked — allow camera and microphone access in your browser, then reload.";
+    expect(onError).toHaveBeenCalledWith(deniedCopy);
+    expect(getLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warn",
+          event: LOG_EVENTS.MOOD_TAKE_FAILED,
+          payload: { reason: deniedCopy },
+        }),
+      ]),
+    );
   });
 
   it("aborts during stream acquisition without saving and releases late streams", async () => {
@@ -1286,7 +1690,8 @@ describe("moodRecordingFlow", () => {
     vi.useFakeTimers();
     let otherActive = false;
     const otherInterrupt = vi.fn();
-    const unregister = registerRecordingInterruptHandler({
+    const unregisterMood = registerMoodRecordingInterrupt();
+    const unregisterOther = registerRecordingInterruptHandler({
       isActive: () => otherActive,
       interrupt: otherInterrupt,
     });
@@ -1306,9 +1711,31 @@ describe("moodRecordingFlow", () => {
       expect(interruptActiveRecording("interrupted")).toBe(true);
       expect(otherInterrupt).toHaveBeenCalledWith("interrupted");
     } finally {
-      unregister();
+      unregisterOther();
+      unregisterMood();
       cancelCurrentMoodTake();
       await promise.catch(() => false);
+    }
+  });
+
+  it("logs poster extraction failures under the poster capture event", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    posterMocks.captureFirstFrame.mockRejectedValue(new Error("mood poster failed"));
+
+    const promise = recordMoodTake("mic-0");
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(promise).resolves.toBe(true);
+      await flushMicrotasks();
+
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.POSTER_CAPTURE_ERROR, {
+        phase: "mood-poster",
+        message: "mood poster failed",
+      });
+    } finally {
+      warn.mockRestore();
     }
   });
 

@@ -13,14 +13,14 @@ export { establishCycleFromClick, establishCycleFromTake };
 export const DROP_BEATS_PER_CYCLE = 8;
 const BOUNDARY_EPSILON_SECONDS = 1e-9;
 
-export type MoodCycleMultiple = MoodTake["cycleMultiple"];
+type MoodCycleMultiple = MoodTake["cycleMultiple"];
 
-export interface BoundarySelectionEvent extends MoodSelectionCommit {
+interface BoundarySelectionEvent extends MoodSelectionCommit {
   type: "selection";
   boundaryTime: number;
 }
 
-export interface BoundaryLensEvent {
+interface BoundaryLensEvent {
   type: "lens";
   lens: MoodLens;
   boundaryTime: number;

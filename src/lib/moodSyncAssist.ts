@@ -33,7 +33,7 @@ const SYNC_PROMPT =
   "Return JSON only with offsetMs and confidence. Positive offsetMs means start the take later; negative means earlier. " +
   "Use confidence 0..1 for how clearly the transient, groove, or vocal entry aligns.";
 
-export interface MoodSyncAssistResult {
+interface MoodSyncAssistResult {
   offsetMs: number;
   confidence: number;
 }

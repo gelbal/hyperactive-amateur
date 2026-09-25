@@ -16,8 +16,10 @@ import * as persistence from "./persistence";
 import { clearProject } from "./persistence";
 import { clearLogs, getLogs, LOG_EVENTS } from "./logger";
 import { createEmptyMoodPiece } from "./moodStages";
+import { CREDIT_STYLES } from "./moodCredits";
 import { decodeMoodTakes, normalizeMoodMeta, rehydrateMoodFromStorage } from "./moodRehydrate";
 import * as posterFrame from "./posterFrame";
+import { MOOD_LENS_IDS, MOOD_VIBE_IDS } from "../types";
 import type { MoodMic, MoodPiece, MoodTake } from "../types";
 
 function makeBlob(bytes: number[], type: string): Blob {
@@ -94,6 +96,61 @@ async function overwriteMoodMetadata(mutator: (meta: Record<string, any>) => voi
 }
 
 describe("normalizeMoodMeta", () => {
+  it("single-sources all three Mood lens ids and round-trips Solo", () => {
+    expect(MOOD_LENS_IDS).toEqual(["wall", "splits", "solo"]);
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta({ ...cleanMoodPiece(), lens: "solo" }, warnings);
+
+    expect(normalized.lens).toBe("solo");
+    expect(warnings).toEqual([]);
+  });
+
+  it("repairs an unknown lens to Wall with a warning", () => {
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(
+      { ...cleanMoodPiece(), lens: "close-up" },
+      warnings,
+    );
+
+    expect(normalized.lens).toBe("wall");
+    expect(warnings).toContain("Mood lens was invalid and reset to wall.");
+  });
+
+  it("single-sources all ten Mood vibe ids and accepts Solar", () => {
+    expect(MOOD_VIBE_IDS).toEqual([
+      "clean",
+      "print",
+      "mixtape",
+      "blocks",
+      "camcorder",
+      "kaleido",
+      "weave",
+      "crossroll",
+      "ghost",
+      "solar",
+    ]);
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta({ ...cleanMoodPiece(), vibe: "solar" }, warnings);
+
+    expect(normalized.vibe).toBe("solar");
+    expect(warnings).toEqual([]);
+  });
+
+  it("silently migrates persisted Strobe pieces to Crossroll", () => {
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(
+      { ...cleanMoodPiece(), vibe: "strobe" },
+      warnings,
+    );
+
+    expect(normalized.vibe).toBe("crossroll");
+    expect(warnings).toEqual([]);
+  });
+
   it("accepts clean metadata without warnings or blob decode fields", () => {
     const piece = cleanMoodPiece();
     const warnings: string[] = [];
@@ -114,6 +171,150 @@ describe("normalizeMoodMeta", () => {
     expect(normalized.mics[0].takes[0].videoBlob).toBe(piece.mics[0].takes[0].videoBlob);
     expect(normalized.mics[0].takes[0]).not.toHaveProperty("audioBuffer");
     expect(normalized.mics[0].takes[0]).not.toHaveProperty("url");
+    expect(normalized.credits).toBeUndefined();
+    expect(normalized.artDirection).toBeUndefined();
+    expect(normalized.keyEstimate).toBeUndefined();
+  });
+
+  it("keeps absent Credits metadata undefined without a recovery warning", () => {
+    const raw = cleanMoodPiece();
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(raw, warnings);
+
+    expect(normalized.credits).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps only saved selections whose mic and take still exist", () => {
+    const raw = {
+      ...cleanMoodPiece(),
+      savedSelections: {
+        "mic-0": "take-1",
+        "mic-1": "off",
+        "mic-2": "missing-take",
+        "missing-mic": "take-1",
+      },
+    };
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(raw, warnings);
+
+    expect(normalized.savedSelections).toEqual({
+      "mic-0": "take-1",
+      "mic-1": "off",
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it("fails open to undefined when no saved selection remains valid", () => {
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(
+      {
+        ...cleanMoodPiece(),
+        savedSelections: { "mic-0": "missing-take", ghost: "off" },
+      },
+      warnings,
+    );
+
+    expect(normalized.savedSelections).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  it("silently normalizes optional One aesthetics field by field", () => {
+    const validWarnings: string[] = [];
+    const valid = normalizeMoodMeta({
+      ...cleanMoodPiece(),
+      artDirection: { fxPreset: "wash", creditPalette: "heat", source: "ai" },
+      keyEstimate: { key: "A", mode: "minor", confidence: 0.81 },
+    }, validWarnings);
+    expect(valid.artDirection).toEqual({ fxPreset: "wash", creditPalette: "heat", source: "ai" });
+    expect(valid.keyEstimate).toEqual({ key: "A", mode: "minor", confidence: 0.81 });
+    expect(validWarnings).toEqual([]);
+
+    const invalidWarnings: string[] = [];
+    const invalid = normalizeMoodMeta({
+      ...cleanMoodPiece(),
+      artDirection: { fxPreset: "wash", creditPalette: "neon", source: "ai" },
+      keyEstimate: { key: "H", mode: "minor", confidence: 0.81 },
+    }, invalidWarnings);
+    expect(invalid.artDirection).toBeUndefined();
+    expect(invalid.keyEstimate).toBeUndefined();
+    expect(invalidWarnings).toEqual([]);
+  });
+
+  it("coerces Credits, trims valid mic names, and drops junk", () => {
+    const raw = {
+      ...cleanMoodPiece(),
+      credits: {
+        enabled: "yes",
+        names: {
+          "mic-0": "  Bass  ",
+          "mic-1": 42,
+          "mic-3": "abcdefghijklmnopqrstuvwxyz",
+          "mic-missing": "ghost",
+        },
+        styleIndex: 999,
+      },
+    };
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(raw, warnings);
+
+    expect(normalized.credits).toEqual({
+      enabled: true,
+      names: {
+        "mic-0": "Bass",
+        "mic-3": "abcdefghijklmnopqrstuvwx",
+      },
+      styleIndex: CREDIT_STYLES.length - 1,
+    });
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it("round-trips a valid Credit mode and omits an absent one", () => {
+    const absentWarnings: string[] = [];
+    const absent = normalizeMoodMeta(
+      {
+        ...cleanMoodPiece(),
+        credits: { enabled: true, names: {}, styleIndex: 0 },
+      },
+      absentWarnings,
+    );
+    expect(absent.credits).toEqual({ enabled: true, names: {}, styleIndex: 0 });
+    expect(absentWarnings).toEqual([]);
+
+    const presentWarnings: string[] = [];
+    const present = normalizeMoodMeta(
+      {
+        ...cleanMoodPiece(),
+        credits: { enabled: true, names: {}, styleIndex: 0, mode: "together" },
+      },
+      presentWarnings,
+    );
+    expect(present.credits).toEqual({
+      enabled: true,
+      names: {},
+      styleIndex: 0,
+      mode: "together",
+    });
+    expect(presentWarnings).toEqual([]);
+  });
+
+  it("omits and warns on a junk Credit mode", () => {
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(
+      {
+        ...cleanMoodPiece(),
+        credits: { enabled: true, names: {}, styleIndex: 0, mode: "roulette" },
+      },
+      warnings,
+    );
+
+    expect(normalized.credits).toEqual({ enabled: true, names: {}, styleIndex: 0 });
+    expect(warnings).toContain("Mood Credits mode was invalid and cleared.");
   });
 
   it("repairs an unknown stage to a known stage", () => {
@@ -462,4 +663,14 @@ describe("decodeMoodTakes", () => {
     expect(result.piece?.mics[0].takes[0].posterBlob).toBeNull();
     expect(capture).toHaveBeenCalledWith(videoBlob);
   });
+});
+
+it("rehydrates an unknown vibe to Clean through the shared mood vibe ids", () => {
+  const raw = { ...cleanMoodPiece(), vibe: "unknown" } as unknown;
+  const warnings: string[] = [];
+
+  const normalized = normalizeMoodMeta(raw, warnings);
+
+  expect(MOOD_VIBE_IDS).toContain(normalized.vibe);
+  expect(normalized.vibe).toBe("clean");
 });

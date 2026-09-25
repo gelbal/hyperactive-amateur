@@ -80,6 +80,13 @@ function loadServiceWorker(
           if (options.rejectCachePut) throw new Error("quota exceeded");
           store!.set(request.url, response);
         }),
+        match: vi.fn(async (request: Request | string) => {
+          const href =
+            typeof request === "string"
+              ? new URL(request, self.location.origin).href
+              : request.url;
+          return store!.get(href)?.clone();
+        }),
       };
     },
     async keys() {
@@ -138,6 +145,34 @@ describe("service worker", () => {
     expect(store?.has("https://example.test/assets/index-abc123.js")).toBe(true);
     expect(store?.has("https://example.test/assets/index-def456.css")).toBe(true);
     expect(self.skipWaiting).toHaveBeenCalled();
+  });
+
+  it("copies unchanged hashed assets from the outgoing cache instead of re-fetching", async () => {
+    const { listeners, stores } = loadServiceWorker({
+      precacheUrls: ["/", "/index.html", "/assets/index-abc123.js", "/assets/new-only.js"],
+    });
+    // Seed the previous deploy's cache with one still-current hashed asset.
+    const oldStore = new Map<string, Response>();
+    oldStore.set(
+      "https://example.test/assets/index-abc123.js",
+      new Response("old-cached"),
+    );
+    stores.set("ha-shell-oldhash", oldStore);
+
+    const event = makeEvent();
+    listeners.install?.(event);
+    await Promise.all(event.waits);
+
+    const store = stores.get("ha-shell-testhash");
+    // The still-current asset was copied (body proves the source)…
+    const copied = store?.get("https://example.test/assets/index-abc123.js");
+    expect(await copied?.clone().text()).toBe("old-cached");
+    // …while shell URLs and genuinely new assets go through addAll.
+    expect(await store?.get("https://example.test/")?.clone().text()).toBe("shell");
+    expect(await store?.get("https://example.test/index.html")?.clone().text()).toBe("shell");
+    expect(await store?.get("https://example.test/assets/new-only.js")?.clone().text()).toBe(
+      "shell",
+    );
   });
 
   it("serves precached app shell even for browser reload requests", async () => {

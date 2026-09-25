@@ -2,23 +2,24 @@
 // ABOUTME: Drains due transport commits once and applies store-visible performance state.
 import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodSelectionCommit } from "../types";
+import type { BoundaryDropEvent } from "./moodClock";
 import { syncCommittedMoodEngines } from "./moodPerformance";
 import { consumeDueCommits } from "./moodTransport";
 import { restartVideosAtPeriodBoundary } from "./moodVideoPool";
 
-export function applyDueCommits(audioTime: number): void {
+export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
   const due = consumeDueCommits(audioTime);
 
   const selections: MoodSelectionCommit[] = [];
   let lens: MoodLens | null = null;
-  let dropActive: boolean | null = null;
+  let dropCommit: BoundaryDropEvent | null = null;
   for (const commit of due) {
     if (commit.type === "selection") {
       selections.push({ micId: commit.micId, entry: commit.entry });
     } else if (commit.type === "lens") {
       lens = commit.lens;
     } else if (commit.type === "drop") {
-      dropActive = commit.active;
+      dropCommit = commit;
     }
   }
 
@@ -30,8 +31,8 @@ export function applyDueCommits(audioTime: number): void {
     actions.setMoodLens(lens);
     actions.setMoodArmedLens(null);
   }
-  if (dropActive !== null) {
-    actions.setMoodDrop(dropActive);
+  if (dropCommit !== null) {
+    actions.setMoodDrop(dropCommit.active);
     actions.setMoodArmedDrop(null);
   }
   if (selections.length > 0) {
@@ -48,8 +49,9 @@ export function applyDueCommits(audioTime: number): void {
     epoch === null ||
     audioTime < epoch
   ) {
-    return;
+    return dropCommit;
   }
 
   restartVideosAtPeriodBoundary(audioTime, epoch);
+  return dropCommit;
 }

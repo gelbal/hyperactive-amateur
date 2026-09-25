@@ -43,3 +43,34 @@ export function timeoutAfter(ms: number, message: string): Promise<never> {
     throw new Error(message);
   });
 }
+
+export async function waitUntilAudioTime(
+  deadlineSeconds: number,
+  audioContext: Pick<BaseAudioContext, "currentTime">,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal) {
+      throwIfFlowAborted(signal, "Aborted before countdown completed");
+    }
+    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
+    if (remainingMs <= 0) return;
+    await waitMs(remainingMs, signal);
+  }
+}
+
+export function getAbortReason(signal: AbortSignal): "user" | "interrupted" {
+  return signal.reason === "interrupted" ? "interrupted" : "user";
+}
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+export function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
+  return isAbortError(err) || (signal.aborted && err === signal.reason);
+}
+
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

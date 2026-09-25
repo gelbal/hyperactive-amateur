@@ -4,55 +4,9 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 
-type RepeatCallback = (time: number) => void;
-type DrawTask = { callback: () => void; time: number };
-
-const toneMocks = vi.hoisted(() => {
-  let audioNow = 0;
-  const drawTasks: DrawTask[] = [];
-  const repeatCallbacks: RepeatCallback[] = [];
-  const transport = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    clear: vi.fn(),
-    scheduleRepeat: vi.fn((callback: RepeatCallback) => {
-      repeatCallbacks.push(callback);
-      return 501;
-    }),
-    position: 0 as number | string,
-  };
-  const draw = {
-    schedule: vi.fn((callback: () => void, time: number) => {
-      drawTasks.push({ callback, time });
-      return drawTasks.length;
-    }),
-    advanceTo(time: number) {
-      audioNow = time;
-      const due = drawTasks
-        .filter((task) => task.time <= time)
-        .sort((a, b) => a.time - b.time);
-      for (const task of due) {
-        drawTasks.splice(drawTasks.indexOf(task), 1);
-        task.callback();
-      }
-    },
-    pendingTimes() {
-      return drawTasks.map((task) => task.time).sort((a, b) => a - b);
-    },
-    reset() {
-      drawTasks.length = 0;
-      draw.schedule.mockClear();
-    },
-  };
-  return {
-    draw,
-    now: vi.fn(() => audioNow),
-    repeatCallbacks,
-    setNow(time: number) {
-      audioNow = time;
-    },
-    transport,
-  };
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return { toneHarness: createToneHarness() };
 });
 
 const audioLifecycleMocks = vi.hoisted(() => ({
@@ -64,11 +18,24 @@ const moodPlayersMocks = vi.hoisted(() => ({
   syncMoodPlayers: vi.fn(),
 }));
 
-vi.mock("tone", () => ({
-  getDraw: vi.fn(() => toneMocks.draw),
-  getTransport: vi.fn(() => toneMocks.transport),
-  now: toneMocks.now,
+const moodFxMocks = vi.hoisted(() => ({
+  brakeVisualLevel: vi.fn(() => 0),
+  echoVisualLevel: vi.fn(() => 0),
+  gateVisualActive: vi.fn(() => false),
+  harmonizeVisualLevel: vi.fn(() => 0),
+  initializeMoodFxForPerformance: vi.fn(),
+  pressMoodBrake: vi.fn(() => true),
+  pressMoodGate: vi.fn(() => true),
+  pressMoodHarmonize: vi.fn(() => true),
+  releaseMoodBrake: vi.fn(() => true),
+  releaseMoodGate: vi.fn(() => true),
+  releaseMoodHarmonize: vi.fn(() => true),
+  resetMoodDropFilter: vi.fn(),
+  scheduleMoodDropFilter: vi.fn(),
+  triggerMoodEcho: vi.fn(() => true),
 }));
+
+vi.mock("tone", () => toneHarness.createToneModule());
 
 vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
@@ -77,6 +44,23 @@ vi.mock("./audioLifecycle", () => ({
 vi.mock("./moodPlayers", () => ({
   stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
   syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
+}));
+
+vi.mock("./moodFx", () => ({
+  brakeVisualLevel: moodFxMocks.brakeVisualLevel,
+  echoVisualLevel: moodFxMocks.echoVisualLevel,
+  gateVisualActive: moodFxMocks.gateVisualActive,
+  harmonizeVisualLevel: moodFxMocks.harmonizeVisualLevel,
+  initializeMoodFxForPerformance: moodFxMocks.initializeMoodFxForPerformance,
+  pressMoodBrake: moodFxMocks.pressMoodBrake,
+  pressMoodGate: moodFxMocks.pressMoodGate,
+  pressMoodHarmonize: moodFxMocks.pressMoodHarmonize,
+  releaseMoodBrake: moodFxMocks.releaseMoodBrake,
+  releaseMoodGate: moodFxMocks.releaseMoodGate,
+  releaseMoodHarmonize: moodFxMocks.releaseMoodHarmonize,
+  resetMoodDropFilter: moodFxMocks.resetMoodDropFilter,
+  scheduleMoodDropFilter: moodFxMocks.scheduleMoodDropFilter,
+  triggerMoodEcho: moodFxMocks.triggerMoodEcho,
 }));
 
 import { __resetPendingAudibleClaimForTesting } from "./audibleActionGate";
@@ -101,30 +85,7 @@ import { useMoodKeys } from "./useMoodKeys";
 import { useAppStore } from "../store/useAppStore";
 import { STAGE_DESCRIPTORS } from "./moodStages";
 import type { MoodPiece, MoodTake } from "../types";
-
-function makeMoodTake(overrides: Partial<MoodTake> = {}): MoodTake {
-  const id = overrides.id ?? "take-1";
-  const durationSeconds = overrides.durationSeconds ?? 2;
-  return {
-    id,
-    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBlob: null,
-    posterBlob: null,
-    url: `blob:test/${id}`,
-    audioBuffer: { duration: durationSeconds, sampleRate: 48000 } as AudioBuffer,
-    audioStatus: "ok",
-    posterUrl: null,
-    trimStartMs: 0,
-    trimEndMs: durationSeconds * 1000,
-    durationSeconds,
-    cycleMultiple: 1,
-    syncOffsetMs: 0,
-    part: null,
-    partSource: null,
-    recordedAt: 1,
-    ...overrides,
-  };
-}
+import { makeMoodTake } from "../test-utils/moodFixtures";
 
 function createMoodWithStack(cycleSeconds = 2): {
   takeA: MoodTake;
@@ -155,7 +116,7 @@ function createRenderer(stage: MoodPiece["stage"] = "row"): void {
 }
 
 function fireCycleBoundary(time: number): void {
-  const callback = toneMocks.repeatCallbacks[0];
+  const callback = toneHarness.transport.repeatCallbacks[0];
   if (!callback) throw new Error("Expected scheduled Mood boundary callback");
   callback(time);
 }
@@ -179,15 +140,20 @@ describe("moodPerformance", () => {
     audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
     moodPlayersMocks.stopAllMoodPlayers.mockReset();
     moodPlayersMocks.syncMoodPlayers.mockReset();
-    toneMocks.setNow(0);
-    toneMocks.now.mockClear();
-    toneMocks.repeatCallbacks.length = 0;
-    toneMocks.transport.start.mockClear();
-    toneMocks.transport.stop.mockClear();
-    toneMocks.transport.clear.mockClear();
-    toneMocks.transport.scheduleRepeat.mockClear();
-    toneMocks.transport.position = 0;
-    toneMocks.draw.reset();
+    moodFxMocks.resetMoodDropFilter.mockReset();
+    moodFxMocks.scheduleMoodDropFilter.mockReset();
+    moodFxMocks.initializeMoodFxForPerformance.mockReset();
+    moodFxMocks.pressMoodBrake.mockClear();
+    moodFxMocks.pressMoodGate.mockClear();
+    moodFxMocks.pressMoodHarmonize.mockClear();
+    moodFxMocks.releaseMoodBrake.mockClear();
+    moodFxMocks.releaseMoodGate.mockClear();
+    moodFxMocks.releaseMoodHarmonize.mockClear();
+    moodFxMocks.triggerMoodEcho.mockClear();
+    toneHarness.setImmediate(0);
+    toneHarness.setLookahead(0);
+    toneHarness.transport.reset();
+    toneHarness.draw.reset();
   });
 
   afterEach(() => {
@@ -201,11 +167,11 @@ describe("moodPerformance", () => {
 
   it("arms during performance, then commits once on the next cycle boundary and fans out to players and pool", async () => {
     const { takeB } = createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     moodPlayersMocks.syncMoodPlayers.mockClear();
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armSelection("mic-0", "take-b");
 
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
@@ -247,7 +213,7 @@ describe("moodPerformance", () => {
     armLens("splits");
 
     expect(useAppStore.getState().mood.piece?.lens).toBe("splits");
-    expect(toneMocks.repeatCallbacks).toHaveLength(0);
+    expect(toneHarness.transport.repeatCallbacks).toHaveLength(0);
   });
 
   it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
@@ -282,7 +248,7 @@ describe("moodPerformance", () => {
     createMoodWithStack(2);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     useAppStore.getState().actions.setIsExporting(true);
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
 
     armSelection("mic-0", "take-a");
 
@@ -295,7 +261,7 @@ describe("moodPerformance", () => {
     createMoodWithStack(2);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     useAppStore.getState().actions.setIsExporting(true);
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
 
     armLens("splits");
 
@@ -304,10 +270,10 @@ describe("moodPerformance", () => {
 
   it("applies a pre-armed lens commit during capture through the boundary drain", async () => {
     createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armLens("splits");
     useAppStore.getState().actions.setRecordingState("recording", 0);
 
@@ -322,7 +288,7 @@ describe("moodPerformance", () => {
     armSelection("mic-0", "take-a");
     moodPlayersMocks.syncMoodPlayers.mockClear();
 
-    toneMocks.setNow(20);
+    toneHarness.setImmediate(20);
     await startMoodPerformance();
 
     expect(moodPlayersMocks.syncMoodPlayers).toHaveBeenCalledTimes(1);
@@ -335,13 +301,13 @@ describe("moodPerformance", () => {
 
   it("replaces a prior arm for the same mic before the boundary", async () => {
     const { takeB } = createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     moodPlayersMocks.syncMoodPlayers.mockClear();
 
-    toneMocks.setNow(10.25);
+    toneHarness.setImmediate(10.25);
     armSelection("mic-0", "take-a");
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armSelection("mic-0", "take-b");
     fireCycleBoundary(12);
     applyDueCommits(12);
@@ -358,10 +324,10 @@ describe("moodPerformance", () => {
 
   it("arms lens changes while performing and commits them on the One", async () => {
     createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armLens("splits");
 
     expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
@@ -378,14 +344,14 @@ describe("moodPerformance", () => {
 
   it("lets the last armed lens intent win even when it returns to the committed lens", async () => {
     createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.25);
+    toneHarness.setImmediate(10.25);
     armLens("splits");
     expect(useAppStore.getState().mood.performance.armedLens).toBe("splits");
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armLens("wall");
     expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
     expect(useAppStore.getState().mood.performance.armedLens).toBeNull();
@@ -399,10 +365,10 @@ describe("moodPerformance", () => {
 
   it("clears armedLens when performance stops", async () => {
     createMoodWithStack(2);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armLens("splits");
     expect(useAppStore.getState().mood.performance.armedLens).toBe("splits");
 
@@ -414,12 +380,12 @@ describe("moodPerformance", () => {
   it("starts the wardrobe on and commits the Drop on the next beat", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("mixtape");
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
     expect(useAppStore.getState().mood.performance.dropActive).toBe(true);
 
-    toneMocks.setNow(10.2);
+    toneHarness.setImmediate(10.2);
     armDrop();
 
     expect(useAppStore.getState().mood.performance.dropActive).toBe(true);
@@ -434,40 +400,77 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
   });
 
+  it("pins Drop automation to the exact boundary stored in the queue", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("mixtape");
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+
+    toneHarness.setImmediate(10.2);
+    armDrop();
+
+    expect(moodFxMocks.scheduleMoodDropFilter).toHaveBeenCalledWith(false, 10.5, 0.5);
+    const [commit] = consumeDueCommits(10.5);
+    expect(commit).toEqual({ type: "drop", active: false, boundaryTime: 10.5 });
+    expect(moodFxMocks.scheduleMoodDropFilter.mock.calls[0][1]).toBe(commit.boundaryTime);
+  });
+
+  it("re-arms and reschedules the Drop at the same pending beat", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("blocks");
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+
+    toneHarness.setImmediate(10.2);
+    armDrop();
+    toneHarness.setImmediate(10.3);
+    armDrop();
+
+    expect(moodFxMocks.scheduleMoodDropFilter.mock.calls).toEqual([
+      [false, 10.5, 0.5],
+      [true, 10.5, 0.5],
+    ]);
+    expect(consumeDueCommits(10.5)).toEqual([
+      { type: "drop", active: true, boundaryTime: 10.5 },
+    ]);
+  });
+
   it("keeps the Drop live during export but blocked during capture", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("blocks");
-    toneMocks.setNow(20);
+    toneHarness.setImmediate(20);
     await startMoodPerformance();
 
     useAppStore.getState().actions.setIsExporting(true);
-    toneMocks.setNow(20.2);
+    toneHarness.setImmediate(20.2);
     armDrop();
 
     expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+    expect(moodFxMocks.scheduleMoodDropFilter).toHaveBeenCalledTimes(1);
 
     useAppStore.getState().actions.setIsExporting(false);
     applyDueCommits(20.5);
     expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
 
     useAppStore.getState().actions.setRecordingState("recording", 0);
-    toneMocks.setNow(20.7);
+    toneHarness.setImmediate(20.7);
     armDrop();
 
     expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
     expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+    expect(moodFxMocks.scheduleMoodDropFilter).toHaveBeenCalledTimes(1);
   });
 
   it("keeps arms and the Drop live during a mood export while piece writers freeze", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("blocks");
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     useAppStore.getState().actions.setIsExporting(true);
 
     // Performance surface stays live — every arm, swap, and Drop is part
     // of the take (spec §9).
-    toneMocks.setNow(10.2);
+    toneHarness.setImmediate(10.2);
     armSelection("mic-0", "take-a");
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("take-a");
     applyDueCommits(14);
@@ -490,15 +493,15 @@ describe("moodPerformance", () => {
 
   it("applies a due selection even when the same mic re-arms before any drain", async () => {
     createMoodWithStack(4);
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.2);
+    toneHarness.setImmediate(10.2);
     armSelection("mic-0", "take-a");
 
     // The cycle boundary (14) passes with NO paint drain, then the
     // performer re-arms the same mic. The due take-a swap must still land.
-    toneMocks.setNow(14.1);
+    toneHarness.setImmediate(14.1);
     armSelection("mic-0", "take-b");
 
     applyDueCommits(14.2);
@@ -511,15 +514,17 @@ describe("moodPerformance", () => {
   it("clears a queued Drop when performance stops", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("print");
-    toneMocks.setNow(30);
+    toneHarness.setImmediate(30);
     await startMoodPerformance();
 
-    toneMocks.setNow(30.2);
+    toneHarness.setImmediate(30.2);
     armDrop();
     expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
 
+    moodFxMocks.resetMoodDropFilter.mockClear();
     stopMoodPerformance();
 
+    expect(moodFxMocks.resetMoodDropFilter).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
     expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
     expect(consumeDueCommits(30.5)).toEqual([]);
@@ -531,10 +536,10 @@ describe("moodPerformance", () => {
     const outgoing = videoForTake("take-a");
     expect(outgoing).toBeInstanceOf(HTMLVideoElement);
     createRenderer("row");
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
 
-    toneMocks.setNow(10.5);
+    toneHarness.setImmediate(10.5);
     armSelection("mic-0", "take-b");
     const incoming = videoForTake("take-b");
     expect(incoming).toBeInstanceOf(HTMLVideoElement);
@@ -580,11 +585,11 @@ describe("moodPerformance", () => {
   it("maps KeyD to the Drop and suppresses editable targets", async () => {
     createMoodWithStack(4);
     useAppStore.getState().actions.setMoodVibe("blocks");
-    toneMocks.setNow(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     const { getByTestId } = render(createElement(KeyHarness, { withInput: true }));
 
-    toneMocks.setNow(10.2);
+    toneHarness.setImmediate(10.2);
     document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
     expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
 
@@ -593,5 +598,42 @@ describe("moodPerformance", () => {
       new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }),
     );
     expect(useAppStore.getState().mood.performance.armedDropActive).toBeNull();
+  });
+
+  it("maps G/E/B/H to hold/tap pad edges, suppresses repeats, and releases keyboard holds", () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    const { getByTestId } = render(createElement(KeyHarness, { withInput: true }));
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyG", bubbles: true }));
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyG", bubbles: true, repeat: true }),
+    );
+    document.body.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyG", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyB", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyB", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyH", bubbles: true }));
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyH", bubbles: true, repeat: true }),
+    );
+    window.dispatchEvent(new Event("blur"));
+
+    expect(moodFxMocks.pressMoodGate).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.releaseMoodGate).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.triggerMoodEcho).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.pressMoodBrake).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.releaseMoodBrake).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.pressMoodHarmonize).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.releaseMoodHarmonize).toHaveBeenCalledTimes(1);
+
+    getByTestId("mood-input").dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyE", bubbles: true }),
+    );
+    getByTestId("mood-input").dispatchEvent(
+      new KeyboardEvent("keydown", { code: "KeyH", bubbles: true }),
+    );
+    expect(moodFxMocks.triggerMoodEcho).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.pressMoodHarmonize).toHaveBeenCalledTimes(1);
   });
 });

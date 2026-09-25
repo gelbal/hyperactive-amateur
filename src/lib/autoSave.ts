@@ -65,13 +65,26 @@ function markDirty(scope: AutoSaveScope): void {
   scheduleSave();
 }
 
+// While a take is being recorded its mic's mix state is undecided — the flow
+// arms the new take only after finalize. Omitting the hot mic from the saved
+// mix lets a restore fall back to the latest-take default (the new take)
+// instead of resurrecting the pre-arm "off".
+function savedMoodSelectionsSnapshot(
+  state: ReturnType<typeof useAppStore.getState>,
+): Record<string, string> {
+  const selections = { ...state.mood.performance.selections };
+  const hotMicId = state.mood.performance.hotMicId;
+  if (state.recording.state !== "idle" && hotMicId) delete selections[hotMicId];
+  return selections;
+}
+
 function persistScope(scope: AutoSaveScope): Promise<void> {
   const state = useAppStore.getState();
   const write =
     scope === "chop"
       ? saveProject(state)
       : state.mood.piece
-        ? saveMoodPiece(state.mood.piece)
+        ? saveMoodPiece(state.mood.piece, savedMoodSelectionsSnapshot(state))
         : clearMoodPiece();
   return write.catch((err: unknown) => {
     reportSaveError(err);
@@ -123,7 +136,13 @@ function flushAfterRecordingIfNeeded(): void {
   const state = useAppStore.getState();
   if (state.recording.state !== "idle") return;
   clearPendingTimer();
-  void requestSave(scopes).catch(() => undefined);
+  // The idle transition fires synchronously mid-finalize, before the flow's
+  // auto-arm commits its selection. A microtask lets the post-recording state
+  // settle so the flushed snapshot carries the armed mix, not the stale one.
+  queueMicrotask(() => {
+    if (useAppStore.getState().recording.state !== "idle") return;
+    void requestSave(scopes).catch(() => undefined);
+  });
 }
 
 function scheduleSave(): void {
@@ -173,7 +192,12 @@ export function startAutoSave(): void {
   unsubscribe = useAppStore.subscribe((state, prev) => {
     syncPausedScopes();
     if (state.project !== prev.project) markDirty("chop");
-    if (state.mood.piece !== prev.mood.piece) markDirty("mood");
+    const stoppedMoodSelectionChanged =
+      !state.mood.performance.isPerforming &&
+      state.mood.performance.selections !== prev.mood.performance.selections;
+    if (state.mood.piece !== prev.mood.piece || stoppedMoodSelectionChanged) {
+      markDirty("mood");
+    }
     if (prev.recording.state !== "idle" && state.recording.state === "idle") {
       flushAfterRecordingIfNeeded();
     }

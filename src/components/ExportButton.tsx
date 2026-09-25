@@ -65,6 +65,10 @@ export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
   const canStart = useAppStore(canStartAudibleAction);
   const isMood = useAppStore((s) => s.appMode === "mood");
+  const isPlaying = useAppStore((s) => s.playback.isPlaying);
+  const isExporting = useAppStore((s) => s.playback.isExporting);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const isMoodPerforming = useAppStore((s) => s.mood.performance.isPerforming);
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
   const [progress, setProgress] = useState<number | null>(null);
@@ -81,6 +85,18 @@ export function ExportButton() {
   const moodHandleRef = useRef<object | null>(null);
   const mountedRef = useRef(true);
   const rendering = progress !== null;
+  const disabledReason =
+    rendering || isExporting
+      ? "frozen during export"
+      : recordingState !== "idle"
+        ? "locked during capture"
+        : isMoodPerforming
+          ? "stop the performance first"
+          : isPlaying
+            ? "stop playback first"
+            : !canStart
+              ? "finish the current action first"
+              : undefined;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
   const exportDurationMs = getExportDurationMs(bars, bpm);
   const exportDurationSeconds = Math.round(exportDurationMs / 1000);
@@ -261,6 +277,7 @@ export function ExportButton() {
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={rendering || (!canStart && !open)}
+        title={rendering || (!canStart && !open) ? disabledReason : undefined}
         onClick={() => {
           if (rendering) return;
           setOpen((v) => !v);
@@ -342,6 +359,7 @@ export function ExportButton() {
                   max={MAX_BARS}
                   value={bars}
                   disabled={rendering}
+                  title={rendering ? "frozen during export" : undefined}
                   onChange={(e) => setBars(Number(e.target.value))}
                   aria-label="bars"
                 />
@@ -406,6 +424,7 @@ export function ExportButton() {
                   <button
                     type="button"
                     disabled={sharePending}
+                    title={sharePending ? "sharing in progress" : undefined}
                     onClick={() => void handleShare()}
                     className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -437,6 +456,7 @@ export function ExportButton() {
             type="button"
             onClick={() => void handleRender()}
             disabled={rendering || !canStart}
+            title={rendering || !canStart ? disabledReason : undefined}
             className="flex items-center justify-center gap-2 px-4 py-2 pointer-coarse:min-h-11 rounded bg-orange-500 text-zinc-950 font-medium hover:bg-orange-400 disabled:opacity-50"
           >
             <Download size={16} />

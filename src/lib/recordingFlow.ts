@@ -8,6 +8,14 @@ import { autoTrim } from "./autoTrim";
 import { autoTag, AUTO_TAG_CONFIDENCE_THRESHOLD } from "./aiAutoTag";
 import { applyClassifiedTag } from "./applyClassifiedTag";
 import {
+  errorMessage,
+  getAbortReason,
+  isFlowAbort,
+  makeAbortError,
+  throwIfFlowAborted,
+  waitUntilAudioTime,
+} from "./async";
+import {
   ACQUIRE_FAILED_COPY,
   CAMERA_DENIED_COPY,
   isPermissionDenial,
@@ -15,7 +23,6 @@ import {
   requestMedia,
 } from "./media";
 import { sliceAudioBuffer } from "./audioBufferSlice";
-import { isAbortError } from "./aiClient";
 import { logger, LOG_EVENTS } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
 import { audioBufferToWav } from "./wavEncoder";
@@ -25,7 +32,6 @@ import {
   registerRecordingInterruptHandler,
   waitForUsableTracks,
 } from "./streamLifecycle";
-import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import { saveNow } from "./autoSave";
 import { acquireRecordingStreamUntilAbort } from "./recordingAcquire";
 import { requestPersistenceAfterClipSave } from "./recordingPersistence";
@@ -72,10 +78,6 @@ export function isRecordingInFlight(): boolean {
   return currentFlow !== null;
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 function attachPosterWhenReady(
   trackId: number,
   clip: Clip,
@@ -87,7 +89,7 @@ function attachPosterWhenReady(
     try {
       posterBlob = await captureFirstFrame(sourceBlob);
     } catch (err) {
-      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+      logger.warn(LOG_EVENTS.POSTER_CAPTURE_ERROR, {
         phase: "poster",
         message: errorMessage(err),
       });
@@ -103,30 +105,11 @@ function attachPosterWhenReady(
   })();
 }
 
-registerRecordingInterruptHandler({
-  isActive: isRecordingInFlight,
-  interrupt: (reason) => cancelCurrentRecording(reason),
-});
-
-async function waitUntilAudioTime(
-  deadlineSeconds: number,
-  audioContext: Pick<BaseAudioContext, "currentTime">,
-  signal: AbortSignal,
-): Promise<void> {
-  for (;;) {
-    throwIfFlowAborted(signal, "Aborted before countdown completed");
-    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
-    if (remainingMs <= 0) return;
-    await waitMs(remainingMs, signal);
-  }
-}
-
-function getAbortReason(signal: AbortSignal): RecordingCancelReason {
-  return signal.reason === "interrupted" ? "interrupted" : "user";
-}
-
-function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
-  return isAbortError(err) || (signal.aborted && err === signal.reason);
+export function registerChopRecordingInterrupt(): () => void {
+  return registerRecordingInterruptHandler({
+    isActive: isRecordingInFlight,
+    interrupt: (reason) => cancelCurrentRecording(reason),
+  });
 }
 
 // Run the full record sequence for one track. Acquires a fresh MediaStream
@@ -182,8 +165,11 @@ async function runFlow(
         options.onError?.(AUDIO_UNAVAILABLE_COPY);
         return false;
       }
-      // Recording can still proceed; recordClip has a decode fallback if the
-      // live Web Audio tap cannot run.
+      // ensureAudioRunning wraps every failure in AudioUnavailableError, so
+      // a failed unlock always aborts the flow — recording never proceeds
+      // without the shared audio context. Rethrow so a future unwrapped
+      // error surfaces through the outer catch instead of recording silent.
+      throw e;
     }
     throwIfFlowAborted(signal, "Aborted before media acquisition");
 
@@ -225,9 +211,11 @@ async function runFlow(
     actions.setRecordingState("countdown", trackId);
 
     await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
+    actions.setCaptureEndsAt(countdownEndsAt + RECORD_DURATION_MS / 1000);
     actions.setRecordingState("recording", trackId);
     const result = await recordClip(stream, RECORD_DURATION_MS, audioContext, { signal });
     throwIfFlowAborted(signal, "Aborted after capture");
+    actions.setRecordingState("reviewing", trackId);
     const trim = autoTrim(result.audioBuffer);
     const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
     const trimStartMs = Math.max(0, Math.min(trim.trimStartMs, bufferDurationMs));
@@ -279,6 +267,7 @@ async function runFlow(
     if (!externalStream && stream) releaseRecordingStream(stream);
     releaseCaptureIntent?.();
     actions.setCountdownEndsAt(null);
+    actions.setCaptureEndsAt(null);
     actions.setRecordingState("idle", null);
   }
 }

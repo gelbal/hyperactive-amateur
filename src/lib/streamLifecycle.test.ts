@@ -43,6 +43,7 @@ import {
   isPendingAudibleCurrent,
 } from "./audibleActionGate";
 import { __resetExportSessionForTesting, registerExportSession } from "./exportSession";
+import { __resetRecordingInterruptHandlersForTesting } from "./recordingInterrupt";
 import { clearLogs, getLogs, LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
 import { startAutoSave, stopAutoSave } from "./autoSave";
@@ -102,7 +103,7 @@ describe("streamLifecycle", () => {
     audioLifecycleMocks.noteMicReleased.mockClear();
     toneMocks.rawContext.state = "suspended";
     vi.mocked(Tone.start).mockClear();
-    registerRecordingInterruptHandler(null);
+    __resetRecordingInterruptHandlersForTesting();
     useAppStore.getState().actions.reset();
   });
 

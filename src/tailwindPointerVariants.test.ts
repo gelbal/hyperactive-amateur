@@ -63,6 +63,11 @@ describe("tailwind pointer-coarse variants", () => {
     expect(css).toMatch(
       /\.pointer-coarse\\:max-h-\\\[min\\\(70dvh\\2c 32rem\\\)\\\]\s*{\s*max-height: min\(70dvh, 32rem\);/,
     );
+    // The fine-pointer sheet anchors upward (bottom-full/mb-2); coarse resets
+    // the margin and the mic strip only becomes a scroll container on coarse —
+    // an always-on overflow-x-auto clips the anchored popover to the strip box.
+    expect(css).toMatch(/\.pointer-coarse\\:mb-0\s*{\s*margin-bottom: 0(px)?;/);
+    expect(css).toMatch(/\.pointer-coarse\\:overflow-x-auto\s*{\s*overflow-x: auto;/);
   }, 20_000);
 
   it("emits 24px range thumbs for coarse pointers", async () => {
@@ -88,5 +93,20 @@ describe("tailwind pointer-coarse variants", () => {
     expect(css).toMatch(
       /html,\s*body,\s*#root\s*{[^}]*background-color:\s*#09090b/i,
     );
+  }, 20_000);
+
+  it("emits the Mood controls no-wrap breakpoint at 1120px", async () => {
+    const css = await builtCss();
+    expect(css).toContain("@media (min-width: 1120px)");
+    expect(css).toMatch(
+      /\.wide\\:flex-nowrap\s*\{\s*flex-wrap:\s*nowrap;/,
+    );
+  }, 20_000);
+
+  it("emits the height-gated tall variant used by the Mood viewport lock", async () => {
+    const css = await builtCss();
+    expect(css).toContain("@media (min-height: 640px)");
+    expect(css).toMatch(/\.sm\\:tall\\:h-\\\[100dvh\\\]/);
+    expect(css).toMatch(/\.sm\\:tall\\:overflow-hidden/);
   }, 20_000);
 });

@@ -480,11 +480,12 @@ async function recordTheOne(page: Page): Promise<void> {
   await page.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Mood" }).click();
   await page.getByRole("button", { name: /Corners/ }).click();
   await page.getByRole("button", { name: "record the One" }).click();
-  await expect(page.getByRole("button", { name: /Stop take/ })).toBeVisible({
+  const micStrip = page.getByRole("group", { name: "Mood mics" });
+  await expect(micStrip.getByRole("button", { name: /Stop take/ })).toBeVisible({
     timeout: 15_000,
   });
   await page.waitForTimeout(2500);
-  await page.getByRole("button", { name: /Stop take/ }).click();
+  await micStrip.getByRole("button", { name: /Stop take/ }).click();
   await expect(page.getByRole("button", { name: "record the One" })).toHaveCount(0, {
     timeout: 10_000,
   });
@@ -498,6 +499,16 @@ test("records the One in Mood and performs from the keyboard", async ({ page }) 
   await recordTheOne(page);
 
   // The take lands on the mic chip and auto-commits live.
+  await expect(
+    page.getByRole("button", { name: /mic 1 — live: take 1/ }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await page
+    .getByRole("group", { name: "Mode" })
+    .getByRole("button", { name: "Mood" })
+    .click();
   await expect(
     page.getByRole("button", { name: /mic 1 — live: take 1/ }),
   ).toBeVisible({ timeout: 10_000 });

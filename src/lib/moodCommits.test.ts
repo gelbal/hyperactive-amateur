@@ -89,13 +89,14 @@ describe("moodCommits", () => {
       { type: "drop", active: true, boundaryTime: 4 },
     ]);
 
-    applyDueCommits(4);
+    const dropCommit = applyDueCommits(4);
 
     const state = useAppStore.getState();
     expect(state.mood.piece?.lens).toBe("splits");
     expect(state.mood.performance.armedLens).toBeNull();
     expect(state.mood.performance.dropActive).toBe(true);
     expect(state.mood.performance.armedDropActive).toBeNull();
+    expect(dropCommit).toEqual({ type: "drop", active: true, boundaryTime: 4 });
     expect(moodPerformanceMocks.syncCommittedMoodEngines).not.toHaveBeenCalled();
   });
 

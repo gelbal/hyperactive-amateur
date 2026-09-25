@@ -1,6 +1,15 @@
 // ABOUTME: moodPartTag — asks Gemini to classify Mood takes into vocal part roles.
 // ABOUTME: Sends one trimmed inline WAV and fails open with quiet logger events.
-import type { MoodPart, MoodTake } from "../types";
+import {
+  MOOD_CREDIT_PALETTE_IDS,
+  MOOD_FX_PRESET_IDS,
+  MOOD_KEY_IDS,
+  type MoodArtDirection,
+  type MoodKeyEstimate,
+  type MoodKeyMode,
+  type MoodPart,
+  type MoodTake,
+} from "../types";
 import { GeminiOfflineError, MissingApiKeyError } from "./aiErrors";
 import { blobToBase64, errMessage, isAbortError, runWithSignal } from "./aiClient";
 import { createHttpGeminiClient } from "./aiHttpClient";
@@ -13,6 +22,7 @@ const MOOD_PARTS = ["lead", "harmony", "bass", "beatbox", "adlib"] as const sati
 
 export const MOOD_PART_MODEL = "gemini-3.1-flash-lite";
 export const MOOD_PART_CONFIDENCE_THRESHOLD = 0.6;
+export const MOOD_KEY_CONFIDENCE_THRESHOLD = 0.6;
 export const MOOD_PART_INLINE_BYTES_MAX = 3 * 1024 * 1024;
 
 const BASE64_INFLATION = 4 / 3;
@@ -24,9 +34,16 @@ const PART_PROMPT =
   "beatbox for mouth percussion, and adlib for short hype, texture, or non-main vocal sounds. " +
   "Return JSON only with part and confidence. Use confidence 0..1 for how clearly the take fits the chosen part.";
 
-export interface MoodPartTagResult {
+const ONE_DIRECTION_PROMPT =
+  " This is the piece-setting first loop, the One. Also return fxPreset, creditPalette, key, mode, and keyConfidence. Choose neutral, sweep, or wash for fxPreset: neutral keeps the current balance, sweep closes the Drop deeper with modest Echo feedback, and wash keeps the Drop lighter with more Echo trail. " +
+  "Choose signal, print, or heat for creditPalette: signal is the current orange/red contrast, print is paper and ink, and heat is warm ember color. " +
+  "Estimate key as one chromatic note name, mode as major or minor, and keyConfidence from 0..1.";
+
+interface MoodPartTagResult {
   part: MoodPart;
   confidence: number;
+  artDirection?: MoodArtDirection;
+  keyEstimate?: MoodKeyEstimate;
 }
 
 export interface GeminiClient {
@@ -39,19 +56,49 @@ function isMoodPart(value: unknown): value is MoodPart {
   return typeof value === "string" && (MOOD_PARTS as readonly string[]).includes(value);
 }
 
-export function validateMoodPartTag(value: unknown): MoodPartTagResult | null {
+function isEnumValue<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === "string" && allowed.includes(value as T);
+}
+
+function isConfidence(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+export function validateMoodPartTag(
+  value: unknown,
+  isOne = false,
+): MoodPartTagResult | null {
   if (!value || typeof value !== "object") return null;
-  const v = value as { part?: unknown; confidence?: unknown };
+  const v = value as Record<string, unknown>;
   if (!isMoodPart(v.part)) return null;
+  if (!isConfidence(v.confidence)) return null;
+
+  const result: MoodPartTagResult = { part: v.part, confidence: v.confidence };
+  if (!isOne) return result;
+
   if (
-    typeof v.confidence !== "number" ||
-    !Number.isFinite(v.confidence) ||
-    v.confidence < 0 ||
-    v.confidence > 1
+    isEnumValue(v.fxPreset, MOOD_FX_PRESET_IDS) &&
+    isEnumValue(v.creditPalette, MOOD_CREDIT_PALETTE_IDS)
   ) {
-    return null;
+    result.artDirection = {
+      fxPreset: v.fxPreset,
+      creditPalette: v.creditPalette,
+      source: "ai",
+    };
   }
-  return { part: v.part, confidence: v.confidence };
+  if (
+    isEnumValue(v.key, MOOD_KEY_IDS) &&
+    isEnumValue(v.mode, ["major", "minor"] as const satisfies readonly MoodKeyMode[]) &&
+    isConfidence(v.keyConfidence) &&
+    v.keyConfidence >= MOOD_KEY_CONFIDENCE_THRESHOLD
+  ) {
+    result.keyEstimate = {
+      key: v.key,
+      mode: v.mode,
+      confidence: v.keyConfidence,
+    };
+  }
+  return result;
 }
 
 function estimatedBase64Bytes(buffer: AudioBuffer): number {
@@ -85,6 +132,7 @@ async function encodeInlineWav(buffer: AudioBuffer): Promise<string | null> {
 
 export async function classifyPart(
   take: MoodTake,
+  isOne = false,
   // Test seam — bypasses the real HTTP transport so unit tests don't hit /api/gemini.
   client?: GeminiClient,
   signal?: AbortSignal,
@@ -110,7 +158,7 @@ export async function classifyPart(
             role: "user",
             parts: [
               { inlineData: { mimeType: "audio/wav", data: takeBase64 } },
-              { text: PART_PROMPT },
+              { text: isOne ? PART_PROMPT + ONE_DIRECTION_PROMPT : PART_PROMPT },
             ],
           },
         ],
@@ -124,8 +172,39 @@ export async function classifyPart(
                 enum: [...MOOD_PARTS],
               },
               confidence: { type: SchemaType.NUMBER },
+              ...(isOne
+                ? {
+                    fxPreset: {
+                      type: SchemaType.STRING,
+                      enum: [...MOOD_FX_PRESET_IDS],
+                    },
+                    creditPalette: {
+                      type: SchemaType.STRING,
+                      enum: [...MOOD_CREDIT_PALETTE_IDS],
+                    },
+                    key: {
+                      type: SchemaType.STRING,
+                      enum: [...MOOD_KEY_IDS],
+                    },
+                    mode: {
+                      type: SchemaType.STRING,
+                      enum: ["major", "minor"],
+                    },
+                    keyConfidence: { type: SchemaType.NUMBER },
+                  }
+                : {}),
             },
-            required: ["part", "confidence"],
+            required: isOne
+              ? [
+                  "part",
+                  "confidence",
+                  "fxPreset",
+                  "creditPalette",
+                  "key",
+                  "mode",
+                  "keyConfidence",
+                ]
+              : ["part", "confidence"],
           },
         },
       }),
@@ -147,7 +226,7 @@ export async function classifyPart(
       return null;
     }
 
-    const validated = validateMoodPartTag(parsed);
+    const validated = validateMoodPartTag(parsed, isOne);
     if (!validated) {
       logMiss("schema", { takeId: take.id, latencyMs, parsed });
       return null;
@@ -169,6 +248,23 @@ export async function classifyPart(
       confidence: validated.confidence,
       latencyMs,
     });
+    if (validated.artDirection) {
+      logger.info(LOG_EVENTS.MOOD_ART_RESULT, {
+        model: MOOD_PART_MODEL,
+        fxPreset: validated.artDirection.fxPreset,
+        creditPalette: validated.artDirection.creditPalette,
+        latencyMs,
+      });
+    }
+    if (validated.keyEstimate) {
+      logger.info(LOG_EVENTS.MOOD_KEY_RESULT, {
+        model: MOOD_PART_MODEL,
+        key: validated.keyEstimate.key,
+        mode: validated.keyEstimate.mode,
+        confidence: validated.keyEstimate.confidence,
+        latencyMs,
+      });
+    }
     return validated;
   } catch (err) {
     if (isAbortError(err)) return null;

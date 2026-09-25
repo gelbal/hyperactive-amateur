@@ -35,6 +35,7 @@ function logPanelRequested(): boolean {
     return false;
   }
 }
+import { registerChopRecordingInterrupt } from "./lib/recordingFlow";
 
 const MoodMode = lazy(() => import("./components/mood/MoodMode"));
 
@@ -52,10 +53,14 @@ export function App() {
   const showControls = editorOpen || isPlaying;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
   const isChopMode = appMode === "chop";
+  const moodHasPiece = useAppStore((s) => s.mood.piece !== null);
   const moodHasCycle = useAppStore((s) => s.mood.piece?.cycleSeconds != null);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const lockMoodViewport = !isChopMode && moodHasPiece;
 
   useEffect(() => {
     initTransport();
+    const unregisterChopRecordingInterrupt = registerChopRecordingInterrupt();
     const detachInstallPrompt = captureInstallPrompt();
     const detachAudioLifecycle = initAudioLifecycle();
     const detachAudioRepair = initAudioRepair();
@@ -87,6 +92,7 @@ export function App() {
       });
     return () => {
       cancelled = true;
+      unregisterChopRecordingInterrupt();
       detachInstallPrompt();
       detachAudioLifecycle();
       detachAudioRepair();
@@ -98,7 +104,13 @@ export function App() {
   useKeyboardTriggers();
 
   return (
-    <div className="min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white">
+    <div
+      className={`min-h-screen min-h-[100dvh] box-border bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-white ${
+        lockMoodViewport
+          ? "sm:tall:h-[100dvh] sm:tall:overflow-hidden sm:tall:flex sm:tall:flex-col"
+          : ""
+      }`}
+    >
       <CompatibilityBanner />
       <header className="sticky top-0 z-30 bg-zinc-950 border-b border-zinc-800">
         {/* One wrapping row. Below lg the wrapper is display: contents, so
@@ -164,16 +176,31 @@ export function App() {
                 )}
               </div>
             )}
-            {/* In Mood the controls row holds Export once the piece has a cycle. */}
-            {!isChopMode && moodHasCycle && (
-              <div className="w-full lg:w-auto mt-3 lg:mt-0 min-h-[2.375rem] pointer-coarse:min-h-11 flex flex-wrap items-center gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
-                <ExportButton />
+            {/* Mood's controls row: MoodMode portals its transport, loop
+                badges, receipts and options (or the capture bar) into the
+                slot, and Export follows once the piece has a cycle. The slot
+                stays mounted while hidden so the portal target exists before
+                MoodMode mounts and before the first piece. */}
+            {!isChopMode && (
+              <div
+                className={`w-full lg:w-auto mt-3 lg:mt-0 flex flex-wrap items-center gap-x-3 gap-y-2 ${
+                  moodHasPiece ? "" : "hidden"
+                }`}
+              >
+                <div data-mood-header-slot className="contents" />
+                {moodHasCycle && recordingState === "idle" && <ExportButton />}
               </div>
             )}
           </div>
         </div>
       </header>
-      <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
+      <main
+        className={`flex flex-col items-center gap-6 py-6 px-4 sm:px-0 ${
+          lockMoodViewport
+            ? "sm:tall:flex-1 sm:tall:min-h-0 sm:tall:flex sm:tall:flex-col"
+            : ""
+        }`}
+      >
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
         ) : (

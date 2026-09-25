@@ -1,5 +1,6 @@
 // ABOUTME: aiClient — shared helpers for the Gemini-backed AI surfaces (autotag, batch, suggest).
 // ABOUTME: Owns blob→base64, error-message extraction, and the tag-definitions block reused across prompts.
+export { isAbortError } from "./async";
 
 export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -16,10 +17,6 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 
 export function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-export function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }
 
 export function abortError(): DOMException {

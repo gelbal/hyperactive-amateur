@@ -51,4 +51,51 @@ describe("test clock harness", () => {
     harness.transport.fireOnce(eventId);
     expect(callback).toHaveBeenCalledWith(1.5);
   });
+
+  it("shares mutable Transport seconds across module reads", () => {
+    const harness = createToneHarness();
+    const Tone = harness.createToneModule();
+    const transport = Tone.getTransport();
+
+    expect(transport.seconds).toBe(0);
+
+    transport.seconds = 12.5;
+    expect(Tone.getTransport().seconds).toBe(12.5);
+  });
+
+  it("interprets scheduleOnce times in Transport time and fires at absolute audio time", () => {
+    const harness = createToneHarness();
+    const Tone = harness.createToneModule();
+    const transport = Tone.getTransport();
+    const callback = vi.fn();
+
+    harness.setImmediate(16.6);
+    transport.seconds = 100;
+    const eventId = transport.scheduleOnce(callback, 100.5);
+
+    harness.transport.fireOnce(eventId);
+    expect(callback).toHaveBeenCalledWith(17.1);
+  });
+
+  it("captures Transport start and stop calls while sharing mutable position", () => {
+    const harness = createToneHarness();
+    const Tone = harness.createToneModule();
+    const transport = Tone.getTransport();
+
+    transport.position = "2:0:0";
+    transport.start();
+    transport.stop();
+
+    expect(Tone.getTransport().position).toBe("2:0:0");
+    expect(harness.transport.start).toHaveBeenCalledTimes(1);
+    expect(harness.transport.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes the async Tone.start surface", async () => {
+    const harness = createToneHarness();
+    const Tone = harness.createToneModule();
+
+    await expect(Tone.start()).resolves.toBeUndefined();
+    expect(harness.start).toHaveBeenCalledTimes(1);
+  });
 });
