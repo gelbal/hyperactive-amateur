@@ -89,29 +89,25 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
   const track = useAppStore.getState().project.tracks[trackId];
   if (!track || track.muted) return;
 
-  const player = players.get(trackId);
-  if (player && player.loaded && track.clip) {
-    const offset = track.clip.trimStartMs / 1000;
-    const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
-    try {
-      player.start(when, offset, duration);
-    } catch {
-      // Player can reject restart-too-soon at the same time slot; safe to swallow.
+  if (track.clip) {
+    // A player exists only for a clip with decoded audio; a clip whose audio
+    // is unavailable still cuts to its video.
+    const player = players.get(trackId);
+    if (player?.loaded) {
+      const offset = track.clip.trimStartMs / 1000;
+      const duration = Math.max(0.01, (track.clip.trimEndMs - track.clip.trimStartMs) / 1000);
+      try {
+        player.start(when, offset, duration);
+      } catch {
+        // Player can reject restart-too-soon at the same time slot; safe to swallow.
+      }
     }
     if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
-    useAppStore.getState().actions.markTriggered(trackId);
-    return;
+  } else {
+    // No clip: the track's kit voice. Optional because render tests use this
+    // module without initTransport, so the kit is not built there.
+    kit[trackId]?.trigger(when, track.volume);
   }
-
-  if (track.clip) {
-    if (track.showVideo) videoEngine.trigger(trackId, when, displayStartTime);
-    useAppStore.getState().actions.markTriggered(trackId);
-    return;
-  }
-
-  // No clip: the track's kit voice. Optional because render tests use this
-  // module without initTransport, so the kit is not built there.
-  kit[trackId]?.trigger(when, track.volume);
   useAppStore.getState().actions.markTriggered(trackId);
 }
 
