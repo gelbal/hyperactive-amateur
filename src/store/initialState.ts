@@ -81,6 +81,7 @@ export function createInitialState(): AppState {
       manuallyToggledShowVideo: [],
       manuallyTagged: [],
       recordingStationDismissed: false,
+      editorUnlocked: false,
     },
   };
 }

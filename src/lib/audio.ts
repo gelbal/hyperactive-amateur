@@ -6,13 +6,18 @@ import { canStartAudibleAction, claimPendingAudible, isPendingAudibleCurrent } f
 import { ensureAudioRunning } from "./audioLifecycle";
 import { abortActiveExport } from "./exportSession";
 import * as videoEngine from "./videoEngine";
-import { KIT, type DrumVoice } from "./drumKit";
+import { voiceFor, type DrumVoice } from "./drumKit";
 import type { Clip, Track } from "../types";
 
 // The kit keeps the sequencer audible while a track has no recorded clip:
-// each track position plays one fixed drum voice (drumKit.ts).
+// each track plays its chosen drum voice (drumKit.ts). One instance per
+// track, never shared: a synth started twice at the same time throws.
 let initialized = false;
-let kit: DrumVoice[] = [];
+let kit: Array<{ id: string; voice: DrumVoice } | undefined> = [];
+// A replaced voice is disposed after this long, so its tail and any hit
+// Tone has already scheduled in its lookahead still play.
+const VOICE_RETIRE_MS = 1500;
+const retiring = new Map<DrumVoice, ReturnType<typeof setTimeout>>();
 let players: Map<number, Tone.Player> = new Map();
 let lastClips: Map<number, Clip | null> = new Map();
 let scheduledEventId: number | null = null;
@@ -34,7 +39,7 @@ export function initTransport(): void {
   const transport = Tone.getTransport();
   transport.bpm.value = useAppStore.getState().project.bpm;
 
-  kit = KIT.map((voice) => voice.make());
+  syncKit(useAppStore.getState().project.tracks);
 
   // Build any Tone.Players for clips that already exist (rehydrate path).
   syncPlayers(useAppStore.getState().project.tracks);
@@ -69,6 +74,7 @@ export function initTransport(): void {
   tracksUnsubscribe = useAppStore.subscribe((state, prev) => {
     if (state.project.tracks !== prev.project.tracks) {
       syncPlayers(state.project.tracks);
+      syncKit(state.project.tracks);
     }
   });
 }
@@ -106,7 +112,7 @@ export function triggerTrack(trackId: number, when: number, displayStartTime = w
   } else {
     // No clip: the track's kit voice. Optional because render tests use this
     // module without initTransport, so the kit is not built there.
-    kit[trackId]?.trigger(when, track.volume);
+    kit[trackId]?.voice.trigger(when, track.volume);
   }
   useAppStore.getState().actions.markTriggered(trackId);
 }
@@ -158,6 +164,28 @@ function syncPlayers(tracks: Track[]): void {
 
     lastClips.set(track.id, track.clip);
   }
+}
+
+// Build each track's voice, rebuilding only a track whose resolved voice id
+// changed (an unset choice and its explicit default are the same voice).
+function syncKit(tracks: Track[]): void {
+  for (const track of tracks) {
+    const choice = voiceFor(track);
+    const current = kit[track.id];
+    if (current?.id === choice.id) continue;
+    if (current) retire(current.voice);
+    kit[track.id] = { id: choice.id, voice: choice.make() };
+  }
+}
+
+function retire(voice: DrumVoice): void {
+  retiring.set(
+    voice,
+    setTimeout(() => {
+      retiring.delete(voice);
+      voice.dispose();
+    }, VOICE_RETIRE_MS),
+  );
 }
 
 // Re-checked after the unlock's await: a tap that was pending when the page
@@ -237,8 +265,13 @@ export function __resetAudioForTesting(): void {
   for (const player of players.values()) player.dispose();
   players = new Map();
   lastClips = new Map();
-  for (const voice of kit) voice.dispose();
+  for (const entry of kit) entry?.voice.dispose();
   kit = [];
+  for (const [voice, timer] of retiring) {
+    clearTimeout(timer);
+    voice.dispose();
+  }
+  retiring.clear();
   initialized = false;
   stepCounter = 0;
 }

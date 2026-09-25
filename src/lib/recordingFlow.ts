@@ -333,7 +333,7 @@ async function runFlow(
       trimStartMs,
       trimEndMs,
     );
-    void runAutoTag(trackId, trimmedForTagging, options.onAutoTag);
+    void runAutoTag(trackId, newClip, trimmedForTagging, options.onAutoTag);
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {
@@ -354,11 +354,15 @@ async function runFlow(
 
 async function runAutoTag(
   trackId: number,
+  clip: Clip,
   audioBuffer: AudioBuffer,
   onEvent?: (event: AutoTagEvent) => void,
 ): Promise<void> {
   onEvent?.({ kind: "tagging" });
   const result = await autoTag(audioBuffer);
+  // The take was deleted or re-recorded while the classifier ran: nothing
+  // to report about it (a newer take reports its own status).
+  if (useAppStore.getState().project.tracks[trackId]?.clip?.blob !== clip.blob) return;
   if (result && "kind" in result) {
     onEvent?.({ kind: "offline" });
     return;
@@ -381,6 +385,7 @@ async function runAutoTag(
     trackId,
     result.tag,
     result.reasoning,
+    clip,
   );
   if (!applied) {
     // User picked a tag while we were thinking — keep their choice and

@@ -73,6 +73,8 @@ export interface PersistedTrack {
   // user. Older saves predate this field and read as undefined (false).
   mutedByRepair?: boolean;
   showVideo: boolean;
+  // Drum-kit voice id (drumKit.ts); absent means the position default.
+  voice?: string;
 }
 
 export interface PersistedProject {
@@ -104,6 +106,8 @@ interface PersistedTrackV2 {
   // lack it; new writes always include it.
   mutedByRepair?: boolean;
   showVideo: boolean;
+  // Optional: absent means the position's default drum voice.
+  voice?: string;
   tag: Tag | null;
   tagSource: TagSource | null;
   tagReasoning?: string;
@@ -268,6 +272,7 @@ export function snapshot(state: AppState): PersistedProject {
       muted: track.muted,
       mutedByRepair: track.mutedByRepair ?? false,
       showVideo: track.showVideo,
+      ...(track.voice ? { voice: track.voice } : {}),
     })),
     updatedAt: Date.now(),
   };
@@ -321,6 +326,7 @@ async function buildMetadataRecord(
         muted: track.muted,
         mutedByRepair: track.mutedByRepair ?? false,
         showVideo: track.showVideo,
+        ...(track.voice ? { voice: track.voice } : {}),
         tag: track.tag,
         tagSource: track.tagSource ?? (track.tag ? "system" : null),
         ...(tagReasoning ? { tagReasoning } : {}),
@@ -498,6 +504,7 @@ async function resolveMetadataRecord(metadata: PersistedProjectV2): Promise<Pers
         muted: track.muted,
         mutedByRepair: track.mutedByRepair ?? false,
         showVideo: track.showVideo,
+        ...(track.voice ? { voice: track.voice } : {}),
       };
     }),
   );

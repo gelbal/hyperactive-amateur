@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { togglePlayback } from "./audio";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { runAudibleAction } from "./audibleActionRunner";
-import { selectClipCount, useAppStore } from "../store/useAppStore";
+import { selectEditorOpen, useAppStore } from "../store/useAppStore";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -22,9 +22,9 @@ export function useSpacebarPlayToggle(): void {
       if (isEditable(event.target)) return;
       const state = useAppStore.getState();
       if (state.playback.isExporting) return;
-      // No Play button before the first clip, so no shortcut either; while
-      // playing both stay until stop, even when the last clip has just gone.
-      if (selectClipCount(state) === 0 && !state.playback.isPlaying) return;
+      // No Play button before the first clip, so no shortcut either; once
+      // the editor is open both stay, even after the last clip is deleted.
+      if (!selectEditorOpen(state) && !state.playback.isPlaying) return;
       if (!state.playback.isPlaying && !canStartAudibleAction(state)) return;
       event.preventDefault();
       runAudibleAction(togglePlayback());

@@ -434,6 +434,18 @@ describe("Viewport", () => {
     expect(screen.queryByText(/record a sound on any track/i)).not.toBeInTheDocument();
   });
 
+  it("does not tell a drums-only project to record before making a beat", () => {
+    act(() => {
+      useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });
+      useAppStore.getState().actions.dismissRecordingStation();
+      // The last clip was deleted: the editor stays open with the kit.
+      useAppStore.setState((st) => ({ session: { ...st.session, editorUnlocked: true } }));
+    });
+    render(<Viewport />);
+    expect(screen.queryByText(/record a sound on any track/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /record more/i })).toBeInTheDocument();
+  });
+
   it("after the recording station is dismissed and no clips exist, shows an actionable first-record affordance", () => {
     act(() => {
       useAppStore.getState().actions.setMedia({ stream: {} as MediaStream, status: "granted", error: null });

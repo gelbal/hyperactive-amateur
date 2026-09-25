@@ -79,4 +79,11 @@ describe("PadGrid", () => {
     expect(within(pad).getByText("open hat")).toBeInTheDocument();
     expect(within(pad).queryByText("fx")).toBeNull();
   });
+
+  it("an empty pad follows the sound picked for its track", () => {
+    render(<PadGrid />);
+    act(() => useAppStore.getState().actions.setTrackVoice(3, "cowbell"));
+    const pad = screen.getByRole("button", { name: "pad 4, cowbell" });
+    expect(within(pad).getByText("cowbell")).toBeInTheDocument();
+  });
 });

@@ -12,6 +12,7 @@ import {
   type PersistedTrack,
 } from "./persistence";
 import { getAudioContext } from "./audio";
+import { isVoiceId } from "./drumKit";
 import { waitMs } from "./async";
 import { LOG_EVENTS, logger } from "./logger";
 import { useAppStore } from "../store/useAppStore";
@@ -287,6 +288,9 @@ function normalizeTrack(
     muted: typeof rawTrack.muted === "boolean" ? rawTrack.muted : false,
     mutedByRepair: typeof rawTrack.mutedByRepair === "boolean" ? rawTrack.mutedByRepair : false,
     showVideo: typeof rawTrack.showVideo === "boolean" ? rawTrack.showVideo : true,
+    // A voice this build does not know falls back to the position default
+    // quietly: it is a sound choice, not damage worth a degraded load.
+    ...(isVoiceId(rawTrack.voice) ? { voice: rawTrack.voice } : {}),
   };
 }
 
@@ -573,6 +577,7 @@ export async function rehydrateFromStorage(options: RehydrateOptions = {}): Prom
           : (healedAudio ? false : wasMutedByRepair),
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
+        ...(pt.voice ? { voice: pt.voice } : {}),
       };
     }),
   );

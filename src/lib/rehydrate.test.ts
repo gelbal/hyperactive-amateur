@@ -235,6 +235,38 @@ describe("rehydrateFromStorage", () => {
     expect(restored.project.tracks[0].clip?.posterUrl).toMatch(/^blob:/);
   });
 
+  it("restores each track's sound choice, including one kept under a recorded clip", async () => {
+    const actions = useAppStore.getState().actions;
+    actions.setTrackVoice(4, "cowbell");
+    actions.setTrackVoice(0, "rim");
+    actions.setTrackClip(0, await makeClip());
+    await saveProject(useAppStore.getState());
+
+    actions.reset();
+    const result = await rehydrateFromStorage();
+
+    expect(result).toEqual({ ok: true, degraded: false, warnings: [] });
+    const tracks = useAppStore.getState().project.tracks;
+    expect(tracks[4].voice).toBe("cowbell");
+    expect(tracks[0].voice).toBe("rim");
+    expect(tracks[0].clip).not.toBeNull();
+    expect(tracks[1].voice).toBeUndefined();
+  });
+
+  it("drops a sound id this build does not know, without degrading the load", async () => {
+    useAppStore.getState().actions.setTrackVoice(4, "cowbell");
+    await saveProject(useAppStore.getState());
+    const meta = await storedMeta();
+    meta.tracks[4].voice = "gong";
+    await set(PROJECT_KEY, meta);
+
+    useAppStore.getState().actions.reset();
+    const result = await rehydrateFromStorage();
+
+    expect(result).toEqual({ ok: true, degraded: false, warnings: [] });
+    expect(useAppStore.getState().project.tracks[4].voice).toBeUndefined();
+  });
+
   it("restores manual tag ownership so auto-tag results keep skipping user-tagged tracks after reload", async () => {
     useAppStore.getState().actions.setTrackClip(0, await makeClip());
     useAppStore.getState().actions.setTrackTag(0, "snare", "user");

@@ -117,12 +117,16 @@ export function StepGrid() {
   const canRemove = stepCount > 4 && !isExporting;
   const canExtend = stepCount < MAX_STEP_COUNT && !isExporting;
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
+  const anyEmptyTrack = useAppStore((s) => s.project.tracks.some((track) => !track.clip));
 
   return (
     <div className="px-3 sm:px-6 py-4 flex gap-3">
       {/* Left fixed panel: 8 TrackInfo rows */}
       <div className="shrink-0 flex flex-col gap-1">
-        <div className="h-6" aria-hidden />
+        {/* Said once for all rows: an empty track's sound name is a button. */}
+        <div className="h-6 flex items-end text-[10px] text-zinc-500" aria-hidden>
+          {anyEmptyTrack ? "tap a sound to change it" : null}
+        </div>
         {Array.from({ length: TRACK_COUNT }, (_, i) => (
           <TrackInfo key={i} trackId={i} />
         ))}

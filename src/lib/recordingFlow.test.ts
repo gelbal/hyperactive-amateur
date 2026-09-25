@@ -117,6 +117,8 @@ import { installNavigatorAudioSession } from "../test-utils/audioContextStub";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { installVisibilityListener, registerStreamLifecycle } from "./streamLifecycle";
 import { clearLogs } from "./logger";
+import { autoTag } from "./aiAutoTag";
+import { applyClassifiedTag } from "./applyClassifiedTag";
 
 const INTERRUPTION_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
@@ -706,6 +708,33 @@ describe("recordingFlow", () => {
       poster.resolve(null);
       await promise.catch(() => false);
       setTrackPoster.mockRestore();
+    }
+  });
+
+  it("reports nothing for a late tag result once the clip was deleted", async () => {
+    vi.useFakeTimers();
+    const tagResult = makeDeferred<{ tag: "hat"; confidence: number; reasoning: string } | null>();
+    vi.mocked(autoTag).mockReturnValueOnce(tagResult.promise);
+    const onAutoTag = vi.fn();
+
+    const promise = recordIntoTrack(2, { onAutoTag });
+    try {
+      await flushMicrotasks();
+      await advanceCountdownToDeadline();
+      await expect(observeResolution(promise)).resolves.toEqual({ status: "resolved", value: true });
+      expect(onAutoTag).toHaveBeenCalledWith({ kind: "tagging" });
+
+      useAppStore.getState().actions.deleteTrackClip(2);
+      tagResult.resolve({ tag: "hat", confidence: 0.95, reasoning: "tick" });
+      await flushMicrotasks(5);
+
+      // The row already went back to its sound; a "couldn't auto-tag" or an
+      // applied tag would describe a take that is gone.
+      expect(onAutoTag).toHaveBeenCalledTimes(1);
+      expect(applyClassifiedTag).not.toHaveBeenCalled();
+    } finally {
+      tagResult.resolve(null);
+      await promise.catch(() => false);
     }
   });
 

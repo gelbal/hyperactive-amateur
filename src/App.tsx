@@ -10,7 +10,7 @@ import { CompatibilityBanner } from "./components/CompatibilityBanner";
 import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
-import { selectClipCount, useAppStore } from "./store/useAppStore";
+import { selectClipCount, selectEditorOpen, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
 import { initAudioLifecycle } from "./lib/audioLifecycle";
@@ -40,11 +40,12 @@ export function App() {
   const [loadFailed, setLoadFailed] = useState(false);
   const clipCount = useAppStore(selectClipCount);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
-  const hasAnyClips = clipCount > 0;
-  // Play (and Space) stay until playback stops: Re-record is live while
-  // playing and clearTrackClip only freezes for export, so the last clip
-  // can go with the transport running.
-  const showControls = hasAnyClips || isPlaying;
+  // Open from the first clip, and still open after the last clip is deleted:
+  // the drum kit keeps a clip-less beat playable.
+  const editorOpen = useAppStore(selectEditorOpen);
+  // Play (and Space) also stay while playback runs, whatever happens to the
+  // clips meanwhile.
+  const showControls = editorOpen || isPlaying;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
 
   useEffect(() => {
@@ -164,7 +165,7 @@ export function App() {
           <>
             {loadFailed && <LoadFailedNotice />}
             <Viewport />
-            {hasAnyClips ? (
+            {editorOpen ? (
               <PadGrid />
             ) : (
               <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
@@ -175,7 +176,7 @@ export function App() {
           </>
         )}
       </main>
-      {hasAnyClips && <StepGrid />}
+      {editorOpen && <StepGrid />}
       {logPanelRequested() && <LogPanel />}
     </div>
   );
