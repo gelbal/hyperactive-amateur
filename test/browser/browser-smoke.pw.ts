@@ -393,7 +393,7 @@ test("fills the controls row on a phone and stacks Play above it on desktop", as
   // innerText: the cut · swing · hold tail is in the DOM but hidden below lg.
   await expect(feel).toHaveText(/^Feel\s*90 BPM$/, { useInnerText: true });
   // An empty pad names the kit voice it plays.
-  await expect(page.getByRole("button", { name: "pad 5, kick 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "pad 5, thump" })).toBeVisible();
 
   await page.setViewportSize({ width: 1280, height: 800 });
   const play = await box("Start playback");
@@ -402,4 +402,28 @@ test("fills the controls row on a phone and stacks Play above it on desktop", as
   // Play sits above the controls, right edges aligned.
   expect(Math.round(exportDesktop.y - (play.y + play.height))).toBe(12);
   expect(Math.round(play.x + play.width)).toBe(Math.round(suggestDesktop.x + suggestDesktop.width));
+});
+
+test("deletes a clip to free its track for a drum, and changes an empty track's sound", async ({ page }) => {
+  await installBrowserMocks(page);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(err.message));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await seedOneClipProject(page, 4);
+
+  // Delete track 1's clip: tap the thumbnail, then Delete.
+  await page.getByRole("button", { name: "clip actions for track 1" }).click();
+  await page.getByRole("button", { name: "delete clip on track 1" }).click();
+  await expect(page.getByRole("button", { name: "pad 1, kick" })).toBeVisible();
+  // Three clips left: Suggest waits for four again; the station stays closed.
+  await expect(page.getByRole("button", { name: "Suggest a beat" })).toHaveCount(0);
+  await expect(page.getByText(/Recording for Track/)).toHaveCount(0);
+
+  // Track 5 plays thump; one tap moves it to snare, and its pad follows.
+  await page.getByRole("button", { name: "Change sound for track 5, now thump" }).click();
+  await expect(page.getByRole("button", { name: "Change sound for track 5, now snare" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "pad 5, snare" })).toBeVisible();
+  expect(errors).toEqual([]);
 });
