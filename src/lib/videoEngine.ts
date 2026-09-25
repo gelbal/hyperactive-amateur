@@ -5,7 +5,7 @@ import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { LOG_EVENTS, logger } from "./logger";
 
-export type TagOrUntagged = Tag | "untagged";
+type TagOrUntagged = Tag | "untagged";
 
 // Higher number wins. Vocal/fx are loud-statement clips; hats are filler.
 const TAG_PRIORITY: Record<TagOrUntagged, number> = {
@@ -209,7 +209,8 @@ function resolveBoundaryWinner(boundaryTime: number): TriggerEvent | null {
     holdMs,
     contexts,
   );
-  return isSameEvent(winner, currentlyDisplayed) ? null : winner;
+  // prepareUpcoming skips a winner that is already on screen.
+  return winner;
 }
 
 export function prepareUpcoming(
@@ -487,16 +488,10 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const displayed = currentlyDisplayed;
+  // videos and trims are written together (setClipForTrack), so a displayed
+  // track has both or neither.
   const video = displayed ? videos.get(displayed.trackId) : null;
   const trim = displayed ? trims.get(displayed.trackId) : null;
-
-  if (displayed && trim) {
-    const elapsedMs = (audioTime - displayed.startTime) * 1000;
-    if (elapsedMs < 0) {
-      clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
-      return;
-    }
-  }
 
   if (!displayed || !video || !trim) {
     clearCanvas(ctx, w, h);
@@ -504,8 +499,13 @@ export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: numbe
     return;
   }
 
-  const trimDurationMs = trim.endMs - trim.startMs;
   const elapsedMs = (audioTime - displayed.startTime) * 1000;
+  if (elapsedMs < 0) {
+    clearExpiredLastDrawnFrame(ctx, audioTime, w, h);
+    return;
+  }
+
+  const trimDurationMs = trim.endMs - trim.startMs;
   if (trimDurationMs <= 0 || elapsedMs >= trimDurationMs) {
     if (lastDrawn && trimDurationMs > 0 && holdsFrameAtTrimEnd()) {
       holdFrame(lastDrawn);
