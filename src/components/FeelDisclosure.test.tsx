@@ -68,6 +68,8 @@ describe("FeelDisclosure", () => {
     const readout = screen.getByText("110").parentElement as HTMLElement;
     expect(readout).toHaveTextContent("110 BPM · 1/8 · 0% · 400ms");
     expect(readout.className.split(/\s+/)).not.toContain("hidden");
+    // Essential on phones now, so readable: zinc-400 on the button's zinc-900.
+    expect(readout).toHaveClass("text-zinc-400");
     // Three digit slots, so the button (and the two sharing the row with it)
     // keeps its width when a turn crosses 100 BPM under a captured pointer.
     expect(screen.getByText("110")).toHaveClass("inline-block", "w-[3ch]", "text-right");

@@ -54,7 +54,7 @@ describe("PadGrid", () => {
     );
 
     render(<PadGrid />);
-    fireEvent.click(screen.getByRole("button", { name: "pad 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "pad 1, kick" }));
 
     expect(audioMocks.triggerTrackNow).toHaveBeenCalledWith(0);
     await Promise.resolve();
@@ -63,8 +63,9 @@ describe("PadGrid", () => {
   it("an empty pad names its kit voice; the tag corner shows only with a clip", () => {
     const actions = useAppStore.getState().actions;
     render(<PadGrid />);
-    const pad = screen.getByRole("button", { name: "pad 4" });
-    expect(within(pad).getByText("open hat")).toHaveClass("text-zinc-600");
+    // The voice is part of the pad's name, so a screen reader says it too.
+    const pad = screen.getByRole("button", { name: "pad 4, open hat" });
+    expect(within(pad).getByText("open hat")).toHaveClass("text-zinc-400");
 
     act(() => {
       actions.setTrackClip(3, makeClip());
@@ -72,6 +73,7 @@ describe("PadGrid", () => {
     });
     expect(within(pad).queryByText("open hat")).toBeNull();
     expect(within(pad).getByText("fx")).toHaveClass("text-orange-300");
+    expect(pad).toHaveAccessibleName("pad 4");
 
     act(() => actions.clearTrackClip(3));
     expect(within(pad).getByText("open hat")).toBeInTheDocument();

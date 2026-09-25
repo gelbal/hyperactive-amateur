@@ -31,7 +31,9 @@ function Pad({ trackId }: PadProps) {
   return (
     <button
       type="button"
-      aria-label={`pad ${trackId + 1}`}
+      // An empty pad plays its kit voice; the name says which, for a screen
+      // reader too.
+      aria-label={clip ? `pad ${trackId + 1}` : `pad ${trackId + 1}, ${KIT[trackId].name}`}
       data-flashing={flashing}
       disabled={!canStart}
       onClick={() => runAudibleAction(triggerTrackNow(trackId))}
@@ -59,7 +61,7 @@ function Pad({ trackId }: PadProps) {
           />
         )
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-600">
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">
           {/* An empty pad plays its kit voice, so it says which. */}
           {KIT[trackId].name}
         </div>

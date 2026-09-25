@@ -99,7 +99,8 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
   };
 
   // clearTrackClip keeps the tag, so the clip decides: an empty track names
-  // the kit voice it plays, in zinc; a tagged clip shows its tag in orange.
+  // the kit voice it plays, lower-case in grey; a tagged clip shows its tag
+  // upper-case in orange.
   const clipTag = clip ? tag : null;
   const label = !clip ? KIT[trackId].name : clipTag ? clipTag.toUpperCase() : `T${trackId + 1}`;
 
@@ -107,7 +108,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     <div className="h-12 flex items-center gap-2 pr-2">
       <span
         className={
-          "w-14 text-sm font-mono " + (clipTag ? "text-orange-400" : "text-zinc-500")
+          "w-14 text-sm font-mono " + (clipTag ? "text-orange-400" : "text-zinc-400")
         }
         title={!clip || clipTag ? `Track ${trackId + 1}` : undefined}
       >

@@ -66,7 +66,7 @@ export function FeelDisclosure() {
         <span className="text-zinc-300">Feel</span>
         {/* The tempo rides along at every width; cut, swing and hold only
             where the row has room. */}
-        <span className="font-mono tabular-nums text-xs text-zinc-500">
+        <span className="font-mono tabular-nums text-xs text-zinc-400">
           {/* Three digit slots: the button, and the two sharing the row
               with it, must not change width when a turn crosses 100 BPM
               under a captured pointer. */}

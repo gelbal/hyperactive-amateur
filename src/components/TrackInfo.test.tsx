@@ -168,10 +168,10 @@ describe("TrackInfo label", () => {
     useAppStore.getState().actions.reset();
   });
 
-  it("names the kit voice on an empty track in zinc; a tagged clip shows its tag in orange; clearing the clip returns to the voice although the tag stays", () => {
+  it("names the kit voice on an empty track in readable grey; a tagged clip shows its tag in orange; clearing the clip returns to the voice although the tag stays", () => {
     const actions = useAppStore.getState().actions;
     render(<TrackInfo trackId={3} />);
-    expect(screen.getByText("open hat")).toHaveClass("text-zinc-500");
+    expect(screen.getByText("open hat")).toHaveClass("text-zinc-400");
 
     act(() => {
       actions.setTrackClip(3, makeClip());
@@ -183,7 +183,7 @@ describe("TrackInfo label", () => {
     expect(screen.queryByText("open hat")).not.toBeInTheDocument();
 
     act(() => actions.clearTrackClip(3));
-    expect(screen.getByText("open hat")).toHaveClass("text-zinc-500");
+    expect(screen.getByText("open hat")).toHaveClass("text-zinc-400");
     expect(screen.queryByText("FX")).not.toBeInTheDocument();
     expect(useAppStore.getState().project.tracks[3].tag).toBe("fx");
   });
