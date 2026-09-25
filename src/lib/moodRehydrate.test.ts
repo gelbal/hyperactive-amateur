@@ -402,6 +402,28 @@ describe("normalizeMoodMeta", () => {
     expect(warnings).toContain("Take take-1 in mic-0 had an invalid cycleMultiple and was dropped.");
   });
 
+  it("resets an inverted take trim window to the whole take instead of dropping it", () => {
+    const raw = cleanMoodPiece();
+    const take = raw.mics[0].takes[0];
+    raw.mics[0] = {
+      ...raw.mics[0],
+      takes: [{ ...take, trimStartMs: 900, trimEndMs: 100 }],
+    };
+    const warnings: string[] = [];
+
+    const normalized = normalizeMoodMeta(raw, warnings);
+
+    // Trims are metadata over an immutable blob; a drop would let the next
+    // save collect the take's bytes.
+    expect(normalized.mics[0].takes).toHaveLength(1);
+    expect(normalized.mics[0].takes[0]).toMatchObject({
+      id: take.id,
+      trimStartMs: 0,
+      trimEndMs: take.durationSeconds * 1000,
+    });
+    expect(warnings).toContain(`Take ${take.id} in mic-0 trim window was invalid and reset.`);
+  });
+
   it("clears one-pointers when either pointer is dangling", () => {
     const raw = { ...cleanMoodPiece(), oneTakeId: "take-missing" };
     const warnings: string[] = [];

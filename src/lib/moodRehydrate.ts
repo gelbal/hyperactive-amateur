@@ -227,22 +227,25 @@ function normalizeTake(
     return null;
   }
 
-  const trimStartMs = finiteNumber(rawTake.trimStartMs);
-  const trimEndMs = finiteNumber(rawTake.trimEndMs);
+  const durationSeconds = finiteNumber(rawTake.durationSeconds);
+  if (durationSeconds === null || durationSeconds <= 0) {
+    warn(warnings, `Take ${takeId} in ${micId} duration was invalid and was dropped.`);
+    return null;
+  }
+
+  // Trims are metadata over an immutable blob: an invalid window is reset to
+  // the whole take rather than costing the take its bytes.
+  let trimStartMs = finiteNumber(rawTake.trimStartMs);
+  let trimEndMs = finiteNumber(rawTake.trimEndMs);
   if (
     trimStartMs === null ||
     trimEndMs === null ||
     trimStartMs < 0 ||
     trimEndMs <= trimStartMs
   ) {
-    warn(warnings, `Take ${takeId} in ${micId} trim window was invalid and was dropped.`);
-    return null;
-  }
-
-  const durationSeconds = finiteNumber(rawTake.durationSeconds);
-  if (durationSeconds === null || durationSeconds <= 0) {
-    warn(warnings, `Take ${takeId} in ${micId} duration was invalid and was dropped.`);
-    return null;
+    warn(warnings, `Take ${takeId} in ${micId} trim window was invalid and reset.`);
+    trimStartMs = 0;
+    trimEndMs = durationSeconds * 1000;
   }
 
   if (
