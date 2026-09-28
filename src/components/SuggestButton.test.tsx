@@ -137,6 +137,25 @@ describe("SuggestButton", () => {
     expect(steps.every(Boolean)).toBe(false);
   });
 
+  it("drops a suggestion that answers after the button unmounted, so no beat changes without its Undo", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    const pending = deferredGrid();
+    suggestPattern.mockReturnValue(pending.promise);
+    const { unmount } = render(<SuggestButton />);
+
+    fireEvent.click(screen.getByLabelText("Suggest a beat"));
+    await waitFor(() => expect(suggestPattern).toHaveBeenCalled());
+    // A switch to Mood unmounts Chop's controls.
+    unmount();
+    await act(async () => {
+      pending.resolve(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+      await pending.promise;
+    });
+
+    expect(useAppStore.getState().project.tracks[0].steps.some(Boolean)).toBe(false);
+  });
+
   it("renders pinned offline copy when the suggestion transport is unavailable", async () => {
     unlockAi();
     suggestPattern.mockRejectedValue(new GeminiOfflineError());

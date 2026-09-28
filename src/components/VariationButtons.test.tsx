@@ -112,6 +112,25 @@ describe("VariationButtons", () => {
     expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
   });
 
+  it("drops a variation that answers after the buttons unmounted, so no beat changes without its Undo", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+    const pending = deferredGrid();
+    varyPattern.mockReturnValue(pending.promise);
+    const { unmount } = render(<VariationButtons />);
+
+    fireEvent.click(screen.getByLabelText("Break"));
+    await waitFor(() => expect(varyPattern).toHaveBeenCalled());
+    unmount();
+    await act(async () => {
+      pending.resolve(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+      await pending.promise;
+    });
+
+    expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
+  });
+
   it("renders pinned offline copy when a variation transport is unavailable", async () => {
     unlockVariation();
     varyPattern.mockRejectedValue(new GeminiOfflineError());
