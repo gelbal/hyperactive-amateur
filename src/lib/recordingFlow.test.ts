@@ -781,6 +781,8 @@ describe("recordingFlow", () => {
     await flushMicrotasks();
 
     expect(autoSaveMocks.saveNow).toHaveBeenCalledTimes(1);
+    // Only Chop's record: a pending Mood write must not delay or fail it.
+    expect(autoSaveMocks.saveNow).toHaveBeenCalledWith("chop");
     expect(useAppStore.getState().project.tracks[1].clip).not.toBeNull();
     // Recording holds until the flow ends, so the overlay and its Esc stay up.
     expect(useAppStore.getState().recording.state).toBe("recording");

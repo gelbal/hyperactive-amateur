@@ -236,7 +236,9 @@ async function runFlow(
     try {
       // saveNow resolves false when autosave has not started (load pending
       // or failed) — no persistence request should anchor to a skipped save.
-      if (await saveNow()) requestPersistenceAfterClipSave();
+      // Chop's record only: a pending Mood write must not delay or fail the
+      // clip's durability save.
+      if (await saveNow("chop")) requestPersistenceAfterClipSave();
     } catch {
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }
