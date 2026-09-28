@@ -673,9 +673,12 @@ async function runFlow(
       beatSeconds,
       startingPiece.cycleSeconds === null ? "first-take" : "overdub",
     );
-    // The ticks sit on whole beats back from the punch-in, from the tap on.
+    // A first take counts in three beats; an overdub's ticks sit on whole
+    // beats back from the punch-in, from the tap on.
     actions.setMoodCountInTicks(
-      Math.floor((countdownEndsAt - countInStartsAt) / beatSeconds + 1e-9),
+      startingPiece.cycleSeconds === null
+        ? COUNT_IN_BEATS
+        : Math.floor((countdownEndsAt - countInStartsAt) / beatSeconds + 1e-9),
     );
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", null);

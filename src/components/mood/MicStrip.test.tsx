@@ -174,6 +174,20 @@ describe("MicStrip", () => {
 
   });
 
+  it("shows no chip digit above the count-in's first tick", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake("mic-0", makeTake("take-live"));
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    // 1.75 beats out, but this count-in's only tick is the accented 1.
+    useAppStore.getState().actions.setCountdownEndsAt(0.875);
+    useAppStore.getState().actions.setMoodCountInTicks(1);
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+
+    render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
+
+    expect(screen.getByTestId("mic-mic-0-countdown")).toHaveTextContent("1");
+  });
+
   it("stops the take from the hot mic chip during capture", () => {
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
     useAppStore.getState().actions.setMoodTake("mic-0", makeTake("take-live"));

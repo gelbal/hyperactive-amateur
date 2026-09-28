@@ -459,6 +459,19 @@ describe("MoodStage", () => {
     expect(screen.queryByTestId("mood-count-in-digit")).not.toBeInTheDocument();
   });
 
+  it("fills the beat strip by beats remaining, not by the count-in's tick count", () => {
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(10);
+    // Its first tick is 5 beats out; the strip still shows 6 beats to go.
+    useAppStore.getState().actions.setMoodCountInTicks(5);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    const strip = screen.getByTestId("mood-count-in-beat-strip");
+    expect(strip.querySelectorAll(".bg-orange-500")).toHaveLength(2);
+  });
+
   it("fills the overdub beat strip without wrapping long count-ins", () => {
     const filledOverdubBeatCount = (
       moodStageModule as typeof moodStageModule & {

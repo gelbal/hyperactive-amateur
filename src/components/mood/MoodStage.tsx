@@ -150,14 +150,16 @@ function MoodCaptureOverlay({ piece }: MoodStageProps) {
   if (!rect || !isCaptureOverlayState(recordingState)) return null;
 
   const currentAudioNow = timedState ? Math.max(audioNow, Tone.immediate()) : audioNow;
-  // Before the first tick, the digit is that tick's, not a silent one above.
+  const beatsToPunchIn = countInBeatsRemaining(countdownEndsAt, beatSeconds, currentAudioNow);
+  // Before the first tick, the digit is that tick's, not a silent one above;
+  // the beat strip keeps counting the beats themselves.
   const beatsRemaining = Math.min(
-    countInBeatsRemaining(countdownEndsAt, beatSeconds, currentAudioNow),
+    beatsToPunchIn,
     Math.max(1, countInTicks ?? Number.POSITIVE_INFINITY),
   );
   const isLongOverdubCountIn =
-    recordingState === "countdown" && piece.cycleSeconds !== null && beatsRemaining > 3;
-  const filledBeatCount = filledOverdubBeatCount(beatsRemaining);
+    recordingState === "countdown" && piece.cycleSeconds !== null && beatsToPunchIn > 3;
+  const filledBeatCount = filledOverdubBeatCount(beatsToPunchIn);
   const isOneRecording = recordingState === "recording" && piece.cycleSeconds === null;
   const isFinishing =
     recordingState === "recording" &&

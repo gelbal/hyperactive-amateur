@@ -47,10 +47,15 @@ function visualLabel(state: MicChipState): string {
   return state.toUpperCase();
 }
 
-function hotCountdownDigit(countdownEndsAt: number | null, beatSeconds: number): number {
+// Never above the count-in's first tick, like the stage's digit.
+function hotCountdownDigit(
+  countdownEndsAt: number | null,
+  beatSeconds: number,
+  countInTicks: number | null,
+): number {
   if (countdownEndsAt === null) return 3;
   const beatsRemaining = Math.ceil((countdownEndsAt - getAudioContext().currentTime) / beatSeconds);
-  return Math.max(1, Math.min(3, beatsRemaining));
+  return Math.max(1, Math.min(3, beatsRemaining, countInTicks ?? Number.POSITIVE_INFINITY));
 }
 
 function ringClass(state: MicChipState): string {
@@ -98,20 +103,23 @@ export function MicStrip({ piece }: MicStripProps) {
   const performance = useAppStore((s) => s.mood.performance);
   const recordingState = useAppStore((s) => s.recording.state);
   const countdownEndsAt = useAppStore((s) => s.recording.countdownEndsAt);
+  const countInTicks = useAppStore((s) => s.mood.countInTicks);
   const [openMicId, setOpenMicId] = useState<string | null>(null);
   const beatSeconds = countInBeatSeconds(piece);
-  const [hotCount, setHotCount] = useState(() => hotCountdownDigit(countdownEndsAt, beatSeconds));
+  const [hotCount, setHotCount] = useState(() =>
+    hotCountdownDigit(countdownEndsAt, beatSeconds, countInTicks),
+  );
 
   useEffect(() => {
     if (recordingState !== "countdown") {
       setHotCount(3);
       return;
     }
-    const update = () => setHotCount(hotCountdownDigit(countdownEndsAt, beatSeconds));
+    const update = () => setHotCount(hotCountdownDigit(countdownEndsAt, beatSeconds, countInTicks));
     update();
     const id = window.setInterval(update, COUNTDOWN_TICK_MS);
     return () => window.clearInterval(id);
-  }, [beatSeconds, countdownEndsAt, recordingState]);
+  }, [beatSeconds, countInTicks, countdownEndsAt, recordingState]);
 
   return (
     <div
