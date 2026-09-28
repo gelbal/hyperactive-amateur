@@ -4,6 +4,11 @@ import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({ stopPlayback: vi.fn() }));
 vi.mock("../lib/audio", () => ({ stopPlayback: audioMocks.stopPlayback }));
+const aiMocks = vi.hoisted(() => ({ varyPattern: vi.fn() }));
+vi.mock("../lib/aiSuggest", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/aiSuggest")>()),
+  varyPattern: aiMocks.varyPattern,
+}));
 
 import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
@@ -33,6 +38,22 @@ describe("FeelDisclosure", () => {
     // reset() itself no-ops while exporting, so the flag is cleared here.
     cleanup();
     useAppStore.getState().actions.setIsExporting(false);
+  });
+
+  it("stays open when Feel is clicked while a variation is in flight, so its answer and Undo land", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+    aiMocks.varyPattern.mockReturnValue(new Promise(() => undefined));
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByRole("button", { name: FEEL_LABEL }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Busier" }));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: FEEL_LABEL }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("offers Style and Flow once four clips exist, frozen while exporting", () => {

@@ -55,7 +55,9 @@ export function FeelDisclosure() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Feel: tempo, cut rate, swing, hold, style, flow"
-        onClick={() => setOpen((v) => !v)}
+        // The same pin as a click outside or Escape: while an AI call is in
+        // flight the button does not close the popover over it.
+        onClick={() => setOpen((v) => (v && (retagBusy || variationBusy) ? v : !v))}
         className={
           "flex items-center justify-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-2 pointer-coarse:min-h-11 w-full lg:w-auto text-sm rounded border transition-colors " +
           (open
