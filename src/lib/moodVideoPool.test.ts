@@ -174,6 +174,43 @@ describe("moodVideoPool", () => {
     expect(playback.seek).not.toHaveBeenCalled();
   });
 
+  it("keeps an earlier pending join when the same take is prepared again for a later one", () => {
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+    toneHarness.setImmediate(11.5);
+    prepareUpcoming("take-a", 12);
+
+    // Picked again after its swap locked: that queues it for 14 as well.
+    toneHarness.setImmediate(11.95);
+    prepareUpcoming("take-a", 14);
+    toneHarness.draw.advanceTo(12 - VIDEO_SEEK_LEAD_SECONDS);
+    restartVideosAtPeriodBoundary(12.01, 10);
+
+    expect(playback.play).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a stop", null, 12.5],
+    ["a new performance", 20, 20.1],
+  ])("cancels a pending join on %s and lets the video play", (_label, epoch, audioTime) => {
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+    toneHarness.setImmediate(11.5);
+    prepareUpcoming("take-a", 12);
+    toneHarness.draw.advanceTo(12 - VIDEO_SEEK_LEAD_SECONDS);
+    expect(playback.play).not.toHaveBeenCalled();
+
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch })]);
+    if (epoch !== null) restartVideosAtPeriodBoundary(audioTime, epoch);
+
+    expect(playback.play).toHaveBeenCalled();
+    expect(__getMoodVideoPoolStateForTesting()[0].playing).toBe(true);
+  });
+
   it("seeks a prepared video at the cut when its pre-roll never landed", () => {
     syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10 })]);
     const video = videoForTake("take-a");

@@ -323,7 +323,14 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
       existing.loopEnd = take.loopEnd;
       existing.loopPeriod = take.loopPeriod ?? fallbackLoopPeriod(take);
       existing.cycleMultiple = take.cycleMultiple ?? 1;
-      existing.epoch = take.epoch ?? null;
+      const epoch = take.epoch ?? null;
+      if (existing.epoch !== epoch && existing.preparedFor !== null) {
+        // A stop or a new performance cancels a join that has not happened:
+        // the held frame plays on (stopped) or the new epoch re-seeks it.
+        existing.preparedFor = null;
+        playVideo(existing);
+      }
+      existing.epoch = epoch;
       const syncOffsetSeconds = (take.syncOffsetMs ?? 0) / 1000;
       if (existing.syncOffsetSeconds !== syncOffsetSeconds) {
         // A re-synced take re-seeks on the next restart check, in step with
@@ -426,6 +433,15 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
 export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
+  // Picked again after its swap locked, a take is also queued for the next
+  // boundary; its earlier join still happens first.
+  if (
+    entry.preparedFor !== null &&
+    entry.preparedFor < atAudioTime &&
+    entry.preparedFor > Tone.immediate()
+  ) {
+    return;
+  }
   entry.preparedFor = atAudioTime;
 
   const preroll = () => {

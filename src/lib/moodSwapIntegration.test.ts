@@ -105,7 +105,11 @@ import {
   startMoodPerformance,
   stopMoodPerformance,
 } from "./moodTransport";
-import { __resetMoodVideoPoolForTesting, videoForTake } from "./moodVideoPool";
+import {
+  __getMoodVideoPoolStateForTesting,
+  __resetMoodVideoPoolForTesting,
+  videoForTake,
+} from "./moodVideoPool";
 import { useAppStore } from "../store/useAppStore";
 import { makeMoodTake } from "../test-utils/moodFixtures";
 
@@ -273,5 +277,23 @@ describe("Mood boundary swaps, end to end", () => {
     frame(12.0);
     // At 12, 200 ms late: 1.8 s into its previous pass.
     expect(seeks.at(-1)).toBeCloseTo(1.8);
+  });
+  it("starts a take's video at its cut when it is picked again after its swap locked", async () => {
+    await performFromEpochTen();
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    frame(11.5);
+    // The pre-roll holds take-b's first frame a lead before 12.
+    toneHarness.draw.advanceTo(11.92);
+    // Picked again after the arm clock passed 12: also queued for 14.
+    toneHarness.setImmediate(11.95);
+    armSelection("mic-0", "take-b");
+    frame(11.95);
+
+    frame(12.01);
+    frame(12.3);
+
+    const takeB = __getMoodVideoPoolStateForTesting().find((entry) => entry.takeId === "take-b");
+    expect(takeB?.playing).toBe(true);
   });
 });
