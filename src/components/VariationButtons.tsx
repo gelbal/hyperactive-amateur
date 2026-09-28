@@ -61,6 +61,10 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
     onBusyChange?.(pending !== null);
   }, [pending, onBusyChange]);
 
+  // Unmounted mid-request (a clip deleted below the AI unlock), the busy pin
+  // it set on its parent must not outlive it.
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
   const handleClick = async (variation: Variation) => {
     setError(null);
     setPending(variation);
