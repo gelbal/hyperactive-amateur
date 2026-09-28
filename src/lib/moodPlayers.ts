@@ -130,14 +130,18 @@ export function syncMoodPlayers(
   cycleSeconds: number,
 ): void {
   const nextTakeIds = new Set<string>();
+  const now = Tone.immediate();
 
   for (const liveTake of liveTakes) {
     nextTakeIds.add(liveTake.takeId);
     const existing = players.get(liveTake.takeId);
 
     // A player scheduled on the audio clock for this commit is already
-    // sounding in phase from the boundary; it replaces the live one.
+    // sounding in phase from the boundary; it replaces the live one. One
+    // scheduled for a later boundary (this drain caught up on an earlier
+    // one) waits for its own commit while the live one keeps sounding.
     const scheduled = scheduledPlayers.get(liveTake.takeId);
+    if (scheduled && scheduled.startAt > now) continue;
     if (scheduled) {
       scheduledPlayers.delete(liveTake.takeId);
       if (playsSameAudio(scheduled.take, liveTake.take)) {
@@ -187,7 +191,6 @@ export function syncMoodPlayers(
   // was deleted, or replaced at the same boundary) must not keep sounding.
   // One scheduled for a later boundary (after a paint stall) waits for its
   // own commit.
-  const now = Tone.immediate();
   for (const [takeId, scheduled] of [...scheduledPlayers]) {
     if (!nextTakeIds.has(takeId) && scheduled.startAt <= now) disposeScheduledPlayer(takeId);
   }
@@ -217,11 +220,17 @@ export function scheduleMoodPlayerSwap(
   scheduledSwaps.add(swapKey);
 
   const outgoing = outgoingTakeId === null ? undefined : players.get(outgoingTakeId);
+  // The outgoing take as it will sound up to this boundary: a swap already
+  // scheduled for an earlier boundary, or else the live player.
+  const current =
+    outgoingTakeId === null
+      ? undefined
+      : (scheduledPlayers.get(outgoingTakeId) ?? outgoing);
   if (
     incoming &&
-    outgoing &&
+    current &&
     outgoingTakeId === incoming.takeId &&
-    playsSameAudio(outgoing.take, incoming.take)
+    playsSameAudio(current.take, incoming.take)
   ) {
     return;
   }

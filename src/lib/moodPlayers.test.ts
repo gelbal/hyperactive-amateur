@@ -616,6 +616,40 @@ describe("moodPlayers", () => {
       expect(toneMocks.players).toHaveLength(2);
     });
 
+    it("keeps a live take sounding until its replacement's later boundary, through an earlier commit", () => {
+      const { takeA } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      const resynced = { ...takeA, syncOffsetMs: 20 };
+      // A paint stall: the frame at 3.95 schedules the resync for 4 and
+      // drains an earlier boundary, where the store already has the new take.
+      toneHarness.setImmediate(3.95);
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-a", take: resynced }, 4, 0, 2);
+
+      syncMoodPlayers([{ takeId: "take-a", take: resynced }], 0, 2);
+      const [sounding, replacement] = toneMocks.players;
+      expect(sounding.dispose).not.toHaveBeenCalled();
+      expect(replacement.dispose).not.toHaveBeenCalled();
+
+      toneHarness.setImmediate(4.01);
+      syncMoodPlayers([{ takeId: "take-a", take: resynced }], 0, 2);
+      expect(sounding.dispose).toHaveBeenCalledTimes(1);
+      expect(replacement.dispose).not.toHaveBeenCalled();
+      expect(toneMocks.players).toHaveLength(2);
+    });
+
+    it("keeps a take's scheduled player when the same take is queued again for the next boundary", () => {
+      const { takeA, takeB } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      toneHarness.setImmediate(13.95);
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-b", take: takeB }, 12, 0, 2);
+
+      scheduleMoodPlayerSwap("take-b", { takeId: "take-b", take: takeB }, 14, 0, 2);
+
+      expect(toneMocks.players).toHaveLength(2);
+      expect(toneMocks.players[1].stop).not.toHaveBeenCalled();
+      expect(toneMocks.players[1].dispose).not.toHaveBeenCalled();
+    });
+
     it("disposes scheduled players when the performance stops", () => {
       const { takeB } = liveTakes();
       toneHarness.setImmediate(3.95);
