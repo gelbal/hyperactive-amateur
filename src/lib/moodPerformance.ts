@@ -12,6 +12,7 @@ import {
 } from "./moodClock";
 import { scheduleMoodDropFilter } from "./moodFx";
 import {
+  livePlayerIsStale,
   scheduleMoodPlayerSwap,
   syncMoodPlayers,
   type MoodPlayerLiveTake,
@@ -21,6 +22,7 @@ import {
   armMoodLensCommit,
   armMoodSelectionCommit,
   lockedSelectionCommits,
+  pendingSelectionCommits,
 } from "./moodTransport";
 import {
   liveTakesFromSelections,
@@ -159,6 +161,30 @@ export function scheduleLockedPlayerSwaps(): void {
       performanceState.epoch,
       piece.cycleSeconds,
     );
+  }
+
+  resyncStaleLiveTakes(piece, performanceState.selections, performanceState.epoch);
+}
+
+// A live take whose audio changed under its player (a repair that decoded
+// its audio, a new sync offset) is re-armed for the next boundary, where the
+// swap above rebuilds it on the audio clock. A mic with a queued swap
+// resyncs through that swap.
+function resyncStaleLiveTakes(piece: MoodPiece, selections: SelectionMap, epoch: number): void {
+  if (piece.cycleSeconds === null) return;
+  let queuedMics: Set<string> | null = null;
+  for (const mic of piece.mics) {
+    const take = takeForEntry(piece, mic.id, selections[mic.id] ?? "off");
+    if (!take || !livePlayerIsStale(take)) continue;
+    queuedMics ??= new Set(pendingSelectionCommits().map((event) => event.micId));
+    if (queuedMics.has(mic.id)) continue;
+    const now = Tone.now();
+    armMoodSelectionCommit(
+      { micId: mic.id, entry: take.id },
+      nextCycleBoundary(epoch, piece.cycleSeconds, now),
+      now,
+    );
+    queuedMics.add(mic.id);
   }
 }
 

@@ -198,4 +198,29 @@ describe("Mood boundary swaps, end to end", () => {
     expect(playerC.stop).not.toHaveBeenCalled();
     expect(playerC.dispose).not.toHaveBeenCalled();
   });
+  it("brings a live take whose audio is repaired in on the audio clock at the next boundary", async () => {
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    actions.setMoodTake("mic-0", take("take-a"));
+    // take-c's audio could not be decoded when Play started.
+    actions.setMoodTake("mic-1", { ...take("take-c"), audioBuffer: null, audioStatus: "unavailable" });
+    actions.setAppMode("mood");
+    armSelection("mic-0", "take-a");
+    armSelection("mic-1", "take-c");
+    toneHarness.setImmediate(9.9);
+    await startMoodPerformance();
+    expect(toneNodes.players).toHaveLength(1);
+
+    toneHarness.setImmediate(10.4);
+    const unavailable = useAppStore.getState().mood.piece?.mics[1].takes[0];
+    actions.restoreMoodTakeAudio("mic-1", "take-c", makeBuffer(48_000, 96_000), null, unavailable);
+    frame(10.4);
+    frame(11.92);
+
+    const playerC = toneNodes.players[1];
+    expect(playerC.start).toHaveBeenCalledWith(12, 0);
+    frame(12.0);
+    expect(toneNodes.players).toHaveLength(2);
+    expect(playerC.dispose).not.toHaveBeenCalled();
+  });
 });

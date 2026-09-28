@@ -196,6 +196,14 @@ export function syncMoodPlayers(
   }
 }
 
+// A live take whose audio changed under its player (a repaired decode, a new
+// sync offset). A take with no entry yet (Play is still building the
+// players) is not stale.
+export function livePlayerIsStale(take: MoodTake): boolean {
+  const entry = players.get(take.id);
+  return entry !== undefined && !playsSameAudio(entry.take, take);
+}
+
 function disposeScheduledPlayer(takeId: string): void {
   const scheduled = scheduledPlayers.get(takeId);
   if (!scheduled) return;
