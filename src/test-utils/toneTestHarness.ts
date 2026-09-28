@@ -92,8 +92,16 @@ export function createToneHarness() {
   });
 
   const start = vi.fn(async () => undefined);
-  const transportStart = vi.fn();
-  const transportStop = vi.fn();
+  // A stopped transport's position does not advance, so only a running one
+  // reads a lookahead ahead of the audible clock.
+  let transportRunning = false;
+  const secondsLead = () => (transportRunning ? lookahead : 0);
+  const transportStart = vi.fn(() => {
+    transportRunning = true;
+  });
+  const transportStop = vi.fn(() => {
+    transportRunning = false;
+  });
 
   const transport = {
     clear,
@@ -107,13 +115,13 @@ export function createToneHarness() {
     set position(value: number | string) {
       transportPosition = value;
     },
-    // As in Tone, `seconds` reads the transport on the lookahead clock
+    // As in Tone, `seconds` reads a running transport on the lookahead clock
     // (Tone.now()); transportSeconds is its position at the audible clock.
     get seconds() {
-      return transportSeconds + lookahead;
+      return transportSeconds + secondsLead();
     },
     set seconds(value: number) {
-      transportSeconds = value - lookahead;
+      transportSeconds = value - secondsLead();
     },
     // Transport seconds at an audio-clock time, so
     // scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
@@ -151,6 +159,7 @@ export function createToneHarness() {
       transportPosition = 0;
       transportSwing = 0;
       transportSeconds = 0;
+      transportRunning = false;
       clear.mockClear();
       scheduleOnce.mockClear();
       scheduleRepeat.mockClear();
@@ -206,10 +215,10 @@ export function createToneHarness() {
             transportPosition = value;
           },
           get seconds() {
-            return transportSeconds + lookahead;
+            return transportSeconds + secondsLead();
           },
           set seconds(value: number) {
-            transportSeconds = value - lookahead;
+            transportSeconds = value - secondsLead();
           },
           getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
           get swing() {

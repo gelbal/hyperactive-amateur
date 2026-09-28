@@ -1525,6 +1525,8 @@ describe("moodRecordingFlow", () => {
     toneHarness.setLookahead(0.1);
     audioMocks.context.currentTime = 17.75;
     toneHarness.setImmediate(17.75);
+    // The performance owns a running transport.
+    toneHarness.transport.start();
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
