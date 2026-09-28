@@ -296,4 +296,21 @@ describe("Mood boundary swaps, end to end", () => {
     const takeB = __getMoodVideoPoolStateForTesting().find((entry) => entry.takeId === "take-b");
     expect(takeB?.playing).toBe(true);
   });
+  it("keeps a locked take's pre-rolled video when its mic is re-armed for the next boundary", async () => {
+    await performFromEpochTen();
+    useAppStore.getState().actions.setMoodTake("mic-0", take("take-d"));
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    const preparedB = videoForTake("take-b");
+    expect(preparedB).toBeInstanceOf(HTMLVideoElement);
+
+    // After take-b's swap locked for 12, the performer arms take-d for 14.
+    toneHarness.setImmediate(11.95);
+    armSelection("mic-0", "take-d");
+    expect(videoForTake("take-b")).toBe(preparedB);
+
+    frame(12.01);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(videoForTake("take-b")).toBe(preparedB);
+  });
 });

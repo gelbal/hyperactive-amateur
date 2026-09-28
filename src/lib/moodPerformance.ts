@@ -60,10 +60,16 @@ function liveVideoTakesIncludingArmed(
     liveTakesFromSelections(piece, selections, epoch).map((take) => [take.takeId, take]),
   );
 
-  for (const mic of piece.mics) {
-    const entry = armed[mic.id];
+  // Armed takes, and takes whose swap is still queued (a locked swap stays
+  // queued after its mic is re-armed for a later boundary): their prepared
+  // videos stay in the pool until their cut.
+  const upcoming = [
+    ...Object.entries(armed).map(([micId, entry]) => ({ micId, entry })),
+    ...pendingSelectionCommits(),
+  ];
+  for (const { micId, entry } of upcoming) {
     if (!entry || entry === "off") continue;
-    const take = mic.takes.find((candidate) => candidate.id === entry);
+    const take = takeForEntry(piece, micId, entry);
     if (!take || live.has(take.id)) continue;
     live.set(take.id, {
       takeId: take.id,
