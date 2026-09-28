@@ -484,6 +484,19 @@ describe("MoodStage", () => {
     expect(screen.queryByTestId("mood-count-in-beat-strip")).not.toBeInTheDocument();
   });
 
+  it("shows no digit above the count-in's first tick", () => {
+    // 1.75 beats out, but this count-in started 1.5 beats before the
+    // punch-in: its only tick is the accented 1, so no silent 2 shows first.
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodCountInTicks(1);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveTextContent("1");
+  });
+
   it("renders the Splits zero-live state as a cycle-driven DOM boundary pulse", () => {
     const piece = makeSplitsPieceWithTake();
 

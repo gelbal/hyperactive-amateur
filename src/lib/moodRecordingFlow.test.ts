@@ -1539,6 +1539,24 @@ describe("moodRecordingFlow", () => {
     await expect(promise).resolves.toBe(false);
   });
 
+  it.each([
+    [17.75, 8],
+    [16.6, 2],
+  ])("records how many count-in ticks it plays (tap at %s)", async (tapTime, ticks) => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    audioMocks.context.currentTime = tapTime;
+    toneHarness.setImmediate(tapTime);
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    expect(useAppStore.getState().mood.countInTicks).toBe(ticks);
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+  });
+
   it("plays an overdub count-in tick already inside the lookahead on the audio clock", async () => {
     vi.useFakeTimers();
     seedMoodCycle(4);

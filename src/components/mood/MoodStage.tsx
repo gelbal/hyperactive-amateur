@@ -129,6 +129,7 @@ function MoodCaptureOverlay({ piece }: MoodStageProps) {
   const countdownEndsAt = useAppStore((s) => s.recording.countdownEndsAt);
   const captureEndsAt = useAppStore((s) => s.recording.captureEndsAt);
   const hotMicId = useAppStore((s) => s.mood.performance.hotMicId);
+  const countInTicks = useAppStore((s) => s.mood.countInTicks);
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const rect = useMemo(() => hotTileRect(piece, hotMicId), [hotMicId, piece]);
   const beatSeconds = countInBeatSeconds(piece);
@@ -149,7 +150,11 @@ function MoodCaptureOverlay({ piece }: MoodStageProps) {
   if (!rect || !isCaptureOverlayState(recordingState)) return null;
 
   const currentAudioNow = timedState ? Math.max(audioNow, Tone.immediate()) : audioNow;
-  const beatsRemaining = countInBeatsRemaining(countdownEndsAt, beatSeconds, currentAudioNow);
+  // Before the first tick, the digit is that tick's, not a silent one above.
+  const beatsRemaining = Math.min(
+    countInBeatsRemaining(countdownEndsAt, beatSeconds, currentAudioNow),
+    Math.max(1, countInTicks ?? Number.POSITIVE_INFINITY),
+  );
   const isLongOverdubCountIn =
     recordingState === "countdown" && piece.cycleSeconds !== null && beatsRemaining > 3;
   const filledBeatCount = filledOverdubBeatCount(beatsRemaining);

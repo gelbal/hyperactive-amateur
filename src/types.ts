@@ -207,6 +207,9 @@ export interface MoodSlice {
   monitorWithHeadphones: boolean;
   // Take ids currently awaiting Part Tags. Transient and session-scoped.
   partCheckingTakeIds: string[];
+  // How many ticks the current take's count-in plays; the count-in digit
+  // never shows above it. Transient.
+  countInTicks: number | null;
   performance: MoodPerformanceState;
 }
 

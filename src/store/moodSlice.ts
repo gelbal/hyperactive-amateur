@@ -237,6 +237,7 @@ export interface MoodActions {
   commitMoodSelections: (dueArms: MoodSelectionCommit[]) => void;
   setMoodDrop: (dropActive: boolean) => void;
   setMoodHotMic: (micId: string | null) => void;
+  setMoodCountInTicks: (countInTicks: number | null) => void;
   setMoodCycleCount: (cycleCount: number) => void;
   setMoodTake: (micId: string, take: MoodTake) => void;
   setMoodPartChecking: (takeId: string, checking: boolean) => void;
@@ -316,6 +317,7 @@ export function createInitialMoodState(): MoodSlice {
     hydration: "cold",
     monitorWithHeadphones: readStoredMoodHeadphones(),
     partCheckingTakeIds: [],
+    countInTicks: null,
     performance: createIdleMoodPerformance(),
   };
 }
@@ -596,6 +598,9 @@ export function createMoodActions(hooks: MoodActionHooks): MoodActions {
           performance: { ...state.mood.performance, hotMicId },
         },
       })),
+
+    setMoodCountInTicks: (countInTicks) =>
+      set((state) => ({ mood: { ...state.mood, countInTicks } })),
 
     setMoodCycleCount: (cycleCount) =>
       set((state) => ({
