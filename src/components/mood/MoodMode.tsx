@@ -15,13 +15,14 @@ import {
   registerMoodRecordingInterrupt,
   stopMoodTakeEarly,
 } from "../../lib/moodRecordingFlow";
-import { armLens } from "../../lib/moodPerformance";
+import { armLens, syncCommittedMoodEngines } from "../../lib/moodPerformance";
 import {
   registerMoodPerformanceInterrupt,
   startMoodPerformance,
   stopMoodPerformance,
 } from "../../lib/moodTransport";
 import * as moodRehydrate from "../../lib/moodRehydrate";
+import { teardownMoodVideoPool } from "../../lib/moodVideoPool";
 import { useMoodKeys } from "../../lib/useMoodKeys";
 import {
   cancelActiveRecordingByUser,
@@ -871,9 +872,13 @@ export function MoodMode() {
     const unregisterMoodRecordingInterrupt = registerMoodRecordingInterrupt();
     const unregisterMoodPerformanceInterrupt = registerMoodPerformanceInterrupt();
     unmountedRef.current = false;
+    // The live takes' hidden videos exist only while Mood is on screen: they
+    // are built on entry and released on leaving, so none decodes under Chop.
+    syncCommittedMoodEngines({ syncPlayers: false });
     return () => {
       unregisterMoodRecordingInterrupt();
       unregisterMoodPerformanceInterrupt();
+      teardownMoodVideoPool();
       unmountedRef.current = true;
     };
   }, []);

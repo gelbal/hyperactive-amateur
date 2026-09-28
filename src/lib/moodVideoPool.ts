@@ -455,7 +455,9 @@ export function isVideoReadyForDraw(video: HTMLVideoElement): boolean {
   );
 }
 
-export function __resetMoodVideoPoolForTesting(): void {
+// Leaving Mood: every hidden video stops decoding and releases its source,
+// so none keeps looping under Chop. Mood rebuilds the pool when it mounts.
+export function teardownMoodVideoPool(): void {
   for (const entry of videos.values()) {
     teardown(entry);
   }
@@ -464,6 +466,10 @@ export function __resetMoodVideoPoolForTesting(): void {
   pausedForCapture.clear();
   host?.remove();
   host = null;
+}
+
+export function __resetMoodVideoPoolForTesting(): void {
+  teardownMoodVideoPool();
 }
 
 export function __getMoodVideoPoolStateForTesting(): Array<{

@@ -69,6 +69,7 @@ import { CREDIT_STYLES } from "../../lib/moodCredits";
 import { createEmptyMoodPiece } from "../../lib/moodStages";
 import { clearMoodPiece, saveMoodPiece } from "../../lib/moodPersistence";
 import * as moodRehydrate from "../../lib/moodRehydrate";
+import { videoForTake } from "../../lib/moodVideoPool";
 import { useAppStore } from "../../store/useAppStore";
 import { clearLogs, getLogs, LOG_EVENTS } from "../../lib/logger";
 import type { MoodTake } from "../../types";
@@ -174,6 +175,24 @@ describe("MoodMode", () => {
 
     unmount();
     expect(moodRecordingMocks.unregisterMoodRecordingInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds the live takes' hidden videos while mounted and releases them when Mood unmounts", () => {
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("corners", "pocket");
+    actions.setMoodTake("mic-0", makeTake({ id: "live-take" }));
+    actions.commitMoodSelections([{ micId: "mic-0", entry: "live-take" }]);
+
+    const { unmount } = renderMoodMode();
+    const video = videoForTake("live-take");
+    expect(video).toBeInstanceOf(HTMLVideoElement);
+
+    unmount();
+
+    // A switch to Chop must not leave Mood's videos decoding under it.
+    expect(videoForTake("live-take")).toBeNull();
+    expect(video?.isConnected).toBe(false);
+    expect(video?.getAttribute("src")).toBeNull();
   });
 
   it("gives an existing piece a flex-shrinking desktop stage column", () => {
