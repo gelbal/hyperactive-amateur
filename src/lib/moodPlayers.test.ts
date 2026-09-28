@@ -536,6 +536,24 @@ describe("moodPlayers", () => {
       expect(toneMocks.players[1].dispose).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps a live player whose audio changed until its queued resync commits", () => {
+      const { takeA } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      const resynced = { ...takeA, syncOffsetMs: 20 };
+
+      // Another mic's commit at 12, with take-a's resync queued for 14.
+      toneHarness.setImmediate(12.01);
+      syncMoodPlayers([{ takeId: "take-a", take: resynced }], 0, 2, 12.01, new Set(["take-a"]));
+      expect(toneMocks.players).toHaveLength(1);
+      expect(toneMocks.players[0].dispose).not.toHaveBeenCalled();
+
+      // Its own commit, once nothing is queued for it: the new audio comes in.
+      toneHarness.setImmediate(14.01);
+      syncMoodPlayers([{ takeId: "take-a", take: resynced }], 0, 2, 14.01);
+      expect(toneMocks.players).toHaveLength(2);
+      expect(toneMocks.players[0].dispose).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps a live player when only the take's metadata changed", () => {
       const { takeA } = liveTakes();
       syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);

@@ -135,11 +135,19 @@ export function syncCommittedMoodEngines(
     performanceState.epoch !== null &&
     piece.cycleSeconds !== null
   ) {
+    // Live takes with a resync still queued (a swap to the take already
+    // live) keep their players until that commit.
+    const resyncQueued = new Set(
+      pendingSelectionCommits()
+        .filter((event) => event.entry === performanceState.selections[event.micId])
+        .map((event) => event.entry),
+    );
     syncMoodPlayers(
       livePlayerTakesFromSelections(piece, performanceState.selections),
       performanceState.epoch,
       piece.cycleSeconds,
       options.audioTime,
+      resyncQueued,
     );
   }
 

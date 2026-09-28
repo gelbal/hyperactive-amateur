@@ -296,6 +296,51 @@ describe("Mood boundary swaps, end to end", () => {
     const takeB = __getMoodVideoPoolStateForTesting().find((entry) => entry.takeId === "take-b");
     expect(takeB?.playing).toBe(true);
   });
+  it("brings a re-synced take in at its own boundary, not at another mic's earlier commit", async () => {
+    await performFromEpochTen();
+    const playerC = toneNodes.players[1];
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    // Sync Assist lands on take-c after the arm clock passed 12: its resync
+    // is queued for 14.
+    toneHarness.setImmediate(11.96);
+    useAppStore
+      .getState()
+      .actions.applyMoodSyncOffsetIfCurrent(
+        "mic-1",
+        "take-c",
+        200,
+        useAppStore.getState().session.moodRevision,
+      );
+    frame(11.96);
+    frame(12.01);
+    expect(playerC.dispose).not.toHaveBeenCalled();
+
+    frame(13.92);
+    frame(14.0);
+    expect(playerC.stop).toHaveBeenCalledWith(14);
+    const resyncedC = toneNodes.players.find(
+      (player) => player !== playerC && player.start.mock.calls[0]?.[0] === 14,
+    );
+    expect(resyncedC).toBeDefined();
+  });
+
+  it("does not leave a take picked while stopped frozen by a join cut short by the stop", async () => {
+    await performFromEpochTen();
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    toneHarness.setImmediate(11.5);
+    stopMoodPerformance();
+    // Picked while stopped: it goes live at once. The pre-roll scheduled for
+    // the old cut then comes due.
+    armSelection("mic-0", "take-b");
+    toneHarness.draw.advanceTo(11.95);
+
+    const takeB = __getMoodVideoPoolStateForTesting().find((entry) => entry.takeId === "take-b");
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(takeB?.playing).toBe(true);
+  });
+
   it("keeps a locked take's pre-rolled video when its mic is re-armed for the next boundary", async () => {
     await performFromEpochTen();
     useAppStore.getState().actions.setMoodTake("mic-0", take("take-d"));

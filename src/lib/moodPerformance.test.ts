@@ -198,6 +198,7 @@ describe("moodPerformance", () => {
       10,
       2,
       12,
+      new Set(),
     );
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
   });
@@ -380,6 +381,7 @@ describe("moodPerformance", () => {
       20,
       2,
       undefined,
+      new Set(),
     );
   });
 
@@ -419,6 +421,7 @@ describe("moodPerformance", () => {
       10,
       2,
       12,
+      new Set(),
     );
     expect(videoForTake("take-a")).toBeNull();
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
