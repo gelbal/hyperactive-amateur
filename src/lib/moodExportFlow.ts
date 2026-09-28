@@ -115,10 +115,11 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     // capped render is a success and keeps performing.
     if (performanceStartedByExport) {
       stopMoodPerformance();
-      // The stop marks the mix for saving after the hide's own flush ran
-      // (the render is aborted from that handler): flush again while the
-      // page can still write.
-      if (typeof document !== "undefined" && document.hidden) flushPending();
+      // The stop marks the mix for saving. A hide or pagehide that aborted
+      // the render already ran its own flush (a pagehide can come with
+      // document.hidden still false), so flush again while the page can
+      // still write.
+      flushPending();
     }
     throw err;
   });

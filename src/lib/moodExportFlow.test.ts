@@ -205,11 +205,12 @@ describe("moodExportFlow", () => {
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
 
+  // A pagehide can end the render while document.hidden is still false.
   it.each([
     [true, 1],
-    [false, 0],
+    [false, 1],
   ])(
-    "flushes the mix the stop marked when a render fails while hidden (%s)",
+    "flushes the mix the stop marked whenever a render it started fails (hidden: %s)",
     async (hidden, flushes) => {
       createPieceWithCycle();
       audioMocks.audioContext.currentTime = 10.1;
