@@ -57,7 +57,8 @@ describe("test clock harness", () => {
     const Tone = harness.createToneModule();
     const transport = Tone.getTransport();
 
-    expect(transport.seconds).toBe(0);
+    // As in Tone, seconds reads on the lookahead clock (0.1 s ahead).
+    expect(transport.seconds).toBeCloseTo(0.1);
 
     transport.seconds = 12.5;
     expect(Tone.getTransport().seconds).toBe(12.5);
@@ -70,11 +71,12 @@ describe("test clock harness", () => {
     const callback = vi.fn();
 
     harness.setImmediate(16.6);
+    // Transport position 100 at the lookahead clock (16.7): 100.5 is 17.2.
     transport.seconds = 100;
     const eventId = transport.scheduleOnce(callback, 100.5);
 
     harness.transport.fireOnce(eventId);
-    expect(callback).toHaveBeenCalledWith(17.1);
+    expect(callback.mock.calls[0][0]).toBeCloseTo(17.2);
   });
 
   it("captures Transport start and stop calls while sharing mutable position", () => {

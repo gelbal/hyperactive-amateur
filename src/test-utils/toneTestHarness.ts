@@ -107,14 +107,16 @@ export function createToneHarness() {
     set position(value: number | string) {
       transportPosition = value;
     },
+    // As in Tone, `seconds` reads the transport on the lookahead clock
+    // (Tone.now()); transportSeconds is its position at the audible clock.
     get seconds() {
-      return transportSeconds;
+      return transportSeconds + lookahead;
     },
     set seconds(value: number) {
-      transportSeconds = value;
+      transportSeconds = value - lookahead;
     },
-    // Transport seconds at an audio-clock time; `seconds` is modeled at the
-    // audible clock, so scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
+    // Transport seconds at an audio-clock time, so
+    // scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
     getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
     get swing() {
       return transportSwing;
@@ -204,10 +206,10 @@ export function createToneHarness() {
             transportPosition = value;
           },
           get seconds() {
-            return transportSeconds;
+            return transportSeconds + lookahead;
           },
           set seconds(value: number) {
-            transportSeconds = value;
+            transportSeconds = value - lookahead;
           },
           getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
           get swing() {

@@ -1518,6 +1518,27 @@ describe("moodRecordingFlow", () => {
     expect(toneSpies.transportCancel).not.toHaveBeenCalled();
   });
 
+  it("places overdub count-in ticks at their audio times on the real lookahead clock", async () => {
+    vi.useFakeTimers();
+    seedMoodCycle(4);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    toneHarness.setLookahead(0.1);
+    audioMocks.context.currentTime = 17.75;
+    toneHarness.setImmediate(17.75);
+
+    const promise = recordMoodTake("mic-1");
+    await flushMicrotasks();
+
+    // transport.seconds reads 0.1 ahead here; converting from it would put
+    // every tick 100 ms late.
+    expect(toneHarness.transport.scheduleOnce.mock.calls.map((call) => call[1])).toEqual([
+      0.25, 0.75, 1.25, 1.75, 2.25, 2.75, 3.25, 3.75,
+    ]);
+
+    cancelCurrentMoodTake();
+    await expect(promise).resolves.toBe(false);
+  });
+
   it("plays an overdub count-in tick already inside the lookahead on the audio clock", async () => {
     vi.useFakeTimers();
     seedMoodCycle(4);
