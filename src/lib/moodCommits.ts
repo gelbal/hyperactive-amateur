@@ -28,10 +28,16 @@ export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
   if (selections.length > 0) {
     actions.commitMoodSelections(selections);
     // A re-arm made after its boundary locked waits for the next one: the
-    // committed mic stays armed with it.
+    // committed mic stays armed with it. A take deleted meanwhile commits as
+    // Off, so it re-arms as Off.
     const committedMics = new Set(selections.map((commit) => commit.micId));
+    const piece = useAppStore.getState().mood.piece;
     for (const event of pendingSelectionCommits()) {
-      if (committedMics.has(event.micId)) actions.armMoodSelection(event.micId, event.entry);
+      if (!committedMics.has(event.micId)) continue;
+      const takeExists = piece?.mics
+        .find((mic) => mic.id === event.micId)
+        ?.takes.some((take) => take.id === event.entry);
+      actions.armMoodSelection(event.micId, event.entry === "off" || takeExists ? event.entry : "off");
     }
   }
   if (lens !== null) {

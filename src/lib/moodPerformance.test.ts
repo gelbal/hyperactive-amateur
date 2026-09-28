@@ -612,6 +612,23 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
   });
 
+  it("re-arms a queued swap to a deleted take as Off, as its commit will be", async () => {
+    createMoodWithStack(2);
+    useAppStore.getState().actions.setMoodTake("mic-0", makeMoodTake({ id: "take-d" }));
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "take-b");
+    toneHarness.setImmediate(12.02);
+    armSelection("mic-0", "take-d");
+    useAppStore.getState().actions.deleteMoodTake("mic-0", "take-d");
+
+    applyDueCommits(12.03);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("off");
+  });
+
   it("lets the performer cancel that queued swap by tapping the take now playing", async () => {
     createMoodWithStack(2);
     toneHarness.setImmediate(10);
