@@ -650,6 +650,26 @@ describe("moodPlayers", () => {
       expect(toneMocks.players[1].dispose).not.toHaveBeenCalled();
     });
 
+    it("judges scheduled starts against the drain's audio time, not a later clock read", () => {
+      const { takeA, takeB } = liveTakes();
+      syncMoodPlayers([{ takeId: "take-a", take: takeA }], 0, 2);
+      toneHarness.setImmediate(13.95);
+      // take-a resyncs at 14; take-b joins mic 1 at 14 too.
+      const resynced = { ...takeA, syncOffsetMs: 20 };
+      scheduleMoodPlayerSwap("take-a", { takeId: "take-a", take: resynced }, 14, 0, 2);
+      scheduleMoodPlayerSwap(null, { takeId: "take-b", take: takeB }, 14, 0, 2);
+
+      // The drain for an earlier boundary runs at 13.999; the clock has
+      // crossed 14 by the time the players sync.
+      toneHarness.setImmediate(14.001);
+      syncMoodPlayers([{ takeId: "take-a", take: resynced }], 0, 2, 13.999);
+
+      const [sounding, replacement, playerB] = toneMocks.players;
+      expect(sounding.dispose).not.toHaveBeenCalled();
+      expect(replacement.dispose).not.toHaveBeenCalled();
+      expect(playerB.dispose).not.toHaveBeenCalled();
+    });
+
     it("disposes scheduled players when the performance stops", () => {
       const { takeB } = liveTakes();
       toneHarness.setImmediate(3.95);

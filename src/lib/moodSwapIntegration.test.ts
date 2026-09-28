@@ -105,7 +105,7 @@ import {
   startMoodPerformance,
   stopMoodPerformance,
 } from "./moodTransport";
-import { __resetMoodVideoPoolForTesting } from "./moodVideoPool";
+import { __resetMoodVideoPoolForTesting, videoForTake } from "./moodVideoPool";
 import { useAppStore } from "../store/useAppStore";
 import { makeMoodTake } from "../test-utils/moodFixtures";
 
@@ -222,5 +222,56 @@ describe("Mood boundary swaps, end to end", () => {
     frame(12.0);
     expect(toneNodes.players).toHaveLength(2);
     expect(playerC.dispose).not.toHaveBeenCalled();
+  });
+  it("keeps the video a take is armed with for the next boundary through an earlier commit", async () => {
+    await performFromEpochTen();
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    // After the arm clock passes 12, a tap on take-a again queues it for 14.
+    toneHarness.setImmediate(11.92);
+    armSelection("mic-0", "take-a");
+    const preparedA = videoForTake("take-a");
+
+    frame(12.0);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(videoForTake("take-a")).toBe(preparedA);
+  });
+
+  it("moves a live take's video to a new sync offset only when its audio moves", async () => {
+    await performFromEpochTen();
+    const videoC = videoForTake("take-c");
+    if (!videoC) throw new Error("Expected take-c's video");
+    let position = 0;
+    const seeks: number[] = [];
+    Object.defineProperty(videoC, "currentTime", {
+      configurable: true,
+      get: () => position,
+      set: (value: number) => {
+        position = value;
+        seeks.push(value);
+      },
+    });
+    frame(10.5);
+
+    // Sync Assist nudges take-c 200 ms later; the performer then arms mic 0.
+    const actions = useAppStore.getState().actions;
+    actions.applyMoodSyncOffsetIfCurrent(
+      "mic-1",
+      "take-c",
+      200,
+      useAppStore.getState().session.moodRevision,
+    );
+    seeks.length = 0;
+    toneHarness.setImmediate(10.6);
+    armSelection("mic-0", "take-b");
+    frame(10.7);
+    frame(11.5);
+    expect(seeks).toEqual([]);
+
+    frame(11.92);
+    frame(12.0);
+    // At 12, 200 ms late: 1.8 s into its previous pass.
+    expect(seeks.at(-1)).toBeCloseTo(1.8);
   });
 });

@@ -104,6 +104,7 @@ vi.mock("tone", () => {
 
 vi.mock("./moodPlayers", () => ({
   livePlayerIsStale: () => false,
+  playerSyncOffsetMs: () => null,
   scheduleMoodPlayerSwap: vi.fn(),
   setCaptureGain: vi.fn(),
   stopAllMoodPlayers: vi.fn(),

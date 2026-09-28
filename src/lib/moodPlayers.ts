@@ -124,13 +124,16 @@ function createMoodPlayer(
   return player;
 }
 
+// audioTime is the drain's audible time: a scheduled player is judged due
+// against the boundary this commit is for, not a later clock read.
 export function syncMoodPlayers(
   liveTakes: MoodPlayerLiveTake[],
   epoch: number,
   cycleSeconds: number,
+  audioTime: number = Tone.immediate(),
 ): void {
   const nextTakeIds = new Set<string>();
-  const now = Tone.immediate();
+  const now = audioTime;
 
   for (const liveTake of liveTakes) {
     nextTakeIds.add(liveTake.takeId);
@@ -194,6 +197,12 @@ export function syncMoodPlayers(
   for (const [takeId, scheduled] of [...scheduledPlayers]) {
     if (!nextTakeIds.has(takeId) && scheduled.startAt <= now) disposeScheduledPlayer(takeId);
   }
+}
+
+// The sync offset a take's live player was built with: its video follows
+// the sound, which moves to a new offset only at the take's resync boundary.
+export function playerSyncOffsetMs(takeId: string): number | null {
+  return players.get(takeId)?.take.syncOffsetMs ?? null;
 }
 
 // A live take whose audio changed under its player (a repaired decode, a new

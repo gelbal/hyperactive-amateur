@@ -44,6 +44,7 @@ vi.mock("./audioLifecycle", () => ({
 
 vi.mock("./moodPlayers", () => ({
   livePlayerIsStale: () => false,
+  playerSyncOffsetMs: () => null,
   scheduleMoodPlayerSwap: moodPlayersMocks.scheduleMoodPlayerSwap,
   stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
   syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
@@ -196,6 +197,7 @@ describe("moodPerformance", () => {
       [{ takeId: "take-b", take: takeB }],
       10,
       2,
+      12,
     );
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);
   });
@@ -377,6 +379,7 @@ describe("moodPerformance", () => {
       [{ takeId: "take-a", take: takeA }],
       20,
       2,
+      undefined,
     );
   });
 
@@ -415,6 +418,7 @@ describe("moodPerformance", () => {
       [{ takeId: "take-b", take: takeB }],
       10,
       2,
+      12,
     );
     expect(videoForTake("take-a")).toBeNull();
     expect(videoForTake("take-b")).toBeInstanceOf(HTMLVideoElement);

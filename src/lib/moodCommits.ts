@@ -49,7 +49,7 @@ export function applyDueCommits(audioTime: number): BoundaryDropEvent | null {
     actions.setMoodArmedDrop(null);
   }
   if (selections.length > 0) {
-    syncCommittedMoodEngines();
+    syncCommittedMoodEngines({ audioTime });
   }
 
   const state = useAppStore.getState();

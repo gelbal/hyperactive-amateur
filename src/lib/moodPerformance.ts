@@ -13,6 +13,7 @@ import {
 import { scheduleMoodDropFilter } from "./moodFx";
 import {
   livePlayerIsStale,
+  playerSyncOffsetMs,
   scheduleMoodPlayerSwap,
   syncMoodPlayers,
   type MoodPlayerLiveTake,
@@ -97,26 +98,52 @@ function livePlayerTakesFromSelections(
   return [...live.values()];
 }
 
+// The pool's takes: live and armed (an armed take keeps its prepared video
+// through an earlier commit), each phase-locked with the sync offset its
+// audio player was built with, so a new offset reaches the video when it
+// reaches the sound.
+function videoTakesForPool(
+  piece: MoodPiece,
+  selections: SelectionMap,
+  armed: ArmedMap,
+  epoch: number | null,
+): MoodVideoPoolTake[] {
+  return liveVideoTakesIncludingArmed(piece, selections, armed, epoch).map((take) => {
+    const syncOffsetMs = playerSyncOffsetMs(take.takeId);
+    return syncOffsetMs === null ? take : { ...take, syncOffsetMs };
+  });
+}
+
+// audioTime is the drain's audible time on the commit path.
 export function syncCommittedMoodEngines(
-  options: { syncPlayers?: boolean } = {},
+  options: { syncPlayers?: boolean; audioTime?: number } = {},
 ): void {
   const state = useAppStore.getState();
   const piece = state.mood.piece;
   if (!piece) return;
 
   const { performance: performanceState } = state.mood;
+  if (
+    options.syncPlayers !== false &&
+    performanceState.isPerforming &&
+    performanceState.epoch !== null &&
+    piece.cycleSeconds !== null
+  ) {
+    syncMoodPlayers(
+      livePlayerTakesFromSelections(piece, performanceState.selections),
+      performanceState.epoch,
+      piece.cycleSeconds,
+      options.audioTime,
+    );
+  }
+
   syncPool(
-    liveTakesFromSelections(piece, performanceState.selections, performanceState.epoch),
-  );
-
-  if (options.syncPlayers === false) return;
-  if (!performanceState.isPerforming || performanceState.epoch === null) return;
-  if (piece.cycleSeconds === null) return;
-
-  syncMoodPlayers(
-    livePlayerTakesFromSelections(piece, performanceState.selections),
-    performanceState.epoch,
-    piece.cycleSeconds,
+    videoTakesForPool(
+      piece,
+      performanceState.selections,
+      performanceState.armed,
+      performanceState.epoch,
+    ),
   );
 }
 
@@ -218,7 +245,7 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
   const boundaryTime = nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodSelectionCommit(commit, boundaryTime, now);
   syncPool(
-    liveVideoTakesIncludingArmed(
+    videoTakesForPool(
       piece,
       performanceState.selections,
       performanceState.armed,

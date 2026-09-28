@@ -42,6 +42,7 @@ vi.mock("./audioLifecycle", () => ({
 
 vi.mock("./moodPlayers", () => ({
   livePlayerIsStale: () => false,
+  playerSyncOffsetMs: () => null,
   scheduleMoodPlayerSwap: vi.fn(),
   stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
   syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
