@@ -651,6 +651,22 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("off");
   });
 
+  it("does not keep a mic armed with a queued swap to the take it just committed", async () => {
+    createMoodWithStack(2);
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "take-b");
+    // Tapped again after the arm clock passed 12: a no-op queued for 14.
+    toneHarness.setImmediate(12.02);
+    armSelection("mic-0", "take-b");
+
+    applyDueCommits(12.03);
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
+  });
+
   it("lets the performer cancel that queued swap by tapping the take now playing", async () => {
     createMoodWithStack(2);
     toneHarness.setImmediate(10);
