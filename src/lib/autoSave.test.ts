@@ -291,6 +291,25 @@ describe("autoSave", () => {
     expect(saveSpy).not.toHaveBeenCalled();
   });
 
+  it("a scoped saveNow leaves another scope's pending change on its debounce", async () => {
+    const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);
+    vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    startAutoSave();
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("row", "pocket");
+    await __flushAutoSaveForTesting();
+    saveMoodSpy.mockClear();
+
+    // A Mood change, then a Chop clip's durability save before the debounce.
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "take-late" }));
+    actions.setBpm(128);
+    await saveNow("chop");
+    expect(saveMoodSpy).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect(saveMoodSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("saveNow(\"mood\") persists only the mood piece immediately", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
     const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);

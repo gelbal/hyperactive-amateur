@@ -189,7 +189,11 @@ export function saveNow(scope: SaveNowScope = "all"): Promise<boolean> {
   if (savableScopes.length === 0) {
     return (saveInProgress ?? Promise.resolve()).then(() => false);
   }
-  return requestSave(savableScopes).then(() => true);
+  const saved = requestSave(savableScopes).then(() => true);
+  // The debounce is shared: a scope this call does not save keeps its
+  // pending change on a fresh timer.
+  if (pendingScopes().some((pending) => !savableScopes.includes(pending))) scheduleSave();
+  return saved;
 }
 
 export function flushPending(): boolean {
