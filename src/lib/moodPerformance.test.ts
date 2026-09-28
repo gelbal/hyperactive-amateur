@@ -380,6 +380,23 @@ describe("moodPerformance", () => {
     );
   });
 
+  it("does not pre-roll the live take's video when a tap on it cancels a queued swap", async () => {
+    createMoodWithStack(2);
+    armSelection("mic-0", "take-a");
+    toneHarness.setImmediate(10);
+    await startMoodPerformance();
+    toneHarness.setImmediate(10.5);
+    armSelection("mic-0", "take-b");
+    const liveVideo = videoForTake("take-a");
+    if (!liveVideo) throw new Error("Expected the live take's video");
+    const pause = vi.spyOn(liveVideo, "pause");
+
+    armSelection("mic-0", "take-a");
+    toneHarness.draw.advanceTo(12);
+
+    expect(pause).not.toHaveBeenCalled();
+  });
+
   it("replaces a prior arm for the same mic before the boundary", async () => {
     const { takeB } = createMoodWithStack(2);
     toneHarness.setImmediate(10);

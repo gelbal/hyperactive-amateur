@@ -225,7 +225,9 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
       performanceState.epoch,
     ),
   );
-  if (entry !== "off") {
+  // The live take is already playing in step: re-selecting it (to cancel a
+  // queued swap) must not pre-roll its video.
+  if (entry !== "off" && entry !== current) {
     prepareUpcoming(entry, boundaryTime);
   }
 }

@@ -7,6 +7,9 @@ import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
 
 const HAVE_CURRENT_DATA = 2;
 const LOOP_EPSILON_SECONDS = 1e-6;
+// At its cut a prepared video plays from its held frame when that frame is
+// this close to where the take's audio is; otherwise it seeks there first.
+const JOIN_TOLERANCE_SECONDS = 0.05;
 
 export interface MoodVideoPoolTake {
   takeId: string;
@@ -38,6 +41,9 @@ interface PooledMoodVideo {
   // under so a stop/restart re-seeks even inside the same period index.
   restartEpoch: number | null;
   lastPeriodIndex: number | null;
+  // The audio time of the boundary this video is prepared to join at, held
+  // on its first frame until then; null when it is not waiting for a cut.
+  preparedFor: number | null;
   onTimeUpdate: () => void;
   onLoadedMetadata: () => void;
   onEnded: () => void;
@@ -155,20 +161,40 @@ function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number)
   return Math.floor(takeTimeAt(entry, audioTime, epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
 }
 
-// Seeks to where the take's audio is at audioTime: the same epoch phase in
-// its loop period. A multi-cycle take can join mid-period; past its content
-// the period rests, so the video holds its last frame.
-function seekToPhase(entry: PooledMoodVideo, audioTime: number, epoch: number | null): void {
-  if (epoch === null) {
-    seekToLoopStart(entry);
-    playVideo(entry);
-    return;
-  }
+// Where the take's audio is at audioTime: the same epoch phase in its loop
+// period, as a video position, and whether that falls in the period's rest.
+function phasePositionAt(
+  entry: PooledMoodVideo,
+  audioTime: number,
+  epoch: number,
+): { position: number; inRest: boolean } {
   const periodIndex = periodIndexAt(entry, audioTime, epoch);
   const phase = Math.max(0, takeTimeAt(entry, audioTime, epoch) - periodIndex * entry.loopPeriod);
   updateEffectiveLoopEnd(entry);
   const position = entry.loopStart + phase;
-  if (phase > LOOP_EPSILON_SECONDS && position >= entry.effectiveLoopEnd) {
+  return {
+    position,
+    inRest: phase > LOOP_EPSILON_SECONDS && position >= entry.effectiveLoopEnd,
+  };
+}
+
+// Seeks to where the take's audio is at audioTime. A multi-cycle take can
+// join mid-period; past its content the period rests, so the video holds its
+// last frame. With play false the video is held on that frame (a pre-roll).
+function seekToPhase(
+  entry: PooledMoodVideo,
+  audioTime: number,
+  epoch: number | null,
+  play = true,
+): void {
+  if (epoch === null) {
+    seekToLoopStart(entry);
+    if (play) playVideo(entry);
+    else pauseVideo(entry);
+    return;
+  }
+  const { position, inRest } = phasePositionAt(entry, audioTime, epoch);
+  if (inRest) {
     holdAtContentEnd(entry);
     return;
   }
@@ -178,7 +204,26 @@ function seekToPhase(entry: PooledMoodVideo, audioTime: number, epoch: number | 
   } catch {
     // currentTime can throw before metadata loads; later boundary seeks retry.
   }
-  playVideo(entry);
+  if (play) playVideo(entry);
+  else pauseVideo(entry);
+}
+
+// A prepared video's cut: it plays on from the frame it was held on, which
+// is where its audio starts (up to a frame late); if that pre-roll never
+// landed it seeks there first.
+function startPreparedJoin(entry: PooledMoodVideo, audioTime: number, epoch: number): void {
+  entry.preparedFor = null;
+  entry.lastPeriodIndex = periodIndexAt(entry, audioTime, epoch);
+  const { position, inRest } = phasePositionAt(entry, audioTime, epoch);
+  if (
+    !inRest &&
+    !entry.holdingRest &&
+    Math.abs(entry.video.currentTime - position) <= JOIN_TOLERANCE_SECONDS
+  ) {
+    playVideo(entry);
+    return;
+  }
+  seekToPhase(entry, audioTime, epoch);
 }
 
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
@@ -227,6 +272,7 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     playing: false,
     restartEpoch: null,
     lastPeriodIndex: null,
+    preparedFor: null,
     onTimeUpdate: () => undefined,
     onLoadedMetadata: () => undefined,
     onEnded: () => undefined,
@@ -360,6 +406,12 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
       entry.restartEpoch = epoch;
       entry.lastPeriodIndex = null;
     }
+    // A prepared join waits, held on its first frame, for its cut.
+    if (entry.preparedFor !== null) {
+      if (audioTime < entry.preparedFor) continue;
+      startPreparedJoin(entry, audioTime, epoch);
+      continue;
+    }
     // Index -1 is a take synced to start later, still in its previous pass.
     const periodIndex = periodIndexAt(entry, audioTime, epoch);
     if (entry.lastPeriodIndex === periodIndex) continue;
@@ -368,20 +420,26 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
   }
 }
 
+// Pre-rolls a video that joins at atAudioTime: a lead ahead it seeks to the
+// frame its audio starts on and holds there, so the cut plays a decoded
+// frame in step with the sound.
 export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
+  entry.preparedFor = atAudioTime;
 
-  const seekAndPlay = () => seekToPhase(entry, atAudioTime, entry.epoch);
+  const preroll = () => {
+    // A later arm re-prepared this video for another boundary.
+    if (entry.preparedFor !== atAudioTime) return;
+    seekToPhase(entry, atAudioTime, entry.epoch, false);
+  };
 
   if (atAudioTime - Tone.now() <= VIDEO_SEEK_LEAD_SECONDS) {
-    seekAndPlay();
+    preroll();
     return;
   }
 
-  Tone.getDraw().schedule(() => {
-    seekAndPlay();
-  }, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
+  Tone.getDraw().schedule(preroll, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
 }
 
 export function videoForTake(takeId: string): HTMLVideoElement | null {

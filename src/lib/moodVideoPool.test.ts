@@ -121,7 +121,7 @@ describe("moodVideoPool", () => {
     expect(video?.getAttribute("src")).toBe("blob:test/a");
   });
 
-  it("pre-seeks to loopStart at the shared video lead before the boundary", () => {
+  it("pre-seeks to loopStart at the shared video lead before the boundary and holds there", () => {
     syncPool([poolTake({ loopStart: 0.125, loopEnd: 1.125 })]);
     const video = videoForTake("take-a");
     if (!video) throw new Error("Expected pooled video");
@@ -135,10 +135,11 @@ describe("moodVideoPool", () => {
     toneHarness.draw.advanceTo(12 - VIDEO_SEEK_LEAD_SECONDS);
 
     expect(playback.seek).toHaveBeenCalledWith(0.125);
-    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(playback.play).not.toHaveBeenCalled();
+    expect(playback.pause).toHaveBeenCalled();
   });
 
-  it("seeks and plays immediately when an upcoming boundary is inside the seek lead", () => {
+  it("seeks and holds immediately when an upcoming boundary is inside the seek lead", () => {
     toneHarness.setImmediate(11.95);
     syncPool([poolTake({ loopStart: 0.25, loopEnd: 1.25 })]);
     const video = videoForTake("take-a");
@@ -149,6 +150,40 @@ describe("moodVideoPool", () => {
 
     expect(toneHarness.draw.pendingTimes()).toEqual([]);
     expect(playback.seek).toHaveBeenCalledWith(0.25);
+    expect(playback.play).not.toHaveBeenCalled();
+  });
+
+  it("plays a prepared video from its held frame at the cut, in step with its audio", () => {
+    // A 2 s take started 250 ms earlier, joining at 12 with epoch 10: its
+    // audio starts 0.25 s into the take.
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10, syncOffsetMs: -250 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+
+    prepareUpcoming("take-a", 12);
+    toneHarness.draw.advanceTo(12 - VIDEO_SEEK_LEAD_SECONDS);
+    expect(playback.seek).toHaveBeenLastCalledWith(0.25);
+
+    restartVideosAtPeriodBoundary(11.95, 10);
+    expect(playback.play).not.toHaveBeenCalled();
+
+    playback.seek.mockClear();
+    restartVideosAtPeriodBoundary(12.01, 10);
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(playback.seek).not.toHaveBeenCalled();
+  });
+
+  it("seeks a prepared video at the cut when its pre-roll never landed", () => {
+    syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10 })]);
+    const video = videoForTake("take-a");
+    if (!video) throw new Error("Expected pooled video");
+    const playback = spyVideoPlayback(video);
+    prepareUpcoming("take-a", 12);
+
+    restartVideosAtPeriodBoundary(12.5, 10);
+
+    expect(playback.seek).toHaveBeenLastCalledWith(0.5);
     expect(playback.play).toHaveBeenCalledTimes(1);
   });
 
@@ -164,7 +199,7 @@ describe("moodVideoPool", () => {
     toneHarness.draw.advanceTo(4 - VIDEO_SEEK_LEAD_SECONDS);
 
     expect(playback.seek).toHaveBeenLastCalledWith(4.125);
-    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(playback.play).not.toHaveBeenCalled();
   });
 
   it("starts a take first seen mid-period at its phase, not its loop start", () => {
