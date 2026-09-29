@@ -46,6 +46,29 @@ function geminiDevProxy(env: Record<string, string>): Plugin {
   };
 }
 
+export function moodSpikeProbeDevServer(): Plugin {
+  return {
+    name: "mood-spike-probe-dev-server",
+    configureServer(server) {
+      server.middlewares.use("/spikes/mood-probe.html", (req, res, next) => {
+        if (req.method === undefined) return next();
+        if (req.method !== "GET" && req.method !== "HEAD") return next();
+        if (req.url && req.url !== "/" && req.url !== "") return next();
+
+        const probePath = resolvePath(process.cwd(), "spikes", "mood-probe.html");
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/html; charset=utf-8");
+        res.setHeader("cache-control", "no-store");
+        if (req.method === "HEAD") {
+          res.end();
+          return;
+        }
+        res.end(readFileSync(probePath));
+      });
+    },
+  };
+}
+
 async function nodeRequestToWebRequest(req: IncomingMessage): Promise<Request> {
   const host = req.headers.host ?? "localhost";
   const url = `http://${host}${req.url ?? "/"}`;
@@ -138,7 +161,7 @@ export default defineConfig(({ mode }) => {
   // dev middleware without being exposed to the client bundle.
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), geminiDevProxy(env), swBuildHash()],
+    plugins: [react(), geminiDevProxy(env), moodSpikeProbeDevServer(), swBuildHash()],
     // GEMINI_API_KEY is intentionally NOT in envPrefix: the key only ever
     // lives in process.env on the dev/proxy server, not in import.meta.env.
     test: {
