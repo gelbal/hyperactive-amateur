@@ -1,4 +1,4 @@
-// ABOUTME: Canvas renderer for Mood's stage-native Wall lens.
+// ABOUTME: Canvas renderer for Mood's stage-native Wall and Splits lenses.
 // ABOUTME: Promotes boundary commits, lays out mics, and paints take posters into export pixels.
 import { useAppStore } from "../store/useAppStore";
 import type {

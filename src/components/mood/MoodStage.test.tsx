@@ -1,6 +1,6 @@
 // ABOUTME: MoodStage tests — pins Mood render/display canvas contracts.
 // ABOUTME: Verifies active export-canvas registration and audio-clock paint loop wiring.
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toneMocks = vi.hoisted(() => ({
@@ -23,10 +23,42 @@ import { getDisplayBackingSize } from "../../lib/canvasDraw";
 import { STAGE_DESCRIPTORS, createEmptyMoodPiece } from "../../lib/moodStages";
 import { getActiveCanvas, setActiveCanvas } from "../../lib/videoEngine";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodPiece, MoodStageId } from "../../types";
+import type { MoodPiece, MoodStageId, MoodTake } from "../../types";
 
 function makePiece(stage: MoodStageId): MoodPiece {
   return createEmptyMoodPiece(stage, "pocket");
+}
+
+function makeTake(id = "take-live"): MoodTake {
+  return {
+    id,
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
+    audioBlob: null,
+    posterBlob: null,
+    url: `blob:test/${id}`,
+    audioBuffer: { duration: 1.5, sampleRate: 48000 } as AudioBuffer,
+    audioStatus: "ok",
+    posterUrl: null,
+    trimStartMs: 0,
+    trimEndMs: 1500,
+    durationSeconds: 1.5,
+    cycleMultiple: 1,
+    syncOffsetMs: 0,
+    part: null,
+    partSource: null,
+    recordedAt: 1,
+  };
+}
+
+function makeSplitsPieceWithTake(takeId = "take-live"): MoodPiece {
+  const piece = makePiece("corners");
+  return {
+    ...piece,
+    lens: "splits",
+    mics: piece.mics.map((mic, index) =>
+      index === 0 ? { ...mic, takes: [makeTake(takeId)] } : mic,
+    ),
+  };
 }
 
 describe("MoodStage", () => {
@@ -230,5 +262,85 @@ describe("MoodStage", () => {
     render(<MoodStage piece={piece} />);
 
     expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("1");
+  });
+
+  it("renders the Splits zero-live state as a cycle-driven DOM boundary pulse", () => {
+    const piece = makeSplitsPieceWithTake();
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toHaveAttribute(
+      "data-cycle",
+      "0",
+    );
+
+    act(() => {
+      useAppStore.getState().actions.setMoodCycleCount(4);
+    });
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toHaveAttribute(
+      "data-cycle",
+      "4",
+    );
+  });
+
+  it("hides the Splits zero-live overlay when a valid live selection exists", () => {
+    const piece = makeSplitsPieceWithTake();
+    useAppStore.setState((state) => ({
+      mood: {
+        ...state.mood,
+        performance: {
+          ...state.mood.performance,
+          selections: {
+            ...state.mood.performance.selections,
+            "mic-0": "take-live",
+          },
+        },
+      },
+    }));
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.queryByTestId("mood-splits-zero-live")).not.toBeInTheDocument();
+  });
+
+  it.each(["preparing", "countdown", "recording"] as const)(
+    "hides the Splits zero-live overlay while capture is %s",
+    (recordingState) => {
+      useAppStore.getState().actions.setRecordingState(recordingState, 0);
+
+      render(<MoodStage piece={makeSplitsPieceWithTake()} />);
+
+      expect(screen.queryByTestId("mood-splits-zero-live")).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows the Splits zero-live overlay when the only selection is a ghost take id", () => {
+    const piece = makeSplitsPieceWithTake();
+    useAppStore.setState((state) => ({
+      mood: {
+        ...state.mood,
+        performance: {
+          ...state.mood.performance,
+          selections: {
+            ...state.mood.performance.selections,
+            "mic-0": "ghost-take",
+          },
+        },
+      },
+    }));
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toBeInTheDocument();
+  });
+
+  it("shows only the invitation for a fresh Splits piece with no takes", () => {
+    const piece: MoodPiece = { ...makePiece("corners"), lens: "splits" };
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByRole("button", { name: "record the One" })).toBeInTheDocument();
+    expect(screen.queryByTestId("mood-splits-zero-live")).not.toBeInTheDocument();
   });
 });

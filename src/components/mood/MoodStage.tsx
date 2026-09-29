@@ -9,7 +9,7 @@ import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
 import { layoutFor, type TileRect } from "../../lib/moodTilers";
 import { setActiveCanvas } from "../../lib/videoEngine";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodPiece, MoodStageId, RecordingState } from "../../types";
+import type { MoodPiece, MoodSelectionEntry, MoodStageId, RecordingState } from "../../types";
 
 const STAGE_LABELS: Record<MoodStageId, string> = {
   corners: "Corners",
@@ -46,6 +46,16 @@ function hotTileRect(piece: MoodPiece, hotMicId: string | null): TileRect | null
 
 function pieceHasNoTakes(piece: MoodPiece): boolean {
   return piece.mics.every((mic) => mic.takes.length === 0);
+}
+
+function hasLiveSelection(
+  piece: MoodPiece,
+  selections: Record<string, MoodSelectionEntry>,
+): boolean {
+  return piece.mics.some((mic) => {
+    const entry = selections[mic.id];
+    return entry !== undefined && entry !== "off" && mic.takes.some((take) => take.id === entry);
+  });
 }
 
 function MoodOneInvitation({ piece }: MoodStageProps) {
@@ -145,6 +155,34 @@ function MoodCaptureOverlay({ piece }: MoodStageProps) {
         </div>
       )}
       <style>{`@keyframes scale-down{from{transform:scale(1.4);opacity:0.4}to{transform:scale(1);opacity:1}}`}</style>
+    </div>
+  );
+}
+
+function MoodSplitsZeroLiveOverlay({ piece }: MoodStageProps) {
+  const performance = useAppStore((s) => s.mood.performance);
+  const recordingState = useAppStore((s) => s.recording.state);
+  const show =
+    piece.lens === "splits" &&
+    !pieceHasNoTakes(piece) &&
+    !isCaptureOverlayState(recordingState) &&
+    !hasLiveSelection(piece, performance.selections);
+
+  if (!show) return null;
+
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="mood-splits-zero-live"
+      data-cycle={performance.cycleCount}
+      className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/85 pointer-events-none"
+    >
+      <span
+        key={performance.cycleCount}
+        className="block h-20 w-20 rounded-full border border-orange-500/55"
+        style={{ animation: "mood-boundary-ring 520ms ease-out forwards" }}
+      />
+      <style>{`@keyframes mood-boundary-ring{from{transform:scale(.82);opacity:.7}to{transform:scale(1.18);opacity:.18}}`}</style>
     </div>
   );
 }
@@ -257,6 +295,7 @@ export function MoodStage({ piece }: MoodStageProps) {
         aria-label="Mood stage display"
         className="ha-mood-display-canvas block h-full w-full bg-zinc-950"
       />
+      <MoodSplitsZeroLiveOverlay piece={piece} />
       <MoodOneInvitation piece={piece} />
       <MoodCaptureOverlay piece={piece} />
       <span className="sr-only">{stageLabel} stage</span>
