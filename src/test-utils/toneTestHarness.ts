@@ -92,12 +92,18 @@ export function createToneHarness() {
   });
 
   const start = vi.fn(async () => undefined);
-  // A stopped transport's position does not advance, so only a running one
-  // reads a lookahead ahead of the audible clock.
+  // A stopped transport's position does not advance. A running one reads on
+  // the lookahead clock: it starts at Tone.now() (reading 0 there) and then
+  // runs a lookahead ahead of the audible clock.
   let transportRunning = false;
-  const secondsLead = () => (transportRunning ? lookahead : 0);
+  let transportStartedAt = 0;
+  const secondsLead = () =>
+    transportRunning
+      ? Math.min(lookahead, Math.max(0, immediateTime + lookahead - transportStartedAt))
+      : 0;
   const transportStart = vi.fn(() => {
     transportRunning = true;
+    transportStartedAt = immediateTime + lookahead;
   });
   const transportStop = vi.fn(() => {
     transportRunning = false;

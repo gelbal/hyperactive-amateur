@@ -57,10 +57,12 @@ describe("test clock harness", () => {
     const Tone = harness.createToneModule();
     const transport = Tone.getTransport();
 
-    // Stopped, the position does not advance; running, Tone reads it on the
-    // lookahead clock (0.1 s ahead).
+    // Stopped, the position does not advance. Started at Tone.now(), it reads
+    // 0 there, and once running it reads on the lookahead clock (0.1 s ahead).
     expect(transport.seconds).toBe(0);
     transport.start();
+    expect(transport.seconds).toBe(0);
+    harness.setImmediate(0.5);
     expect(transport.seconds).toBeCloseTo(0.1);
 
     transport.seconds = 12.5;
@@ -73,8 +75,8 @@ describe("test clock harness", () => {
     const transport = Tone.getTransport();
     const callback = vi.fn();
 
-    harness.setImmediate(16.6);
     transport.start();
+    harness.setImmediate(16.6);
     // Running, position 100 is read at the lookahead clock (16.7): 100.5 is 17.2.
     transport.seconds = 100;
     const eventId = transport.scheduleOnce(callback, 100.5);

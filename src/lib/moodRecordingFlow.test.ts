@@ -1523,10 +1523,11 @@ describe("moodRecordingFlow", () => {
     seedMoodCycle(4);
     useAppStore.getState().actions.setMoodPerforming(true, 10);
     toneHarness.setLookahead(0.1);
+    // The performance started its transport at its epoch.
+    toneHarness.setImmediate(9.9);
+    toneHarness.transport.start();
     audioMocks.context.currentTime = 17.75;
     toneHarness.setImmediate(17.75);
-    // The performance owns a running transport.
-    toneHarness.transport.start();
 
     const promise = recordMoodTake("mic-1");
     await flushMicrotasks();
