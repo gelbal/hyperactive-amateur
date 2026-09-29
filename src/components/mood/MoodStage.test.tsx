@@ -472,6 +472,20 @@ describe("MoodStage", () => {
     expect(strip.querySelectorAll(".bg-orange-500")).toHaveLength(2);
   });
 
+  it("shows a three-tick overdub count-in as digits from the tap, not the long-wait strip", () => {
+    // 3.75 beats out with three ticks: the silent part of the first beat
+    // already reads 3, not "joins at the top of the loop".
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(8);
+    useAppStore.getState().actions.setMoodCountInTicks(3);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.queryByTestId("mood-count-in-beat-strip")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveTextContent("3");
+  });
+
   it("fills the overdub beat strip without wrapping long count-ins", () => {
     const filledOverdubBeatCount = (
       moodStageModule as typeof moodStageModule & {

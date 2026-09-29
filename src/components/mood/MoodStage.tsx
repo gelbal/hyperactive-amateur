@@ -158,7 +158,7 @@ function MoodCaptureOverlay({ piece }: MoodStageProps) {
     Math.max(1, countInTicks ?? Number.POSITIVE_INFINITY),
   );
   const isLongOverdubCountIn =
-    recordingState === "countdown" && piece.cycleSeconds !== null && beatsToPunchIn > 3;
+    recordingState === "countdown" && piece.cycleSeconds !== null && beatsRemaining > 3;
   const filledBeatCount = filledOverdubBeatCount(beatsToPunchIn);
   const isOneRecording = recordingState === "recording" && piece.cycleSeconds === null;
   const isFinishing =

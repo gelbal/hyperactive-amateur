@@ -310,6 +310,19 @@ describe("autoSave", () => {
     expect(saveMoodSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("a scoped saveNow of a paused scope leaves another scope's pending save on its timer", async () => {
+    const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
+    startAutoSave();
+    // Mood's saved record could not be opened: its saving stays paused.
+    useAppStore.getState().actions.setMoodHydration("failed");
+    useAppStore.getState().actions.setBpm(131);
+
+    await expect(saveNow("mood")).resolves.toBe(false);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("saveNow(\"mood\") persists only the mood piece immediately", async () => {
     const saveSpy = vi.spyOn(persistence, "saveProject").mockResolvedValue(undefined);
     const saveMoodSpy = vi.spyOn(moodPersistence, "saveMoodPiece").mockResolvedValue(undefined);

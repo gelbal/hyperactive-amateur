@@ -183,12 +183,13 @@ function scheduleSave(): void {
 // the state stays in memory and the next save that runs persists everything.
 export function saveNow(scope: SaveNowScope = "all"): Promise<boolean> {
   if (!unsubscribe) return Promise.resolve(false);
-  clearPendingTimer();
   syncPausedScopes();
   const savableScopes = unpausedScopes(requestedScopes(scope));
+  // Nothing to save here (a paused scope): any pending timer stays running.
   if (savableScopes.length === 0) {
     return (saveInProgress ?? Promise.resolve()).then(() => false);
   }
+  clearPendingTimer();
   const saved = requestSave(savableScopes).then(() => true);
   // The debounce is shared: a scope this call does not save keeps its
   // pending change on a fresh timer.

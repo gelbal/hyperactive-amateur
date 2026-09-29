@@ -193,7 +193,8 @@ describe("moodVideoPool", () => {
 
   it.each([
     ["a stop", null, 12.5],
-    ["a new performance", 20, 20.1],
+    // Play pressed again before the old cut at 12.
+    ["a new performance", 11.7, 11.75],
   ])("cancels a pending join on %s and lets the video play", (_label, epoch, audioTime) => {
     syncPool([poolTake({ loopStart: 0, loopEnd: 2, loopPeriod: 2, epoch: 10 })]);
     const video = videoForTake("take-a");
