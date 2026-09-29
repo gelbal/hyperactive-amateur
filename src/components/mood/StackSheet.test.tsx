@@ -105,9 +105,10 @@ describe("StackSheet", () => {
       "pointer-coarse:max-h-[min(70dvh,32rem)]",
     );
 
-    const takeRow = screen.getByRole("button", { name: /Take 1 1\.5s No part yet/i });
+    const takeRow = screen.getByRole("button", { name: /^Take 1 1\.5s$/i });
     expect(takeRow).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
     expect(screen.getByRole("button", { name: /Take 2 2\.0s Lead/i })).toBeInTheDocument();
+    expect(screen.queryByText("No part yet")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Off/i })).toHaveClass(
       "min-h-11",
       "pointer-coarse:min-h-12",
@@ -119,6 +120,23 @@ describe("StackSheet", () => {
     expect(newTake).not.toBeDisabled();
     expect(newTake).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
     expect(screen.getByText("new take")).toBeInTheDocument();
+  });
+
+  it("lets the row part picker write user-owned parts including none", () => {
+    const mic = setupMood();
+    render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "part harmony for take 1" }));
+
+    let take = useAppStore.getState().mood.piece?.mics[0].takes[0];
+    expect(take?.part).toBe("harmony");
+    expect(take?.partSource).toBe("user");
+
+    fireEvent.click(screen.getByRole("button", { name: "part none for take 1" }));
+
+    take = useAppStore.getState().mood.piece?.mics[0].takes[0];
+    expect(take?.part).toBeNull();
+    expect(take?.partSource).toBe("user");
   });
 
   it("disables the new take row with a stack full reason when the mic stack is full", () => {
@@ -230,7 +248,7 @@ describe("StackSheet", () => {
     const onClose = vi.fn();
     const { rerender } = render(<StackSheet mic={mic} micNumber={1} open onClose={onClose} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Take 1 1\.5s No part yet/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Take 1 1\.5s$/i }));
 
     expect(moodPerformance.armSelection).toHaveBeenCalledWith("mic-0", "take-a");
     expect(onClose).toHaveBeenCalledTimes(1);
