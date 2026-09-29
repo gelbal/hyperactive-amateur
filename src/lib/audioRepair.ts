@@ -2,7 +2,7 @@
 // ABOUTME: Subscribes to audioState transitions; heals audioStatus:"unavailable" clips in place.
 import { useAppStore } from "../store/useAppStore";
 import { getAudioContext } from "./audio";
-import { decodeMoodTakeAudio } from "./moodRehydrate";
+import { decodeMoodTakeAudio, logMoodDecodeFailure } from "./moodRehydrate";
 import { decodeClipAudio, logDecodeFailure } from "./rehydrate";
 import { audioBufferToWav } from "./wavEncoder";
 import { logger, LOG_EVENTS } from "./logger";
@@ -76,8 +76,17 @@ export async function attemptAudioRepair(): Promise<void> {
           useAppStore
             .getState()
             .actions.restoreMoodTakeAudio(micId, take.id, audioBuffer, audioBlob, take);
-        } catch {
-          // Still undecodable — stays in repair state.
+          // As for Chop, only a repair that actually landed is logged.
+          const healedTake = useAppStore
+            .getState()
+            .mood.piece?.mics.find((mic) => mic.id === micId)
+            ?.takes.find((candidate) => candidate.id === take.id);
+          if (healedTake && healedTake !== take && healedTake.audioStatus === "ok") {
+            logger.info(LOG_EVENTS.AUDIO_REPAIRED, { scope: "mood", micId, takeId: take.id });
+          }
+        } catch (err) {
+          // Still undecodable — stays in repair state; the log says why.
+          logMoodDecodeFailure("repair", micId, take.id, take.videoBlob, take.audioBlob ?? null, err);
         }
       }
     }

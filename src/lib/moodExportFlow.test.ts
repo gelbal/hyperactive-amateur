@@ -2,6 +2,11 @@
 // ABOUTME: Covers gating, boundary-aligned prepare, finish semantics, and survival rules.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  return { toneHarness: createToneHarness() };
+});
+
 const exportMocks = vi.hoisted(() => ({
   exportSong: vi.fn(),
 }));
@@ -21,10 +26,6 @@ const videoEngineMocks = vi.hoisted(() => ({
 const moodTransportMocks = vi.hoisted(() => ({
   startMoodPerformanceForExportFlow: vi.fn(),
   stopMoodPerformance: vi.fn(),
-}));
-
-const toneMocks = vi.hoisted(() => ({
-  now: vi.fn(() => 0),
 }));
 
 vi.mock("./export", async (importOriginal) => {
@@ -48,9 +49,15 @@ vi.mock("./moodTransport", () => ({
   stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
-vi.mock("tone", () => ({
-  now: toneMocks.now,
+const autoSaveMocks = vi.hoisted(() => ({
+  flushPending: vi.fn(),
 }));
+
+vi.mock("./autoSave", () => ({
+  flushPending: autoSaveMocks.flushPending,
+}));
+
+vi.mock("tone", () => toneHarness.createToneModule());
 
 import { MOOD_EXPORT_MAX_MS, type ExportOptions } from "./export";
 import {
@@ -59,34 +66,10 @@ import {
 } from "./exportSession";
 import { startMoodExport } from "./moodExportFlow";
 import { useAppStore } from "../store/useAppStore";
-import type { MoodTake } from "../types";
+import { makeMoodTake } from "../test-utils/moodFixtures";
 
 function makeCanvas(): HTMLCanvasElement {
   return {} as HTMLCanvasElement;
-}
-
-function makeMoodTake(overrides: Partial<MoodTake> = {}): MoodTake {
-  const id = overrides.id ?? "the-one";
-  const durationSeconds = overrides.durationSeconds ?? 2;
-  return {
-    id,
-    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBlob: null,
-    posterBlob: null,
-    url: `blob:test/${id}`,
-    audioBuffer: { duration: durationSeconds, sampleRate: 48000 } as AudioBuffer,
-    audioStatus: "ok",
-    posterUrl: null,
-    trimStartMs: 0,
-    trimEndMs: durationSeconds * 1000,
-    durationSeconds,
-    cycleMultiple: 1,
-    syncOffsetMs: 0,
-    part: null,
-    partSource: null,
-    recordedAt: 1,
-    ...overrides,
-  };
 }
 
 function flushMicrotasks(): Promise<void> {
@@ -104,9 +87,11 @@ describe("moodExportFlow", () => {
     exportMocks.exportSong.mockResolvedValue(new Blob([new Uint8Array([1])]));
     videoEngineMocks.getActiveCanvas.mockReturnValue(makeCanvas());
     audioMocks.audioContext.currentTime = 0;
-    toneMocks.now.mockReturnValue(0);
+    toneHarness.setImmediate(0);
+    toneHarness.setLookahead(0);
     moodTransportMocks.startMoodPerformanceForExportFlow.mockReset();
     moodTransportMocks.stopMoodPerformance.mockReset();
+    autoSaveMocks.flushPending.mockReset();
     moodTransportMocks.startMoodPerformanceForExportFlow.mockImplementation(async () => {
       useAppStore.getState().actions.setMoodPerforming(true, 10);
       return true;
@@ -122,7 +107,7 @@ describe("moodExportFlow", () => {
   function createPieceWithCycle(): void {
     const actions = useAppStore.getState().actions;
     actions.createMoodPiece("corners", "pocket");
-    actions.setMoodTake("mic-0", makeMoodTake());
+    actions.setMoodTake("mic-0", makeMoodTake({ id: "the-one" }));
   }
 
   it("refuses without a piece or an established cycle", () => {
@@ -164,7 +149,7 @@ describe("moodExportFlow", () => {
 
     // Performance epoch lands at 10 (mock); boundary math sees now=10.2 →
     // next boundary 12. The audio clock sits before it, so prepare pends.
-    toneMocks.now.mockReturnValue(10.2);
+    toneHarness.setImmediate(10.2);
     audioMocks.audioContext.currentTime = 10.2;
     let prepared = false;
     const prepare = Promise.resolve(options.drive?.prepare?.()).then(() => {
@@ -188,7 +173,7 @@ describe("moodExportFlow", () => {
     // prepare time Tone.now() is STRICTLY past it while the audible clock
     // still trails. The recorder must start at the audible epoch — not a
     // full cycle later.
-    toneMocks.now.mockReturnValue(10.05);
+    toneHarness.setImmediate(10.05);
     audioMocks.audioContext.currentTime = 9.9;
     let prepared = false;
     const prepare = Promise.resolve(options.drive?.prepare?.()).then(() => {
@@ -205,7 +190,7 @@ describe("moodExportFlow", () => {
   it("stops the performance when the export rejects after starting it", async () => {
     createPieceWithCycle();
     audioMocks.audioContext.currentTime = 10.1;
-    toneMocks.now.mockReturnValue(10.1);
+    toneHarness.setImmediate(10.1);
     exportMocks.exportSong.mockImplementation(async (_canvas, _ctx, options) => {
       // Mirror exportSong: prepare runs (starting the performance), then
       // the render aborts mid-flight.
@@ -219,6 +204,39 @@ describe("moodExportFlow", () => {
     await expect(handle.result).rejects.toThrow(/page hidden/);
     expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
   });
+
+  // A pagehide can end the render while document.hidden is still false.
+  it.each([
+    [true, 1],
+    [false, 1],
+  ])(
+    "flushes the mix the stop marked whenever a render it started fails (hidden: %s)",
+    async (hidden, flushes) => {
+      createPieceWithCycle();
+      audioMocks.audioContext.currentTime = 10.1;
+      toneHarness.setImmediate(10.1);
+      Object.defineProperty(document, "hidden", { value: hidden, configurable: true });
+      exportMocks.exportSong.mockImplementation(async (_canvas, _ctx, options) => {
+        audioMocks.audioContext.currentTime = 12;
+        await (options as ExportOptions).drive?.prepare?.();
+        throw new Error("page hidden");
+      });
+
+      try {
+        const handle = startMoodExport({ mimeType: "video/webm" });
+        await expect(handle.result).rejects.toThrow(/page hidden/);
+      } finally {
+        Object.defineProperty(document, "hidden", { value: false, configurable: true });
+      }
+
+      expect(autoSaveMocks.flushPending).toHaveBeenCalledTimes(flushes);
+      if (flushes > 0) {
+        expect(autoSaveMocks.flushPending.mock.invocationCallOrder[0]).toBeGreaterThan(
+          moodTransportMocks.stopMoodPerformance.mock.invocationCallOrder[0],
+        );
+      }
+    },
+  );
 
   it("does not stop a performance it never started when the export is refused", async () => {
     createPieceWithCycle();
@@ -302,7 +320,7 @@ describe("moodExportFlow", () => {
     await flushMicrotasks();
     expect(started).toBe(false);
 
-    toneMocks.now.mockReturnValue(10.05);
+    toneHarness.setImmediate(10.05);
     audioMocks.audioContext.currentTime = 10;
     await Promise.resolve(options.drive?.prepare?.());
     await flushMicrotasks();

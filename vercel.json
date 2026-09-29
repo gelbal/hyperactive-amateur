@@ -5,7 +5,7 @@
       "maxDuration": 60
     },
     "api/gemini-token.ts": {
-      "maxDuration": 60
+      "maxDuration": 10
     }
   },
   "rewrites": [

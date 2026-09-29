@@ -16,6 +16,7 @@ export const BLOB_KEY_PREFIX = "ha:blob:";
 const MOOD_KEY_FOR_GC = "ha:mood-meta";
 const MOOD_BACKUP_KEY_FOR_GC = "ha:mood-meta-backup";
 const MOOD_QUARANTINE_KEY_FOR_GC = "ha:mood-meta-quarantine";
+const MOOD_SCHEMA_VERSION_FOR_GC = 1;
 
 // idb-keyval's default database and store names, kept so existing projects
 // stay readable. The store is created here rather than left to idb-keyval's
@@ -165,12 +166,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isBlob(value: unknown): value is Blob {
-  const maybeBlob = value as unknown as Blob;
+  if (typeof Blob !== "undefined" && value instanceof Blob) return true;
   return (
-    value instanceof Blob ||
-    (isRecord(value) &&
-      typeof maybeBlob.arrayBuffer === "function" &&
-      typeof maybeBlob.type === "string")
+    isRecord(value) &&
+    typeof value.arrayBuffer === "function" &&
+    typeof value.size === "number" &&
+    typeof value.type === "string"
   );
 }
 
@@ -382,72 +383,75 @@ async function buildMetadataRecord(
   };
 }
 
-function collectChopBlobRefs(metadata: unknown, refs: Set<string>): void {
-  if (!isRecord(metadata) || !Array.isArray(metadata.tracks)) return;
-  for (const track of metadata.tracks) {
-    if (!isRecord(track)) continue;
-    for (const field of ["clipBlobRef", "audioBlobRef", "posterBlobRef"] as const) {
-      const ref = track[field];
-      if (typeof ref === "string" && ref.startsWith(BLOB_KEY_PREFIX)) refs.add(ref);
-    }
+// Each collector returns false when a present record cannot be enumerated:
+// a newer schema, or a list, entry or ref that is not the shape this build
+// writes. Such a record could name any blob.
+type BlobRefCollector = (record: unknown, refs: Set<string>) => boolean;
+
+function collectRefFields(entry: unknown, fields: readonly string[], refs: Set<string>): boolean {
+  if (!isRecord(entry)) return false;
+  for (const field of fields) {
+    const ref = entry[field];
+    if (ref === undefined) continue;
+    if (typeof ref !== "string") return false;
+    if (ref.startsWith(BLOB_KEY_PREFIX)) refs.add(ref);
   }
+  return true;
 }
 
-function collectMoodBlobRefs(metadata: unknown, refs: Set<string>): void {
-  if (!isRecord(metadata) || !Array.isArray(metadata.mics)) return;
-  for (const mic of metadata.mics) {
-    if (!isRecord(mic) || !Array.isArray(mic.takes)) continue;
-    for (const take of mic.takes) {
-      if (!isRecord(take)) continue;
-      for (const field of ["videoBlobRef", "audioBlobRef", "posterBlobRef"] as const) {
-        const ref = take[field];
-        if (typeof ref === "string" && ref.startsWith(BLOB_KEY_PREFIX)) refs.add(ref);
-      }
-    }
-  }
+function isNewerSchema(version: unknown, knownVersion: number): boolean {
+  return typeof version === "number" && version > knownVersion;
+}
+
+const CHOP_REF_FIELDS = ["clipBlobRef", "audioBlobRef", "posterBlobRef"] as const;
+const MOOD_REF_FIELDS = ["videoBlobRef", "audioBlobRef", "posterBlobRef"] as const;
+
+function collectChopBlobRefs(metadata: unknown, refs: Set<string>): boolean {
+  if (!isRecord(metadata) || !Array.isArray(metadata.tracks)) return false;
+  if (isNewerSchema(metadata.schemaVersion, PERSISTED_SCHEMA_VERSION)) return false;
+  return metadata.tracks.every((track) => collectRefFields(track, CHOP_REF_FIELDS, refs));
+}
+
+function collectMoodBlobRefs(metadata: unknown, refs: Set<string>): boolean {
+  if (!isRecord(metadata) || !Array.isArray(metadata.mics)) return false;
+  if (isNewerSchema(metadata.moodSchemaVersion, MOOD_SCHEMA_VERSION_FOR_GC)) return false;
+  return metadata.mics.every(
+    (mic) =>
+      isRecord(mic) &&
+      Array.isArray(mic.takes) &&
+      mic.takes.every((take) => collectRefFields(take, MOOD_REF_FIELDS, refs)),
+  );
 }
 
 interface BlobGcOptions {
   excludeKeys?: Iterable<string>;
 }
 
-type BlobRefCollector = (record: unknown, refs: Set<string>) => void;
-
-// Null means GC is held: a quarantined record with no readable track or take
-// list could name any blob.
+// Null means GC is held: a present record that cannot be enumerated could
+// name any blob.
 async function collectStoredBlobRoots(
   referencedBlobKeys: Set<string>,
   options: BlobGcOptions = {},
 ): Promise<Set<string> | null> {
-  // Both live metadata records and both recovery backups are GC roots. A save
-  // from either mode must not be able to collect the other mode's live blobs.
+  // Both live metadata records, both recovery backups and both quarantines
+  // are GC roots. A save from either mode must not be able to collect the
+  // other mode's blobs, including a record that mode has not loaded yet.
   const rootedBlobKeys = new Set(referencedBlobKeys);
   const excluded = new Set(options.excludeKeys ?? []);
   const rootRecords: Array<[string, BlobRefCollector]> = [
     [PROJECT_KEY, collectChopBlobRefs],
     [PROJECT_BACKUP_KEY, collectChopBlobRefs],
+    [PROJECT_QUARANTINE_KEY, collectChopBlobRefs],
     [MOOD_KEY_FOR_GC, collectMoodBlobRefs],
     [MOOD_BACKUP_KEY_FOR_GC, collectMoodBlobRefs],
+    [MOOD_QUARANTINE_KEY_FOR_GC, collectMoodBlobRefs],
   ];
 
   for (const [key, collectRefs] of rootRecords) {
     if (excluded.has(key)) continue;
-    collectRefs(await get(key, store), rootedBlobKeys);
-  }
-
-  // So is a quarantined record: its refs are rooted when it still names its
-  // tracks (or takes) by ref; a record with no readable list holds GC
-  // entirely, because nothing can tell which blobs it meant.
-  const quarantines: Array<[string, string, BlobRefCollector]> = [
-    [PROJECT_QUARANTINE_KEY, "tracks", collectChopBlobRefs],
-    [MOOD_QUARANTINE_KEY_FOR_GC, "mics", collectMoodBlobRefs],
-  ];
-  for (const [key, listField, collectRefs] of quarantines) {
-    if (excluded.has(key)) continue;
-    const quarantined = await get(key, store);
-    if (quarantined === undefined) continue;
-    if (!isRecord(quarantined) || !Array.isArray(quarantined[listField])) return null;
-    collectRefs(quarantined, rootedBlobKeys);
+    const record = await get(key, store);
+    if (record === undefined) continue;
+    if (!collectRefs(record, rootedBlobKeys)) return null;
   }
 
   return rootedBlobKeys;

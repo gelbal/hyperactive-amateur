@@ -22,7 +22,47 @@ describe("DropPad", () => {
     moodPerformanceMocks.armDrop.mockReset();
   });
 
-  it("shows the vibe name and fires the Drop while performing", () => {
+  it("shows the four truthful subtitle states", () => {
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+    const { rerender } = render(<DropPad vibe="clean" />);
+
+    let pad = screen.getByRole("button", { name: "Drop Clean" });
+    expect(pad).toHaveTextContent("DROP");
+    expect(pad).toHaveTextContent("press Play");
+
+    act(() => {
+      useAppStore.getState().actions.setMoodVibe("mixtape");
+    });
+    rerender(<DropPad vibe="mixtape" />);
+    pad = screen.getByRole("button", { name: "Drop Mixtape" });
+    expect(pad).toHaveTextContent("press Play");
+
+    act(() => {
+      useAppStore.getState().actions.setMoodPerforming(true, 4);
+      useAppStore.getState().actions.setMoodDrop(false);
+    });
+    expect(pad).toHaveTextContent("mixtape · D");
+    expect(pad).toHaveAttribute("aria-label", "Drop Mixtape");
+    expect(pad).toHaveAttribute("title", "Mixtape Drop");
+
+    act(() => {
+      useAppStore.getState().actions.setMoodArmedDrop(true);
+    });
+    expect(pad).toHaveTextContent("on the beat");
+  });
+
+  it("tells a performing Clean pad to pick a punchable vibe", () => {
+    useAppStore.getState().actions.createMoodPiece("row", "pocket");
+    useAppStore.getState().actions.setMoodPerforming(true, 4);
+
+    render(<DropPad vibe="clean" />);
+
+    const pad = screen.getByRole("button", { name: "Drop Clean" });
+    expect(pad).toBeDisabled();
+    expect(pad).toHaveTextContent("pick a vibe to punch");
+  });
+
+  it("uses the chunky pad styling and fires the Drop while performing", () => {
     useAppStore.getState().actions.createMoodPiece("row", "pocket");
     useAppStore.getState().actions.setMoodVibe("mixtape");
     useAppStore.getState().actions.setMoodPerforming(true, 4);
@@ -30,7 +70,9 @@ describe("DropPad", () => {
     render(<DropPad vibe="mixtape" />);
 
     const pad = screen.getByRole("button", { name: "Drop Mixtape" });
-    expect(pad).toHaveTextContent("Mixtape");
+    expect(pad).toHaveClass("h-14", "min-w-28", "rounded", "border-2");
+    expect(pad).toHaveClass("border-orange-500", "bg-orange-500", "text-zinc-950");
+    expect(pad).toHaveClass("pointer-coarse:min-h-12");
     expect(pad).not.toBeDisabled();
     expect(pad).toHaveAttribute("aria-pressed", "true");
 
@@ -43,13 +85,16 @@ describe("DropPad", () => {
     useAppStore.getState().actions.createMoodPiece("row", "pocket");
     useAppStore.getState().actions.setMoodVibe("blocks");
     useAppStore.getState().actions.setMoodPerforming(true, 4);
-    useAppStore.getState().actions.setMoodArmedDrop(false);
+    useAppStore.getState().actions.setMoodDrop(false);
+    useAppStore.getState().actions.setMoodArmedDrop(true);
 
     render(<DropPad vibe="blocks" />);
 
     const pad = screen.getByRole("button", { name: "Drop Blocks" });
     expect(pad).toHaveAttribute("data-armed", "true");
     expect(pad).toHaveAttribute("title", "Blocks Drop armed for next beat");
+    expect(pad).toHaveClass("animate-pulse", "ring-2");
+    expect(pad).toHaveClass("border-zinc-700", "bg-zinc-900");
   });
 
   it("disables with plain reasons when clean, stopped, or capturing", () => {
@@ -59,6 +104,7 @@ describe("DropPad", () => {
     let pad = screen.getByRole("button", { name: "Drop Clean" });
     expect(pad).toBeDisabled();
     expect(pad).toHaveAttribute("title", "Clean has no Drop");
+    expect(pad).toHaveAttribute("aria-label", "Drop Clean");
 
     act(() => {
       useAppStore.getState().actions.setMoodVibe("print");

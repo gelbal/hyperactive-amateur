@@ -128,6 +128,11 @@ if (typeof HTMLCanvasElement !== "undefined") {
 
       const stateStack: Array<{
         fillStyle: unknown;
+        strokeStyle: unknown;
+        lineWidth: number;
+        font: string;
+        textAlign: string;
+        textBaseline: string;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
@@ -135,6 +140,9 @@ if (typeof HTMLCanvasElement !== "undefined") {
         method: string;
         args: unknown[];
         fillStyle: unknown;
+        strokeStyle: unknown;
+        lineWidth: number;
+        font: string;
         globalAlpha: number;
         globalCompositeOperation: string;
       }> = [];
@@ -143,6 +151,9 @@ if (typeof HTMLCanvasElement !== "undefined") {
           method,
           args,
           fillStyle: context.fillStyle,
+          strokeStyle: context.strokeStyle,
+          lineWidth: context.lineWidth as number,
+          font: context.font as string,
           globalAlpha: context.globalAlpha as number,
           globalCompositeOperation: context.globalCompositeOperation as string,
         });
@@ -150,6 +161,8 @@ if (typeof HTMLCanvasElement !== "undefined") {
       const context: Record<string, unknown> = {
         canvas: this,
         fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 1,
         globalAlpha: 1,
         globalCompositeOperation: "source-over",
         imageSmoothingEnabled: true,
@@ -166,6 +179,9 @@ if (typeof HTMLCanvasElement !== "undefined") {
         fillText: vi.fn((...args: unknown[]) => {
           recordCall("fillText", args);
         }),
+        strokeText: vi.fn((...args: unknown[]) => {
+          recordCall("strokeText", args);
+        }),
         drawImage: vi.fn((...args: unknown[]) => {
           recordCall("drawImage", args);
         }),
@@ -175,6 +191,13 @@ if (typeof HTMLCanvasElement !== "undefined") {
             __haCanvasPattern: true,
             source: args[0],
             repetition: args[1],
+          };
+        }),
+        createRadialGradient: vi.fn((...args: unknown[]) => {
+          recordCall("createRadialGradient", args);
+          return {
+            __haCanvasGradient: true,
+            addColorStop: vi.fn(),
           };
         }),
         beginPath: vi.fn((...args: unknown[]) => {
@@ -198,6 +221,11 @@ if (typeof HTMLCanvasElement !== "undefined") {
         save: vi.fn(() => {
           stateStack.push({
             fillStyle: context.fillStyle,
+            strokeStyle: context.strokeStyle,
+            lineWidth: context.lineWidth as number,
+            font: context.font as string,
+            textAlign: context.textAlign as string,
+            textBaseline: context.textBaseline as string,
             globalAlpha: context.globalAlpha as number,
             globalCompositeOperation: context.globalCompositeOperation as string,
           });
@@ -206,6 +234,11 @@ if (typeof HTMLCanvasElement !== "undefined") {
           const state = stateStack.pop();
           if (!state) return;
           context.fillStyle = state.fillStyle;
+          context.strokeStyle = state.strokeStyle;
+          context.lineWidth = state.lineWidth;
+          context.font = state.font;
+          context.textAlign = state.textAlign;
+          context.textBaseline = state.textBaseline;
           context.globalAlpha = state.globalAlpha;
           context.globalCompositeOperation = state.globalCompositeOperation;
         }),

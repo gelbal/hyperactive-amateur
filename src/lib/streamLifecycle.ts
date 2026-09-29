@@ -15,6 +15,7 @@ import {
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
 import { flushPending } from "./autoSave";
+import { interruptActivePerformance } from "./performanceInterrupt";
 import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import {
   interruptActiveRecording,
@@ -272,6 +273,10 @@ export function installVisibilityListener(): () => void {
       } catch {
         // Transport may not be initialized yet; safe to ignore.
       }
+      // A Mood performance's loop players outlive the transport stop; an
+      // aborted export stops the run it owned itself. The stop marks the mix
+      // it committed for saving, so flush again before the page goes.
+      if (interruptActivePerformance()) flushPending();
     }
     // Hidden/pagehide is a suspend decision even when no stream is held: a
     // reconnect-tap acquire still pending must not re-light camera/mic by

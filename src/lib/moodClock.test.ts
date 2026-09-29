@@ -106,6 +106,47 @@ describe("BoundaryQueue", () => {
     expect(queue.dueAt(999)).toEqual([]);
   });
 
+  it("lists locked selections without draining them, including held ones", () => {
+    const queue = createBoundaryQueue();
+
+    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4, 3.5);
+    queue.armSelection({ micId: "mic-b", entry: "take-2" }, 8, 3.5);
+    queue.armLens("splits", 4, 3.5);
+    // A re-arm after the lookahead clock passed 4 holds the take-1 commit.
+    queue.armSelection({ micId: "mic-a", entry: "off" }, 8, 4.02);
+
+    expect(queue.lockedSelectionsAt(3.9)).toEqual([]);
+    expect(queue.lockedSelectionsAt(4.02)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
+    ]);
+    expect(queue.lockedSelectionsAt(8.01)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
+      { type: "selection", micId: "mic-a", entry: "off", boundaryTime: 8 },
+      { type: "selection", micId: "mic-b", entry: "take-2", boundaryTime: 8 },
+    ]);
+    expect(queue.dueAt(4)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
+      { type: "lens", lens: "splits", boundaryTime: 4 },
+    ]);
+    expect(queue.lockedSelectionsAt(8.01)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "off", boundaryTime: 8 },
+      { type: "selection", micId: "mic-b", entry: "take-2", boundaryTime: 8 },
+    ]);
+  });
+
+  it("locks a boundary only once the arm clock is past the window that still lands on it", () => {
+    const queue = createBoundaryQueue();
+
+    // An arm made exactly at the boundary on the arm clock is assigned that
+    // boundary (nextCycleBoundary), so it is not final yet.
+    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4, 4);
+
+    expect(queue.lockedSelectionsAt(4)).toEqual([]);
+    expect(queue.lockedSelectionsAt(4.001)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
+    ]);
+  });
+
   it("never drains a ripe event before its boundary on the drain clock", () => {
     const queue = createBoundaryQueue();
 

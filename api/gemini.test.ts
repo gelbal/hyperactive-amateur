@@ -332,6 +332,17 @@ describe("handleGeminiRequest", () => {
     expect(String(url)).toContain("/gemini-3.5-flash-lite:generateContent");
   });
 
+  it("rejects unknown top-level body keys instead of silently dropping them", async () => {
+    // A client that puts options under the wrong key (e.g. REST-style
+    // generationConfig) must hear about it, not get an unconfigured 200.
+    const res = await handleGeminiRequest(
+      request({ ...suggestBody(), generationConfig: { temperature: 2 } }),
+    );
+    expect(res.status).toBe(400);
+    expect(await responseJson(res)).toMatchObject({ error: "invalid-body" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects models outside the app allowlist", async () => {
     const res = await handleGeminiRequest(
       request({ ...suggestBody(), model: "gemini-3.1-pro" }),

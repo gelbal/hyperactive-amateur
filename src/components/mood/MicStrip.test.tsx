@@ -125,6 +125,26 @@ describe("MicStrip", () => {
     expect(screen.getByTestId("mic-mic-3-empty")).toHaveClass("border-dashed");
   });
 
+  it("marks a chip whose live take has no decodable audio", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake(
+      "mic-0",
+      makeTake("take-silent", { audioStatus: "unavailable", audioBuffer: null }),
+    );
+    useAppStore.getState().actions.commitMoodSelections([
+      { micId: "mic-0", entry: "take-silent" },
+    ]);
+
+    render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
+
+    expect(
+      screen.getByRole("button", {
+        name: "mic 1 — live: take 1, audio unavailable. Open stack",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("NO AUDIO")).toHaveClass("text-amber-300");
+  });
+
   it("shows countdown beats and cancels from the hot mic chip before capture", async () => {
     vi.useFakeTimers();
     useAppStore.getState().actions.createMoodPiece("corners", "pocket");
@@ -152,6 +172,20 @@ describe("MicStrip", () => {
     expect(recordingCancelMocks.cancelActiveRecordingByUser).toHaveBeenCalledTimes(1);
     expect(moodRecordingMocks.stopMoodTakeEarly).not.toHaveBeenCalled();
 
+  });
+
+  it("shows no chip digit above the count-in's first tick", () => {
+    useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    useAppStore.getState().actions.setMoodTake("mic-0", makeTake("take-live"));
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    // 1.75 beats out, but this count-in's only tick is the accented 1.
+    useAppStore.getState().actions.setCountdownEndsAt(0.875);
+    useAppStore.getState().actions.setMoodCountInTicks(1);
+    useAppStore.getState().actions.setRecordingState("countdown", null);
+
+    render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
+
+    expect(screen.getByTestId("mic-mic-0-countdown")).toHaveTextContent("1");
   });
 
   it("stops the take from the hot mic chip during capture", () => {

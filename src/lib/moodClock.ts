@@ -13,14 +13,14 @@ export { establishCycleFromClick, establishCycleFromTake };
 export const DROP_BEATS_PER_CYCLE = 8;
 const BOUNDARY_EPSILON_SECONDS = 1e-9;
 
-export type MoodCycleMultiple = MoodTake["cycleMultiple"];
+type MoodCycleMultiple = MoodTake["cycleMultiple"];
 
 export interface BoundarySelectionEvent extends MoodSelectionCommit {
   type: "selection";
   boundaryTime: number;
 }
 
-export interface BoundaryLensEvent {
+interface BoundaryLensEvent {
   type: "lens";
   lens: MoodLens;
   boundaryTime: number;
@@ -39,6 +39,8 @@ export interface BoundaryQueue {
   armLens(lens: MoodLens, boundaryTime: number, now: number): void;
   armDrop(active: boolean, boundaryTime: number, now: number): void;
   dueAt(now: number): BoundaryQueueEvent[];
+  lockedSelectionsAt(now: number): BoundarySelectionEvent[];
+  pendingSelections(): BoundarySelectionEvent[];
 }
 
 const BOUNDARY_EVENT_ORDER: Record<BoundaryQueueEvent["type"], number> = {
@@ -136,6 +138,12 @@ export function createBoundaryQueue(): BoundaryQueue {
     if (event && event.boundaryTime <= now) ripe.push(event);
   };
 
+  // Every queued selection, held or pending, in boundary order.
+  const pendingSelections = (): BoundarySelectionEvent[] =>
+    [...ripe, ...selections.values()]
+      .filter((event): event is BoundarySelectionEvent => event.type === "selection")
+      .sort(compareBoundaryEvents);
+
   return {
     armSelection(commit, boundaryTime, now) {
       assertFiniteSeconds("boundaryTime", boundaryTime);
@@ -188,6 +196,17 @@ export function createBoundaryQueue(): BoundaryQueue {
 
       return due.sort(compareBoundaryEvents);
     },
+    // Past its boundary by more than the window nextBoundary still assigns
+    // to it, a selection is final: a re-arm lands on a later boundary and
+    // this one is held.
+    lockedSelectionsAt(now) {
+      assertFiniteSeconds("now", now);
+
+      return pendingSelections().filter(
+        (event) => event.boundaryTime < now - BOUNDARY_EPSILON_SECONDS,
+      );
+    },
+    pendingSelections,
   };
 }
 

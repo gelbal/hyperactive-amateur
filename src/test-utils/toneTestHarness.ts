@@ -15,6 +15,7 @@ type DrawTask = {
 type OnceTask = {
   id: number;
   time: number;
+  absoluteTime: number;
   callback: TransportCallback;
 };
 
@@ -32,6 +33,9 @@ function findByIdOrIndex<T extends { id: number }>(tasks: T[], idOrIndex: number
 export function createToneHarness() {
   let immediateTime = 0;
   let lookahead = 0.1;
+  let transportPosition: number | string = 0;
+  let transportSeconds = 0;
+  let transportSwing = 0;
   let nextId = 1;
   let nextOrder = 1;
   const drawTasks: DrawTask[] = [];
@@ -59,7 +63,8 @@ export function createToneHarness() {
 
   const scheduleOnce = vi.fn((callback: TransportCallback, time: number) => {
     const id = nextId++;
-    onceTasks.push({ id, time, callback });
+    const absoluteTime = audioTimeAtPosition(time);
+    onceTasks.push({ id, time, absoluteTime, callback });
     return id;
   });
 
@@ -86,10 +91,61 @@ export function createToneHarness() {
     );
   });
 
+  const start = vi.fn(async () => undefined);
+  // A stopped transport's position does not advance. A running one reads on
+  // the lookahead clock: it starts at Tone.now() (reading 0 there) and then
+  // runs a lookahead ahead of the audible clock.
+  let transportRunning = false;
+  let transportStartedAt = 0;
+  const secondsLead = () =>
+    transportRunning
+      ? Math.min(lookahead, Math.max(0, immediateTime + lookahead - transportStartedAt))
+      : 0;
+  // One transport timeline (slope 1) that getSecondsAtTime and scheduleOnce
+  // share with `seconds`: transportSeconds is the position at the audible
+  // clock, less the part of the lookahead a just-started transport has not
+  // run yet (it reads 0 at Tone.now() right after start).
+  const startGap = () => (transportRunning ? lookahead - secondsLead() : 0);
+  const positionAt = (time: number) => transportSeconds + (time - immediateTime) - startGap();
+  const audioTimeAtPosition = (position: number) =>
+    immediateTime + (position - transportSeconds) + startGap();
+  const transportStart = vi.fn(() => {
+    transportRunning = true;
+    transportStartedAt = immediateTime + lookahead;
+  });
+  const transportStop = vi.fn(() => {
+    transportRunning = false;
+  });
+
   const transport = {
     clear,
     scheduleOnce,
     scheduleRepeat,
+    start: transportStart,
+    stop: transportStop,
+    get position() {
+      return transportPosition;
+    },
+    set position(value: number | string) {
+      transportPosition = value;
+    },
+    // As in Tone, `seconds` reads a running transport on the lookahead clock
+    // (Tone.now()); transportSeconds is its position at the audible clock.
+    get seconds() {
+      return transportSeconds + secondsLead();
+    },
+    set seconds(value: number) {
+      transportSeconds = value - secondsLead();
+    },
+    // Transport seconds at an audio-clock time, so
+    // scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
+    getSecondsAtTime: positionAt,
+    get swing() {
+      return transportSwing;
+    },
+    set swing(value: number) {
+      transportSwing = value;
+    },
     get onceCallbacks() {
       return onceTasks.map((task) => task.callback);
     },
@@ -102,7 +158,7 @@ export function createToneHarness() {
         throw new Error(`No captured Transport.scheduleOnce task for ${idOrIndex}`);
       }
       onceTasks.splice(onceTasks.indexOf(task), 1);
-      task.callback(fireTime ?? task.time);
+      task.callback(fireTime ?? task.absoluteTime);
     },
     fireRepeat(idOrIndex: number, fireTime: number) {
       const task = findByIdOrIndex(repeatTasks, idOrIndex);
@@ -114,9 +170,15 @@ export function createToneHarness() {
     reset() {
       onceTasks.length = 0;
       repeatTasks.length = 0;
+      transportPosition = 0;
+      transportSwing = 0;
+      transportSeconds = 0;
+      transportRunning = false;
       clear.mockClear();
       scheduleOnce.mockClear();
       scheduleRepeat.mockClear();
+      transportStart.mockClear();
+      transportStop.mockClear();
     },
   };
 
@@ -145,10 +207,12 @@ export function createToneHarness() {
     setLookahead(seconds: number) {
       lookahead = seconds;
     },
+    start,
     draw,
     transport,
     createToneModule() {
       return {
+        start,
         now: () => immediateTime + lookahead,
         immediate: () => immediateTime,
         getDraw: () => ({ schedule: drawSchedule }),
@@ -156,6 +220,27 @@ export function createToneHarness() {
           clear,
           scheduleOnce,
           scheduleRepeat,
+          start: transportStart,
+          stop: transportStop,
+          get position() {
+            return transportPosition;
+          },
+          set position(value: number | string) {
+            transportPosition = value;
+          },
+          get seconds() {
+            return transportSeconds + secondsLead();
+          },
+          set seconds(value: number) {
+            transportSeconds = value - secondsLead();
+          },
+          getSecondsAtTime: positionAt,
+          get swing() {
+            return transportSwing;
+          },
+          set swing(value: number) {
+            transportSwing = value;
+          },
         }),
       };
     },

@@ -254,6 +254,13 @@ function validateConfig(value: unknown): { ok: true; value: Record<string, unkno
 }
 
 function validateProxyRequest(body: ProxyRequestBody): { ok: true; value: ValidatedProxyRequest } | ReturnType<typeof validationError> {
+  // Unknown top-level keys are rejected rather than silently dropped: the
+  // upstream body is rebuilt from validated pieces only, so a client that
+  // put options under the wrong key would otherwise get an unconfigured 200.
+  if (!hasOnlyKeys(body as Record<string, unknown>, new Set(["model", "contents", "config"]))) {
+    return validationError("invalid-body");
+  }
+
   const model = typeof body.model === "string" ? body.model : "";
   if (!GEMINI_MODEL_ALLOWLIST.includes(model as (typeof GEMINI_MODEL_ALLOWLIST)[number])) {
     return validationError("invalid-model");

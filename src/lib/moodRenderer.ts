@@ -1,4 +1,4 @@
-// ABOUTME: Canvas renderer for Mood's stage-native Wall and Splits lenses.
+// ABOUTME: Canvas renderer for Mood's stage-native Wall, Splits, and Solo lenses.
 // ABOUTME: Promotes boundary commits, lays out mics, and paints take posters into export pixels.
 import { useAppStore } from "../store/useAppStore";
 import type {
@@ -17,8 +17,28 @@ import {
   getMoodRecordingPreviewStream,
 } from "./moodCapture";
 import { applyDueCommits } from "./moodCommits";
+import { cycleIndexAt, DROP_BEATS_PER_CYCLE } from "./moodClock";
+import {
+  advanceCreditScheduler,
+  drawMoodCredits,
+  featuredMoodCreditMicId,
+  initMoodCreditResources,
+  prepareMoodCredits,
+  type MoodCreditResources,
+} from "./moodCredits";
+import {
+  brakeVisualLevel,
+  echoVisualLevel,
+  gateVisualActive,
+  harmonizeVisualLevel,
+} from "./moodFx";
 import { STAGE_DESCRIPTORS } from "./moodStages";
-import { layoutFor, type TileRect } from "./moodTilers";
+import {
+  clearMoodPosterCache,
+  getMoodPosterImage,
+  type MoodPosterCacheEntry,
+} from "./moodPosterCache";
+import { layoutFor, type MoodTilerMic, type TileRect } from "./moodTilers";
 import {
   applyVibe,
   getPrintDensity,
@@ -26,6 +46,7 @@ import {
   setPrintDensity,
   type VibeResources,
 } from "./moodVibes";
+import { DROP_FLASH_ACCENTS, DROP_FLASH_WHITEWARD } from "./moodVibePalettes";
 import { LOG_EVENTS, logger } from "./logger";
 import {
   isVideoReadyForDraw,
@@ -36,6 +57,9 @@ import {
 const TILE_BLACK = "#050505";
 const OFF_POSTER_ALPHA = 0.28;
 const CAPTURE_FROZEN_POSTER_ALPHA = 0.12;
+const DROP_FLASH_MAX_ALPHA = 0.35;
+const HARMONY_TWIN_MAX_ALPHA = 0.16;
+const HARMONY_TWIN_OFFSET_PX = 2;
 
 export { deriveMoodMetronomeMicId } from "./moodCapture";
 
@@ -44,23 +68,20 @@ interface MoodRenderer {
   ctx: CanvasRenderingContext2D;
   stage: MoodStageId;
   vibeResources: VibeResources;
+  fxSnapshotCanvas: HTMLCanvasElement;
+  fxSnapshotCtx: CanvasRenderingContext2D | null;
+  creditsResources: MoodCreditResources;
 }
 
-export interface MoodRenderState {
+interface MoodRenderState {
   piece: MoodPiece;
   performance: MoodPerformanceState;
 }
 
-interface PosterCacheEntry {
-  image: HTMLImageElement;
-  ready: boolean;
-  failed: boolean;
-}
-
 let renderer: MoodRenderer | null = null;
-const posterCache = new Map<string, PosterCacheEntry>();
 let capturePreviewVideo: HTMLVideoElement | null = null;
 let capturePreviewStream: MediaStream | null = null;
+let dropImpact: { boundaryTime: number; active: boolean } | null = null;
 
 // Print frame-budget watchdog. Thresholds are fallback defaults pending the
 // S5 spike rows in .claude/mood/spikes.md — 12ms approximates a 30fps
@@ -71,13 +92,6 @@ export const PRINT_WATCHDOG_WINDOW_FRAMES = 60;
 let printFrameTotalMs = 0;
 let printFrameCount = 0;
 let printWatchdogTripped = false;
-
-// drawMoodFrame destructures the mood `performance` state, which shadows
-// the global — the wall-clock reader must be bound out here. This is
-// diagnostic timing only; musical time stays on the audio clock.
-function frameNowMs(): number {
-  return performance.now();
-}
 
 function recordPrintFrameTime(durationMs: number): void {
   printFrameTotalMs += durationMs;
@@ -104,11 +118,145 @@ export function initMoodRenderer(canvas: HTMLCanvasElement, stage: MoodStageId):
     renderer = null;
     return;
   }
-  renderer = { canvas, ctx, stage, vibeResources: initVibeResources(stage) };
+  dropImpact = null;
+  const fxSnapshotCanvas = document.createElement("canvas");
+  fxSnapshotCanvas.width = descriptor.canvasSize.w;
+  fxSnapshotCanvas.height = descriptor.canvasSize.h;
+  renderer = {
+    canvas,
+    ctx,
+    stage,
+    vibeResources: initVibeResources(stage),
+    fxSnapshotCanvas,
+    fxSnapshotCtx: fxSnapshotCanvas.getContext("2d"),
+    creditsResources: initMoodCreditResources(descriptor.canvasSize),
+  };
 }
 
 function commitDueBoundary(audioTime: number): void {
-  applyDueCommits(audioTime);
+  const dropCommit = applyDueCommits(audioTime);
+  if (dropCommit) {
+    dropImpact = {
+      boundaryTime: dropCommit.boundaryTime,
+      active: dropCommit.active,
+    };
+  }
+}
+
+export function moodDropFlashAlpha(
+  audioTime: number,
+  boundaryTime: number,
+  beatSeconds: number,
+): number {
+  if (
+    !Number.isFinite(audioTime) ||
+    !Number.isFinite(boundaryTime) ||
+    !Number.isFinite(beatSeconds) ||
+    beatSeconds <= 0
+  ) {
+    return 0;
+  }
+  const elapsed = audioTime - boundaryTime;
+  if (elapsed < 0 || elapsed >= beatSeconds) return 0;
+  return (1 - elapsed / beatSeconds) * DROP_FLASH_MAX_ALPHA;
+}
+
+function drawDropImpact(
+  ctx: CanvasRenderingContext2D,
+  piece: MoodPiece,
+  performanceState: MoodPerformanceState,
+  captureActive: boolean,
+  audioTime: number,
+): void {
+  if (
+    !dropImpact ||
+    captureActive ||
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    dropImpact.boundaryTime < performanceState.epoch ||
+    piece.cycleSeconds === null
+  ) {
+    return;
+  }
+
+  const alpha = moodDropFlashAlpha(
+    audioTime,
+    dropImpact.boundaryTime,
+    piece.cycleSeconds / DROP_BEATS_PER_CYCLE,
+  );
+  if (alpha <= 0) return;
+
+  const descriptor = STAGE_DESCRIPTORS[piece.stage];
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = dropImpact.active
+    ? DROP_FLASH_ACCENTS[piece.vibe]
+    : DROP_FLASH_WHITEWARD;
+  ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
+  ctx.restore();
+}
+
+function drawLiveFxTwins(
+  active: MoodRenderer,
+  performanceState: MoodPerformanceState,
+  captureActive: boolean,
+  audioTime: number,
+): void {
+  if (captureActive || !performanceState.isPerforming) return;
+  const echoLevel = echoVisualLevel(audioTime);
+  const brakeLevel = brakeVisualLevel(audioTime);
+  const harmonyLevel = harmonizeVisualLevel(audioTime);
+  const gateOffPhase = gateVisualActive(audioTime);
+  const { canvas, ctx, fxSnapshotCanvas, fxSnapshotCtx } = active;
+  const needsSnapshot = echoLevel > 0 || brakeLevel > 0 || harmonyLevel > 0;
+
+  if (needsSnapshot && fxSnapshotCtx) {
+    fxSnapshotCtx.save();
+    fxSnapshotCtx.globalAlpha = 1;
+    fxSnapshotCtx.globalCompositeOperation = "source-over";
+    fxSnapshotCtx.clearRect(0, 0, fxSnapshotCanvas.width, fxSnapshotCanvas.height);
+    fxSnapshotCtx.drawImage(canvas, 0, 0);
+    fxSnapshotCtx.restore();
+  }
+
+  if (harmonyLevel > 0 && fxSnapshotCtx) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = harmonyLevel * HARMONY_TWIN_MAX_ALPHA;
+    ctx.drawImage(fxSnapshotCanvas, -HARMONY_TWIN_OFFSET_PX, 0);
+    ctx.drawImage(fxSnapshotCanvas, HARMONY_TWIN_OFFSET_PX, 0);
+    ctx.restore();
+  }
+
+  if (echoLevel > 0 && fxSnapshotCtx) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = echoLevel;
+    ctx.drawImage(fxSnapshotCanvas, -4, 0);
+    ctx.restore();
+  }
+
+  if (brakeLevel > 0 && fxSnapshotCtx) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = brakeLevel * 0.5;
+    ctx.drawImage(fxSnapshotCanvas, 0, 2);
+    ctx.fillStyle = TILE_BLACK;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+
+  // Gate is last so its muted phases stay visually black even when Echo or
+  // Brake is also held. Credit/impact overlays remain above this layer.
+  if (gateOffPhase) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = TILE_BLACK;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
 }
 
 function postCommitState(stage: MoodStageId, fallback: MoodRenderState): MoodRenderState {
@@ -148,6 +296,8 @@ function previewVideoForStream(stream: MediaStream | null): HTMLVideoElement | n
     capturePreviewStream = stream;
     capturePreviewVideo.srcObject = stream;
     void capturePreviewVideo.play().catch(() => undefined);
+  } else if (capturePreviewVideo.paused) {
+    void capturePreviewVideo.play().catch(() => undefined);
   }
   return capturePreviewVideo;
 }
@@ -162,10 +312,10 @@ interface CaptureRenderState {
 
 function captureRenderState(
   piece: MoodPiece,
-  performance: MoodPerformanceState,
+  performanceState: MoodPerformanceState,
 ): CaptureRenderState {
   const state = useAppStore.getState();
-  const hotMicId = performance.hotMicId;
+  const hotMicId = performanceState.hotMicId;
   const active = hotMicId !== null && isCaptureRecordingState(state.recording.state);
 
   if (!active) {
@@ -186,7 +336,7 @@ function captureRenderState(
   const metronomeTakeId =
     metronomeMicId === null
       ? null
-      : deriveMoodMetronomeTakeId(piece, performance);
+      : deriveMoodMetronomeTakeId(piece, performanceState);
   setCaptureVideoPolicy(true, metronomeTakeId);
 
   return {
@@ -202,30 +352,7 @@ function lastPosterTake(mic: MoodMic): MoodTake | null {
   return mic.takes[mic.takes.length - 1] ?? null;
 }
 
-function getPosterImage(posterUrl: string): PosterCacheEntry {
-  const cached = posterCache.get(posterUrl);
-  if (cached) return cached;
-
-  const image = new Image();
-  const entry: PosterCacheEntry = {
-    image,
-    ready: false,
-    failed: false,
-  };
-  image.onload = () => {
-    entry.ready = true;
-    entry.failed = false;
-  };
-  image.onerror = () => {
-    entry.ready = false;
-    entry.failed = true;
-  };
-  image.src = posterUrl;
-  posterCache.set(posterUrl, entry);
-  return entry;
-}
-
-function canDrawPoster(entry: PosterCacheEntry): boolean {
+function canDrawPoster(entry: MoodPosterCacheEntry): boolean {
   return (
     entry.ready &&
     !entry.failed &&
@@ -247,7 +374,7 @@ function drawPoster(
   alpha: number,
 ): void {
   if (!take?.posterUrl) return;
-  const poster = getPosterImage(take.posterUrl);
+  const poster = getMoodPosterImage(take.posterUrl);
   if (!canDrawPoster(poster)) return;
 
   ctx.save();
@@ -352,62 +479,163 @@ function drawWallTile(
   }
 }
 
+function soloFeaturedMicId(
+  piece: MoodPiece,
+  performanceState: MoodPerformanceState,
+  capture: CaptureRenderState,
+  micStates: MoodTilerMic[],
+  audioTime: number,
+  creditsResources: MoodCreditResources,
+): string | null {
+  if (capture.active) return capture.hotMicId;
+  const creditedMicId = featuredMoodCreditMicId(creditsResources, audioTime);
+  if (creditedMicId) return creditedMicId;
+
+  let liveCount = 0;
+  for (const mic of micStates) {
+    if (mic.live) liveCount += 1;
+  }
+  if (liveCount === 0) return null;
+
+  const liveIndex =
+    performanceState.epoch !== null && piece.cycleSeconds !== null
+      ? cycleIndexAt(performanceState.epoch, piece.cycleSeconds, audioTime) % liveCount
+      : 0;
+  let currentLiveIndex = 0;
+  for (const mic of micStates) {
+    if (!mic.live) continue;
+    if (currentLiveIndex === liveIndex) return mic.micId;
+    currentLiveIndex += 1;
+  }
+  return null;
+}
+
 export function drawMoodFrame(audioTime: number, state: MoodRenderState): void {
   const active = renderer;
   if (!active) return;
 
   commitDueBoundary(audioTime);
   const renderState = postCommitState(active.stage, state);
-  const { piece, performance } = renderState;
+  const { piece, performance: performanceState } = renderState;
   const descriptor = STAGE_DESCRIPTORS[piece.stage];
   const { ctx } = active;
 
-  const capture = captureRenderState(piece, performance);
+  const capture = captureRenderState(piece, performanceState);
   // The take window is vibe-free: the capture presentation's reserved
   // grammar (B&W = reference, hot preview = framing) must stay readable
   // (spec §7), so an active capture suspends the full-canvas pass.
   const vibeActive =
     piece.vibe !== "clean" &&
     !capture.active &&
-    (!performance.isPerforming || performance.dropActive);
+    (!performanceState.isPerforming || performanceState.dropActive);
   const watchPrintBudget =
     vibeActive && piece.vibe === "print" && !printWatchdogTripped && getPrintDensity() === "normal";
-  const frameStartMs = watchPrintBudget ? frameNowMs() : 0;
+  // Diagnostic timing only; musical time stays on the audio clock.
+  const frameStartMs = watchPrintBudget ? performance.now() : 0;
 
   ctx.fillStyle = TILE_BLACK;
   ctx.fillRect(0, 0, descriptor.canvasSize.w, descriptor.canvasSize.h);
   const micStates = piece.mics.map((mic) => ({
     micId: mic.id,
-    live: capture.active || liveTakeFor(mic, performance.selections[mic.id]) !== null,
+    live: capture.active || liveTakeFor(mic, performanceState.selections[mic.id]) !== null,
+    featured: false,
   }));
-  const rects = layoutFor(piece.stage, piece.lens, micStates);
+  if (piece.lens === "solo") {
+    const featuredMicId = soloFeaturedMicId(
+      piece,
+      performanceState,
+      capture,
+      micStates,
+      audioTime,
+      active.creditsResources,
+    );
+    for (const mic of micStates) {
+      mic.featured = mic.micId === featuredMicId;
+    }
+  }
+  let rects = layoutFor(piece.stage, piece.lens, micStates);
+  const recordingState = useAppStore.getState().recording.state;
+  if (piece.lens === "solo" && !capture.active) {
+    // Ambient rotation may schedule a mic that the natural Solo cycle has not
+    // laid out. Advance once before tile paint, then let the scheduled-window
+    // hold promote that mic into the start-boundary frame.
+    advanceCreditScheduler(
+      active.creditsResources,
+      piece,
+      performanceState,
+      rects,
+      audioTime,
+      recordingState,
+    );
+    const scheduledFeaturedMicId = soloFeaturedMicId(
+      piece,
+      performanceState,
+      capture,
+      micStates,
+      audioTime,
+      active.creditsResources,
+    );
+    for (const mic of micStates) {
+      mic.featured = mic.micId === scheduledFeaturedMicId;
+    }
+    rects = layoutFor(piece.stage, piece.lens, micStates);
+  }
   const micById = new Map(piece.mics.map((mic) => [mic.id, mic]));
 
   for (const rect of rects) {
     const mic = micById.get(rect.micId);
     if (!mic) continue;
-    drawWallTile(ctx, mic, performance.selections[mic.id], rect, capture);
+    drawWallTile(ctx, mic, performanceState.selections[mic.id], rect, capture);
   }
 
   if (vibeActive) {
-    applyVibe(ctx, active.canvas, piece.vibe, active.vibeResources);
+    applyVibe(
+      ctx,
+      active.canvas,
+      piece.vibe,
+      active.vibeResources,
+      audioTime,
+      performanceState.epoch ?? 0,
+      piece.cycleSeconds === null ? null : piece.cycleSeconds / DROP_BEATS_PER_CYCLE,
+    );
   }
 
+  prepareMoodCredits(
+    active.canvas,
+    piece,
+    performanceState,
+    rects,
+    audioTime,
+    recordingState,
+    active.creditsResources,
+  );
+  drawLiveFxTwins(active, performanceState, capture.active, audioTime);
+  drawDropImpact(ctx, piece, performanceState, capture.active, audioTime);
+  drawMoodCredits(ctx, audioTime, active.creditsResources);
+
   if (watchPrintBudget) {
-    recordPrintFrameTime(frameNowMs() - frameStartMs);
+    recordPrintFrameTime(performance.now() - frameStartMs);
   }
 }
 
-export function __resetMoodRendererForTesting(): void {
+export function disposeMoodRenderer(): void {
   renderer = null;
-  posterCache.clear();
+  dropImpact = null;
+  clearMoodPosterCache();
   clearCapturePreviewVideo();
   capturePreviewVideo = null;
+  capturePreviewStream = null;
   setCaptureVideoPolicy(false);
+}
+
+export function __resetMoodRendererForTesting(): void {
+  disposeMoodRenderer();
   printFrameTotalMs = 0;
   printFrameCount = 0;
   printWatchdogTripped = false;
 }
+
+export { __getMoodPosterCacheSizeForTesting, evictMoodPosters } from "./moodPosterCache";
 
 export function __getMoodRendererPreviewVideoForTesting(): HTMLVideoElement | null {
   return capturePreviewVideo;

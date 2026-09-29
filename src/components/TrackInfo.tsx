@@ -9,7 +9,7 @@ import { runAudibleAction } from "../lib/audibleActionRunner";
 import { recordIntoTrack, type AutoTagEvent } from "../lib/recordingFlow";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 import { AI_OFFLINE_COPY } from "../lib/aiOffline";
-import type { Clip, Tag } from "../types";
+import { TAGS, type Clip, type Tag } from "../types";
 
 const AUTO_TAG_TOAST_MS = 3000;
 // Re-record / Delete close on their own after this long.
@@ -20,8 +20,6 @@ type AutoTagState =
   | { kind: "applied"; tag: Tag; hatAudioOnly: boolean }
   | { kind: "offline" }
   | { kind: "miss" };
-
-const TAGS: Tag[] = ["kick", "snare", "hat", "vocal", "fx"];
 
 interface TrackInfoProps {
   trackId: number;

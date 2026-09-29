@@ -5,6 +5,7 @@ import { useAppStore } from "../store/useAppStore";
 import { getAudioContext, stopPlayback } from "./audio";
 import { abortActiveExport } from "./exportSession";
 import { LOG_EVENTS, logger } from "./logger";
+import { interruptActivePerformance } from "./performanceInterrupt";
 import { interruptActiveRecording } from "./recordingInterrupt";
 
 const RUNNING_WAIT_TIMEOUT_MS = 500;
@@ -197,7 +198,17 @@ export function initAudioLifecycle(): () => void {
 
     const recordingInterrupted = interruptActiveRecording("interrupted");
     const { playback } = useAppStore.getState();
-    if (!recordingInterrupted && !playback.isPlaying && !playback.isExporting) return;
+    // A running Mood performance stops like Chop playback; an export owns its
+    // run and stops it when the abort lands.
+    const performanceInterrupted = !playback.isExporting && interruptActivePerformance();
+    if (
+      !recordingInterrupted &&
+      !performanceInterrupted &&
+      !playback.isPlaying &&
+      !playback.isExporting
+    ) {
+      return;
+    }
 
     logger.warn(LOG_EVENTS.AUDIO_INTERRUPTED, {
       state: context.state,

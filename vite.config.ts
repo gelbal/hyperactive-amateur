@@ -105,7 +105,7 @@ async function writeWebResponseToNodeResponse(
   nodeRes.end();
 }
 
-const PRECACHE_DECLARATION = 'const PRECACHE_URLS = ["/", "/index.html"]; // %PRECACHE_URLS%';
+export const PRECACHE_DECLARATION = 'const PRECACHE_URLS = ["/", "/index.html"]; // %PRECACHE_URLS%';
 
 function distAssetUrls(outDir: string): string[] {
   const assetsDir = resolvePath(outDir, "assets");
@@ -128,7 +128,7 @@ function distAssetUrls(outDir: string): string[] {
 // embed the content-hashed JS/CSS asset filenames. Any code change → new
 // asset name → new index.html → new SW cache key. Hashing sw.js itself
 // would NOT work because that file is constant ("ha-shell-%BUILD_HASH%").
-function swBuildHash(): Plugin {
+export function swBuildHash(): Plugin {
   return {
     name: "ha-sw-build-hash",
     apply: "build",
@@ -136,13 +136,25 @@ function swBuildHash(): Plugin {
       const outDir = options.dir ?? resolvePath(process.cwd(), "dist");
       const swPath = resolvePath(outDir, "sw.js");
       const indexPath = resolvePath(outDir, "index.html");
-      if (!existsSync(swPath) || !existsSync(indexPath)) return;
+      // A missing file or marker means the deployed SW would keep the
+      // literal "%BUILD_HASH%" cache name and the two-entry precache list —
+      // it still "works", it just never invalidates or precaches. That is
+      // the exact stale-asset bug this plugin exists to prevent, so fail
+      // the build instead of skipping silently.
+      if (!existsSync(swPath)) this.error(`sw.js missing from build output at ${swPath}`);
+      if (!existsSync(indexPath)) this.error(`index.html missing from build output at ${indexPath}`);
       const indexText = readFileSync(indexPath, "utf8");
       const hash = createHash("sha256")
         .update(indexText)
         .digest("hex")
         .slice(0, 8);
       const swText = readFileSync(swPath, "utf8");
+      if (!swText.includes("%BUILD_HASH%")) {
+        this.error("sw.js lost its %BUILD_HASH% marker — cache invalidation would silently break");
+      }
+      if (!swText.includes(PRECACHE_DECLARATION)) {
+        this.error("sw.js lost its precache declaration marker — install precache would silently break");
+      }
       const precacheUrls = ["/", "/index.html", ...distAssetUrls(outDir)];
       const swWithHash = swText.replace(/%BUILD_HASH%/g, hash);
       writeFileSync(
@@ -162,6 +174,21 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
     plugins: [react(), geminiDevProxy(env), moodSpikeProbeDevServer(), swBuildHash()],
+    build: {
+      rolldownOptions: {
+        output: {
+          // Stable vendor chunks: app-code changes stop re-shipping Tone.js
+          // and React bytes, and the SW's install-time copy can reuse them
+          // across deploys.
+          codeSplitting: {
+            groups: [
+              { name: "tone", test: /node_modules[\\/]tone[\\/]/ },
+              { name: "react-vendor", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            ],
+          },
+        },
+      },
+    },
     // GEMINI_API_KEY is intentionally NOT in envPrefix: the key only ever
     // lives in process.env on the dev/proxy server, not in import.meta.env.
     test: {

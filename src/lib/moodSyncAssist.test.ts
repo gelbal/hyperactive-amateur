@@ -113,8 +113,8 @@ describe("syncAssist", () => {
     const result = await syncAssist(makeTake(), makeBuffer(1), 1, client);
 
     expect(result).toEqual({ offsetMs: 250, confidence: 0.91 });
-    expect(MOOD_SYNC_MODEL).toBe("gemini-3.1-flash-lite");
-    expect(captured.model).toBe("gemini-3.1-flash-lite");
+    expect(MOOD_SYNC_MODEL).toBe("gemini-3.5-flash-lite");
+    expect(captured.model).toBe("gemini-3.5-flash-lite");
     expect(Object.keys(captured.config ?? {}).sort()).toEqual([
       "responseMimeType",
       "responseSchema",

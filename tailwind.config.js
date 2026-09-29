@@ -9,6 +9,10 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      screens: {
+        panel: "896px",
+        wide: "1120px",
+      },
       gridTemplateColumns: {
         16: "repeat(16, minmax(0, 1fr))",
       },
@@ -22,6 +26,10 @@ export default {
     plugin(({ addVariant }) => {
       addVariant("pointer-coarse", "@media (pointer: coarse)");
       addVariant("any-pointer-coarse", "@media (any-pointer: coarse)");
+      // Height-gated Mood viewport lock (sm:tall:...). A variant rather than
+      // a raw screen: an object entry in theme.screens switches off the
+      // min-[...]/max-[...] arbitrary variants the header title uses.
+      addVariant("tall", "@media (min-height: 640px)");
     }),
   ],
 };

@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const moodTransportMocks = vi.hoisted(() => ({
   consumeDueCommits: vi.fn(),
+  pendingSelectionCommits: vi.fn(() => []),
 }));
 
 const moodPerformanceMocks = vi.hoisted(() => ({
+  scheduleLockedPlayerSwaps: vi.fn(),
   syncCommittedMoodEngines: vi.fn(),
 }));
 
@@ -16,9 +18,11 @@ const moodVideoPoolMocks = vi.hoisted(() => ({
 
 vi.mock("./moodTransport", () => ({
   consumeDueCommits: moodTransportMocks.consumeDueCommits,
+  pendingSelectionCommits: moodTransportMocks.pendingSelectionCommits,
 }));
 
 vi.mock("./moodPerformance", () => ({
+  scheduleLockedPlayerSwaps: moodPerformanceMocks.scheduleLockedPlayerSwaps,
   syncCommittedMoodEngines: moodPerformanceMocks.syncCommittedMoodEngines,
 }));
 
@@ -56,6 +60,7 @@ describe("moodCommits", () => {
     useAppStore.getState().actions.reset();
     moodTransportMocks.consumeDueCommits.mockReset();
     moodTransportMocks.consumeDueCommits.mockReturnValue([]);
+    moodPerformanceMocks.scheduleLockedPlayerSwaps.mockReset();
     moodPerformanceMocks.syncCommittedMoodEngines.mockReset();
     moodVideoPoolMocks.restartVideosAtPeriodBoundary.mockReset();
 
@@ -81,6 +86,15 @@ describe("moodCommits", () => {
     expect(moodPerformanceMocks.syncCommittedMoodEngines).toHaveBeenCalledTimes(1);
   });
 
+  it("schedules locked audio swaps before draining, so a late frame still swaps on the audio clock", () => {
+    applyDueCommits(4);
+
+    expect(moodPerformanceMocks.scheduleLockedPlayerSwaps).toHaveBeenCalledTimes(1);
+    expect(
+      moodPerformanceMocks.scheduleLockedPlayerSwaps.mock.invocationCallOrder[0],
+    ).toBeLessThan(moodTransportMocks.consumeDueCommits.mock.invocationCallOrder[0]);
+  });
+
   it("applies lens and drop commits without engine churn", () => {
     useAppStore.getState().actions.setMoodArmedLens("splits");
     useAppStore.getState().actions.setMoodArmedDrop(true);
@@ -89,13 +103,14 @@ describe("moodCommits", () => {
       { type: "drop", active: true, boundaryTime: 4 },
     ]);
 
-    applyDueCommits(4);
+    const dropCommit = applyDueCommits(4);
 
     const state = useAppStore.getState();
     expect(state.mood.piece?.lens).toBe("splits");
     expect(state.mood.performance.armedLens).toBeNull();
     expect(state.mood.performance.dropActive).toBe(true);
     expect(state.mood.performance.armedDropActive).toBeNull();
+    expect(dropCommit).toEqual({ type: "drop", active: true, boundaryTime: 4 });
     expect(moodPerformanceMocks.syncCommittedMoodEngines).not.toHaveBeenCalled();
   });
 

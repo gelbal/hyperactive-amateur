@@ -2,27 +2,15 @@
 // ABOUTME: Uses mocked Tone and audio unlocks so Mood scheduling stays deterministic in JSDOM.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type RepeatCallback = (time: number) => void;
-
-const toneMocks = vi.hoisted(() => {
-  const transport = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    clear: vi.fn(),
-    scheduleRepeat: vi.fn<(callback: RepeatCallback, interval: number) => number>(() => 101),
-    position: 0 as number | string,
-  };
-  const draw = {
-    schedule: vi.fn((callback: () => void) => {
-      callback();
-      return 201;
-    }),
-  };
-  return {
-    draw,
-    now: vi.fn(() => 0),
-    transport,
-  };
+const { toneHarness } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../test-utils/toneTestHarness");
+  const toneHarness = createToneHarness();
+  const captureRepeat = toneHarness.transport.scheduleRepeat.getMockImplementation();
+  toneHarness.transport.scheduleRepeat.mockImplementation((callback, interval, startTime) => {
+    captureRepeat?.(callback, interval, startTime);
+    return 101;
+  });
+  return { toneHarness };
 });
 
 const audioLifecycleMocks = vi.hoisted(() => ({
@@ -34,6 +22,11 @@ const moodPlayersMocks = vi.hoisted(() => ({
   syncMoodPlayers: vi.fn(),
 }));
 
+const moodFxMocks = vi.hoisted(() => ({
+  initializeMoodFxForPerformance: vi.fn(),
+  resetMoodDropFilter: vi.fn(),
+}));
+
 const moodVideoPoolMocks = vi.hoisted(() => ({
   liveTakesFromSelections: vi.fn(() => []),
   prepareUpcoming: vi.fn(),
@@ -41,19 +34,23 @@ const moodVideoPoolMocks = vi.hoisted(() => ({
   syncPool: vi.fn(),
 }));
 
-vi.mock("tone", () => ({
-  getDraw: vi.fn(() => toneMocks.draw),
-  getTransport: vi.fn(() => toneMocks.transport),
-  now: toneMocks.now,
-}));
+vi.mock("tone", () => toneHarness.createToneModule());
 
 vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
 }));
 
 vi.mock("./moodPlayers", () => ({
+  livePlayerIsStale: () => false,
+  playerSyncOffsetMs: () => null,
+  scheduleMoodPlayerSwap: vi.fn(),
   stopAllMoodPlayers: moodPlayersMocks.stopAllMoodPlayers,
   syncMoodPlayers: moodPlayersMocks.syncMoodPlayers,
+}));
+
+vi.mock("./moodFx", () => ({
+  initializeMoodFxForPerformance: moodFxMocks.initializeMoodFxForPerformance,
+  resetMoodDropFilter: moodFxMocks.resetMoodDropFilter,
 }));
 
 vi.mock("./moodVideoPool", () => ({
@@ -68,10 +65,12 @@ import {
   armMoodLensCommit,
   armMoodSelectionCommit,
   consumeDueCommits,
+  registerMoodPerformanceInterrupt,
   startMoodPerformance,
   startMoodPerformanceForExportFlow,
   stopMoodPerformance,
 } from "./moodTransport";
+import { interruptActivePerformance } from "./performanceInterrupt";
 import {
   __resetPendingAudibleClaimForTesting,
   canStartAudibleAction,
@@ -82,7 +81,7 @@ import { applyDueCommits } from "./moodCommits";
 import { registerExportSession, __resetExportSessionForTesting } from "./exportSession";
 import { armSelection } from "./moodPerformance";
 import { useAppStore } from "../store/useAppStore";
-import type { MoodTake } from "../types";
+import { makeMoodTake } from "../test-utils/moodFixtures";
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -92,30 +91,6 @@ function deferred<T = void>() {
     reject = rej;
   });
   return { promise, resolve, reject };
-}
-
-function makeMoodTake(overrides: Partial<MoodTake> = {}): MoodTake {
-  const id = overrides.id ?? "take-1";
-  const durationSeconds = overrides.durationSeconds ?? 2;
-  return {
-    id,
-    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBlob: null,
-    posterBlob: null,
-    url: `blob:test/${id}`,
-    audioBuffer: { duration: durationSeconds, sampleRate: 48000 } as AudioBuffer,
-    audioStatus: "ok",
-    posterUrl: null,
-    trimStartMs: 0,
-    trimEndMs: durationSeconds * 1000,
-    durationSeconds,
-    cycleMultiple: 1,
-    syncOffsetMs: 0,
-    part: null,
-    partSource: null,
-    recordedAt: 1,
-    ...overrides,
-  };
 }
 
 function createMoodWithCycle(cycleSeconds = 2) {
@@ -137,14 +112,10 @@ describe("moodTransport", () => {
     __resetMoodTransportForTesting();
     audioLifecycleMocks.ensureAudioRunning.mockReset();
     audioLifecycleMocks.ensureAudioRunning.mockResolvedValue(undefined);
-    toneMocks.now.mockReset();
-    toneMocks.now.mockReturnValue(0);
-    toneMocks.transport.start.mockClear();
-    toneMocks.transport.stop.mockClear();
-    toneMocks.transport.clear.mockClear();
-    toneMocks.transport.scheduleRepeat.mockClear();
-    toneMocks.transport.position = 0;
-    toneMocks.draw.schedule.mockClear();
+    toneHarness.setImmediate(0);
+    toneHarness.setLookahead(0);
+    toneHarness.transport.reset();
+    toneHarness.draw.reset();
     moodVideoPoolMocks.liveTakesFromSelections.mockReset();
     moodVideoPoolMocks.liveTakesFromSelections.mockReturnValue([]);
     moodVideoPoolMocks.prepareUpcoming.mockReset();
@@ -152,6 +123,8 @@ describe("moodTransport", () => {
     moodVideoPoolMocks.syncPool.mockReset();
     moodPlayersMocks.stopAllMoodPlayers.mockReset();
     moodPlayersMocks.syncMoodPlayers.mockReset();
+    moodFxMocks.resetMoodDropFilter.mockReset();
+    moodFxMocks.initializeMoodFxForPerformance.mockReset();
   });
 
   afterEach(() => {
@@ -162,7 +135,7 @@ describe("moodTransport", () => {
 
   it("claims the audible gate before awaiting audio unlock and starts after the recheck", async () => {
     createMoodWithCycle(2.5);
-    toneMocks.now.mockReturnValueOnce(8);
+    toneHarness.setImmediate(8);
     const audioStarted = deferred();
     audioLifecycleMocks.ensureAudioRunning.mockReturnValueOnce(audioStarted.promise);
 
@@ -171,17 +144,18 @@ describe("moodTransport", () => {
     expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalledTimes(1);
     // The pending claim holds: a second audible tap during the unlock drops.
     expect(claimPendingAudible()).toBeNull();
-    expect(toneMocks.transport.scheduleRepeat).not.toHaveBeenCalled();
+    expect(toneHarness.transport.scheduleRepeat).not.toHaveBeenCalled();
 
     audioStarted.resolve();
     await promise;
 
-    expect(toneMocks.transport.scheduleRepeat).toHaveBeenCalledWith(
+    expect(toneHarness.transport.scheduleRepeat).toHaveBeenCalledWith(
       expect.any(Function),
       2.5,
     );
-    expect(toneMocks.transport.position).toBe(0);
-    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+    expect(moodFxMocks.initializeMoodFxForPerformance).toHaveBeenCalledWith(2.5);
+    expect(toneHarness.transport.position).toBe(0);
+    expect(toneHarness.transport.start).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().mood.performance).toMatchObject({
       isPerforming: true,
       epoch: 8,
@@ -201,7 +175,7 @@ describe("moodTransport", () => {
       audioStarted.resolve();
       await promise;
 
-      expect(toneMocks.transport.start).not.toHaveBeenCalled();
+      expect(toneHarness.transport.start).not.toHaveBeenCalled();
       expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
       expect(claimPendingAudible()).toEqual(expect.any(Function));
     } finally {
@@ -225,9 +199,68 @@ describe("moodTransport", () => {
     audioStarted.resolve();
     await promise;
 
-    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneHarness.transport.start).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
     expect(claimPendingAudible()).toEqual(expect.any(Function));
+  });
+
+  it("runs Mood on an unswung transport and hands Chop's swing back on stop", async () => {
+    createMoodWithCycle();
+    useAppStore.getState().actions.setSwing(0.5);
+    toneHarness.transport.swing = 0.5;
+
+    await startMoodPerformance();
+    // Tone delays off-grid events under swing: count-in ticks and the GATE
+    // repeat would land late.
+    expect(toneHarness.transport.swing).toBe(0);
+
+    stopMoodPerformance();
+    expect(toneHarness.transport.swing).toBe(0.5);
+  });
+
+  it("does not start the transport when a stop lands while the start is still settling", async () => {
+    createMoodWithCycle();
+    useAppStore.getState().actions.setSwing(0.5);
+    toneHarness.transport.swing = 0.5;
+    // A hide or an interruption, arriving just after the store says performing
+    // and before the start's last await settles.
+    const unsubscribe = useAppStore.subscribe((state, prev) => {
+      if (!prev.mood.performance.isPerforming && state.mood.performance.isPerforming) {
+        queueMicrotask(() => stopMoodPerformance());
+      }
+    });
+
+    try {
+      await startMoodPerformance();
+    } finally {
+      unsubscribe();
+    }
+
+    // Chop's step loop plays whenever the transport runs unowned.
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    const started = toneHarness.transport.start.mock.invocationCallOrder.at(-1) ?? 0;
+    const stopped = toneHarness.transport.stop.mock.invocationCallOrder.at(-1) ?? 0;
+    expect(started).toBeLessThan(stopped);
+    expect(toneHarness.transport.swing).toBe(0.5);
+  });
+
+  it("lets a hide or an interruption stop a running performance once registered", async () => {
+    createMoodWithCycle();
+    const unregister = registerMoodPerformanceInterrupt();
+
+    expect(interruptActivePerformance()).toBe(false);
+
+    await startMoodPerformance();
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
+
+    expect(interruptActivePerformance()).toBe(true);
+    expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
+    expect(toneHarness.transport.stop).toHaveBeenCalled();
+
+    unregister();
+    await startMoodPerformance();
+    expect(interruptActivePerformance()).toBe(false);
+    stopMoodPerformance();
   });
 
   it("rechecks store state after audio unlock before owning the Transport", async () => {
@@ -241,8 +274,8 @@ describe("moodTransport", () => {
     audioStarted.resolve();
     await promise;
 
-    expect(toneMocks.transport.scheduleRepeat).not.toHaveBeenCalled();
-    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneHarness.transport.scheduleRepeat).not.toHaveBeenCalled();
+    expect(toneHarness.transport.start).not.toHaveBeenCalled();
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
 
     useAppStore.getState().actions.setRecordingState("idle", null);
@@ -273,7 +306,7 @@ describe("moodTransport", () => {
     await startMoodPerformance();
 
     expect(audioLifecycleMocks.ensureAudioRunning).not.toHaveBeenCalled();
-    expect(toneMocks.transport.start).not.toHaveBeenCalled();
+    expect(toneHarness.transport.start).not.toHaveBeenCalled();
   });
 
   it("startMoodPerformanceForExportFlow starts only inside an active export", async () => {
@@ -295,7 +328,7 @@ describe("moodTransport", () => {
     useAppStore.getState().actions.setRecordingState("idle", null);
     expect(await startMoodPerformanceForExportFlow()).toBe(true);
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(true);
-    expect(toneMocks.transport.start).toHaveBeenCalledTimes(1);
+    expect(toneHarness.transport.start).toHaveBeenCalledTimes(1);
 
     unregister();
     useAppStore.getState().actions.setIsExporting(false);
@@ -303,12 +336,13 @@ describe("moodTransport", () => {
 
   it("stages boundary commits for paint-path consumption exactly once", async () => {
     createMoodWithCycle(2);
-    toneMocks.now.mockReturnValueOnce(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     armMoodSelectionCommit({ micId: "mic-0", entry: "take-a" }, 12, 10);
 
-    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    const boundaryCallback = toneHarness.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
+    toneHarness.draw.advanceTo(12);
 
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
     expect(consumeDueCommits(11.99)).toEqual([]);
@@ -316,20 +350,20 @@ describe("moodTransport", () => {
       { type: "selection", micId: "mic-0", entry: "take-a", boundaryTime: 12 },
     ]);
     expect(consumeDueCommits(99)).toEqual([]);
-    expect(toneMocks.draw.schedule).toHaveBeenCalledTimes(1);
+    expect(toneHarness.draw.schedule).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().mood.performance.cycleCount).toBe(1);
   });
 
   it("stages armed selections without syncing or pruning the video pool", async () => {
     createMoodWithCycle(2);
-    toneMocks.now.mockReturnValueOnce(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     moodVideoPoolMocks.liveTakesFromSelections.mockClear();
     moodVideoPoolMocks.syncPool.mockClear();
     moodVideoPoolMocks.prepareUpcoming.mockClear();
     armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
 
-    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    const boundaryCallback = toneHarness.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
 
     expect(consumeDueCommits(12)).toEqual([
@@ -344,7 +378,7 @@ describe("moodTransport", () => {
     createMoodWithCycle(2);
     const actions = useAppStore.getState().actions;
     actions.setMoodTake("mic-1", makeMoodTake({ id: "ghost-arm" }));
-    toneMocks.now.mockReturnValue(0);
+    toneHarness.setImmediate(0);
     await startMoodPerformance();
 
     armSelection("mic-1", "ghost-arm");
@@ -353,7 +387,7 @@ describe("moodTransport", () => {
     actions.deleteMoodTake("mic-1", "ghost-arm");
     expect(useAppStore.getState().mood.performance.armed["mic-1"]).toBe("off");
 
-    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    const boundaryCallback = toneHarness.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(2);
     applyDueCommits(2);
 
@@ -363,12 +397,12 @@ describe("moodTransport", () => {
 
   it("applies due lens commits through the same paint-path drain", async () => {
     createMoodWithCycle(2);
-    toneMocks.now.mockReturnValueOnce(10);
+    toneHarness.setImmediate(10);
     await startMoodPerformance();
     armMoodSelectionCommit({ micId: "mic-0", entry: "the-one" }, 12, 10);
     armMoodLensCommit("splits", 12, 10);
 
-    const boundaryCallback = toneMocks.transport.scheduleRepeat.mock.calls[0]?.[0];
+    const boundaryCallback = toneHarness.transport.scheduleRepeat.mock.calls[0]?.[0];
     boundaryCallback?.(12);
 
     applyDueCommits(11.99);
@@ -392,19 +426,23 @@ describe("moodTransport", () => {
     actions.setMoodHotMic("mic-0");
     actions.setMoodCycleCount(7);
     armMoodSelectionCommit({ micId: "mic-1", entry: "take-b" }, 4, 2);
+    moodFxMocks.resetMoodDropFilter.mockClear();
 
     stopMoodPerformance();
 
-    expect(toneMocks.transport.clear).toHaveBeenCalledWith(101);
-    expect(toneMocks.transport.stop).toHaveBeenCalledTimes(1);
-    expect(toneMocks.transport.position).toBe(0);
+    expect(toneHarness.transport.clear).toHaveBeenCalledWith(101);
+    expect(toneHarness.transport.stop).toHaveBeenCalledTimes(1);
+    expect(toneHarness.transport.position).toBe(0);
+    expect(moodFxMocks.resetMoodDropFilter).toHaveBeenCalledTimes(1);
     expect(consumeDueCommits(99)).toEqual([]);
     expect(useAppStore.getState().mood.performance).toMatchObject({
       isPerforming: false,
       epoch: null,
       selections: { "mic-0": "the-one", "mic-1": "off" },
       dropActive: false,
-      hotMicId: null,
+      // Performance stop cannot own capture presentation cleanup; the active
+      // recording flow clears its hot mic when that flow settles.
+      hotMicId: "mic-0",
       cycleCount: 0,
     });
   });
@@ -416,8 +454,8 @@ describe("moodTransport", () => {
     useAppStore.getState().actions.setAppMode("chop");
 
     expect(useAppStore.getState().appMode).toBe("chop");
-    expect(toneMocks.transport.clear).toHaveBeenCalledWith(101);
-    expect(toneMocks.transport.stop).toHaveBeenCalledTimes(1);
+    expect(toneHarness.transport.clear).toHaveBeenCalledWith(101);
+    expect(toneHarness.transport.stop).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().mood.performance.isPerforming).toBe(false);
   });
 });

@@ -1,12 +1,13 @@
 // ABOUTME: MicStrip — compact Mood mic chips under the stage.
 // ABOUTME: Shows live/armed/off/hot state and opens each mic's take stack sheet.
 import { useEffect, useState } from "react";
-import { Mic2, Square } from "lucide-react";
+import { Square } from "lucide-react";
 import { getAudioContext } from "../../lib/audio";
 import { countInBeatSeconds, stopMoodTakeEarly } from "../../lib/moodRecordingFlow";
 import { cancelActiveRecordingByUser } from "../../lib/useRecordingEscapeCancel";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodMic, MoodPiece, MoodSelectionEntry, MoodTake } from "../../types";
+import { EmptyMicThumb } from "./EmptyMicThumb";
 import { StackSheet } from "./StackSheet";
 
 const COUNTDOWN_TICK_MS = 100;
@@ -46,10 +47,15 @@ function visualLabel(state: MicChipState): string {
   return state.toUpperCase();
 }
 
-function hotCountdownDigit(countdownEndsAt: number | null, beatSeconds: number): number {
+// Never above the count-in's first tick, like the stage's digit.
+function hotCountdownDigit(
+  countdownEndsAt: number | null,
+  beatSeconds: number,
+  countInTicks: number | null,
+): number {
   if (countdownEndsAt === null) return 3;
   const beatsRemaining = Math.ceil((countdownEndsAt - getAudioContext().currentTime) / beatSeconds);
-  return Math.max(1, Math.min(3, beatsRemaining));
+  return Math.max(1, Math.min(3, beatsRemaining, countInTicks ?? Number.POSITIVE_INFINITY));
 }
 
 function ringClass(state: MicChipState): string {
@@ -90,41 +96,40 @@ function MicThumb({
     );
   }
 
-  return (
-    <span
-      data-testid={`mic-${micId}-empty`}
-      aria-hidden="true"
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-950 text-zinc-600"
-    >
-      <Mic2 size={16} />
-    </span>
-  );
+  return <EmptyMicThumb testId={`mic-${micId}-empty`} />;
 }
 
 export function MicStrip({ piece }: MicStripProps) {
   const performance = useAppStore((s) => s.mood.performance);
   const recordingState = useAppStore((s) => s.recording.state);
   const countdownEndsAt = useAppStore((s) => s.recording.countdownEndsAt);
+  const countInTicks = useAppStore((s) => s.mood.countInTicks);
   const [openMicId, setOpenMicId] = useState<string | null>(null);
   const beatSeconds = countInBeatSeconds(piece);
-  const [hotCount, setHotCount] = useState(() => hotCountdownDigit(countdownEndsAt, beatSeconds));
+  const [hotCount, setHotCount] = useState(() =>
+    hotCountdownDigit(countdownEndsAt, beatSeconds, countInTicks),
+  );
 
   useEffect(() => {
     if (recordingState !== "countdown") {
       setHotCount(3);
       return;
     }
-    const update = () => setHotCount(hotCountdownDigit(countdownEndsAt, beatSeconds));
+    const update = () => setHotCount(hotCountdownDigit(countdownEndsAt, beatSeconds, countInTicks));
     update();
     const id = window.setInterval(update, COUNTDOWN_TICK_MS);
     return () => window.clearInterval(id);
-  }, [beatSeconds, countdownEndsAt, recordingState]);
+  }, [beatSeconds, countInTicks, countdownEndsAt, recordingState]);
 
   return (
     <div
       role="group"
       aria-label="Mood mics"
-      className="flex w-full items-start gap-2 overflow-x-auto px-1 pb-1"
+      // overflow-x-auto creates a clip box that swallows the anchored
+      // StackSheet popover on fine pointers (it renders as a fixed bottom
+      // sheet on coarse, which escapes the clip) — so the strip scrolls
+      // only where the popover cannot be clipped by it.
+      className="flex w-full flex-wrap items-start gap-2 px-1 pb-1 pointer-coarse:flex-nowrap pointer-coarse:overflow-x-auto"
     >
       {piece.mics.map((mic, index) => {
         const micNumber = index + 1;
@@ -141,7 +146,10 @@ export function MicStrip({ piece }: MicStripProps) {
               : "off";
         const open = openMicId === mic.id;
         const hotActionLabel = recordingState === "recording" ? "Stop take" : "Cancel take";
-        const spokenState = stateDescription(state, mic, liveEntry, armedEntry);
+        const liveAudioUnavailable = liveTake?.audioStatus === "unavailable";
+        const spokenState = `${stateDescription(state, mic, liveEntry, armedEntry)}${
+          liveAudioUnavailable && !isHot ? ", audio unavailable" : ""
+        }`;
 
         const onChipClick = () => {
           if (isHot) {
@@ -191,6 +199,10 @@ export function MicStrip({ piece }: MicStripProps) {
                       {recordingState === "countdown" ? hotCount : "REC"}
                     </span>
                     <Square size={9} fill="currentColor" aria-hidden="true" />
+                  </span>
+                ) : liveAudioUnavailable ? (
+                  <span className="text-[10px] font-semibold uppercase text-amber-300">
+                    NO AUDIO
                   </span>
                 ) : (
                   <span className="text-[10px] font-semibold uppercase text-zinc-500">

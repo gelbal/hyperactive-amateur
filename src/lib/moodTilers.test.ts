@@ -1,5 +1,5 @@
 // ABOUTME: moodTilers tests — exhaustively pins Mood stage tiling geometry.
-// ABOUTME: Covers Wall and Splits lenses with canvas-space integer rect invariants.
+// ABOUTME: Covers Wall, Splits, and Solo lenses with canvas-space integer rect invariants.
 
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +11,7 @@ import {
   type MoodTilerMic,
   type TileRect,
 } from "./moodTilers";
-import type { MoodLens, MoodStageId } from "../types";
+import { MOOD_LENS_IDS, type MoodStageId } from "../types";
 
 type CanvasSize = { w: number; h: number };
 
@@ -24,8 +24,6 @@ const STAGE_CASES: Array<{
   { stage: "row", canvas: { w: 854, h: 480 }, micCount: 5 },
   { stage: "stack", canvas: { w: 480, h: 854 }, micCount: 5 },
 ];
-
-const LENSES: MoodLens[] = ["wall", "splits"];
 
 function micIds(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `mic-${index}`);
@@ -128,17 +126,128 @@ describe("cornersSplitsLayout", () => {
       { micId: "mic-3", x: 240, y: 240, w: 240, h: 240 },
     ]);
   });
+
+  it("uses four full-height columns when all four mics are live", () => {
+    expect(cornersSplitsLayout({ w: 480, h: 480 }, micIds(4))).toEqual([
+      { micId: "mic-0", x: 0, y: 0, w: 120, h: 480 },
+      { micId: "mic-1", x: 120, y: 0, w: 120, h: 480 },
+      { micId: "mic-2", x: 240, y: 0, w: 120, h: 480 },
+      { micId: "mic-3", x: 360, y: 0, w: 120, h: 480 },
+    ]);
+  });
 });
 
 describe("layoutFor", () => {
+  it("pins anchored Row Splits layouts from two through five live mics", () => {
+    const ids = micIds(5);
+    const expected = [
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 569, h: 480 },
+        { micId: "mic-1", x: 569, y: 0, w: 285, h: 480 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 427, h: 480 },
+        { micId: "mic-1", x: 427, y: 0, w: 427, h: 240 },
+        { micId: "mic-2", x: 427, y: 240, w: 427, h: 240 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 427, h: 240 },
+        { micId: "mic-1", x: 427, y: 0, w: 427, h: 240 },
+        { micId: "mic-2", x: 0, y: 240, w: 427, h: 240 },
+        { micId: "mic-3", x: 427, y: 240, w: 427, h: 240 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 342, h: 480 },
+        { micId: "mic-1", x: 342, y: 0, w: 256, h: 240 },
+        { micId: "mic-2", x: 598, y: 0, w: 256, h: 240 },
+        { micId: "mic-3", x: 342, y: 240, w: 256, h: 240 },
+        { micId: "mic-4", x: 598, y: 240, w: 256, h: 240 },
+      ],
+    ];
+
+    for (let liveCount = 2; liveCount <= 5; liveCount += 1) {
+      const liveIds = new Set(ids.slice(0, liveCount));
+      expect(layoutFor("row", "splits", makeMicStates(ids, liveIds))).toEqual(
+        expected[liveCount - 2],
+      );
+    }
+  });
+
+  it("pins anchored Stack Splits layouts from two through five live mics", () => {
+    const ids = micIds(5);
+    const expected = [
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 480, h: 569 },
+        { micId: "mic-1", x: 0, y: 569, w: 480, h: 285 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 480, h: 427 },
+        { micId: "mic-1", x: 0, y: 427, w: 240, h: 427 },
+        { micId: "mic-2", x: 240, y: 427, w: 240, h: 427 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 240, h: 427 },
+        { micId: "mic-1", x: 0, y: 427, w: 240, h: 427 },
+        { micId: "mic-2", x: 240, y: 0, w: 240, h: 427 },
+        { micId: "mic-3", x: 240, y: 427, w: 240, h: 427 },
+      ],
+      [
+        { micId: "mic-0", x: 0, y: 0, w: 480, h: 342 },
+        { micId: "mic-1", x: 0, y: 342, w: 240, h: 256 },
+        { micId: "mic-2", x: 0, y: 598, w: 240, h: 256 },
+        { micId: "mic-3", x: 240, y: 342, w: 240, h: 256 },
+        { micId: "mic-4", x: 240, y: 598, w: 240, h: 256 },
+      ],
+    ];
+
+    for (let liveCount = 2; liveCount <= 5; liveCount += 1) {
+      const liveIds = new Set(ids.slice(0, liveCount));
+      expect(layoutFor("stack", "splits", makeMicStates(ids, liveIds))).toEqual(
+        expected[liveCount - 2],
+      );
+    }
+  });
+
+  it("keeps anchored and Solo mic ids in live mic order", () => {
+    const ids = micIds(5);
+    const mics = makeMicStates(ids, new Set(["mic-1", "mic-3", "mic-4"]));
+
+    expect(layoutFor("row", "splits", mics).map((rect) => rect.micId)).toEqual([
+      "mic-1",
+      "mic-3",
+      "mic-4",
+    ]);
+    expect(layoutFor("row", "solo", mics)).toEqual([
+      { micId: "mic-1", x: 0, y: 0, w: 854, h: 480 },
+    ]);
+
+    mics[3].featured = true;
+    expect(layoutFor("row", "solo", mics)).toEqual([
+      { micId: "mic-3", x: 0, y: 0, w: 854, h: 480 },
+    ]);
+  });
+
+  it("pins Solo full-bleed geometry for every stage and no-live state", () => {
+    for (const { stage, canvas, micCount } of STAGE_CASES) {
+      const ids = micIds(micCount);
+      const mics = makeMicStates(ids, new Set([ids[1], ids[micCount - 1]]));
+
+      expect(layoutFor(stage, "solo", mics)).toEqual([
+        { micId: ids[1], x: 0, y: 0, w: canvas.w, h: canvas.h },
+      ]);
+      expect(layoutFor(stage, "solo", makeMicStates(ids, new Set()))).toEqual([]);
+    }
+  });
+
   it("covers every stage, lens, and live-set permutation without gaps or overlap", () => {
     for (const { stage, canvas, micCount } of STAGE_CASES) {
       const ids = micIds(micCount);
-      for (const lens of LENSES) {
+      for (const lens of MOOD_LENS_IDS) {
         for (const liveIds of liveSubsets(ids)) {
           const mics = makeMicStates(ids, new Set(liveIds));
           const rects = layoutFor(stage, lens, mics);
-          const expectedIds = lens === "wall" ? ids : liveIds;
+          const expectedIds =
+            lens === "wall" ? ids : lens === "solo" ? liveIds.slice(0, 1) : liveIds;
 
           expect(rects.map((rect) => rect.micId), `${stage} ${lens} ${liveIds.join(",")}`).toEqual(
             expectedIds,

@@ -1,7 +1,7 @@
 // ABOUTME: Mood persistence — schema-1 metadata for layered-loop pieces in IndexedDB.
 // ABOUTME: Mood blobs share the content-addressed ha:blob:* store with Chop.
 import { del, get, set } from "idb-keyval";
-import type { MoodPiece, MoodTake } from "../types";
+import type { MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
 import {
   deleteOrphanedBlobRecords,
   isBlob,
@@ -18,9 +18,9 @@ export const MOOD_BACKUP_KEY = "ha:mood-meta-backup";
 export const MOOD_QUARANTINE_KEY = "ha:mood-meta-quarantine";
 export const moodSchemaVersion = 1;
 
-export type MoodBlobField = "videoBlob" | "audioBlob" | "posterBlob";
+type MoodBlobField = "videoBlob" | "audioBlob" | "posterBlob";
 
-export interface MissingMoodBlobReference {
+interface MissingMoodBlobReference {
   micId: string;
   takeId: string;
   field: MoodBlobField;
@@ -59,6 +59,10 @@ export interface PersistedMoodPiece {
   oneTakeId: MoodPiece["oneTakeId"];
   vibe: MoodPiece["vibe"];
   lens: MoodPiece["lens"];
+  credits?: MoodPiece["credits"];
+  artDirection?: MoodPiece["artDirection"];
+  keyEstimate?: MoodPiece["keyEstimate"];
+  savedSelections?: Record<string, MoodSelectionEntry>;
   mics: PersistedMoodMic[];
   updatedAt: number;
   missingBlobs?: MissingMoodBlobReference[];
@@ -117,6 +121,10 @@ interface PersistedMoodMetaV1 {
   oneTakeId: MoodPiece["oneTakeId"];
   vibe: MoodPiece["vibe"];
   lens: MoodPiece["lens"];
+  credits?: MoodPiece["credits"];
+  artDirection?: MoodPiece["artDirection"];
+  keyEstimate?: MoodPiece["keyEstimate"];
+  savedSelections?: Record<string, MoodSelectionEntry>;
   mics: PersistedMoodMicV1[];
   updatedAt: number;
 }
@@ -194,7 +202,10 @@ async function moodBlobReference(
   return key;
 }
 
-export function snapshotMood(piece: MoodPersistablePiece): PersistedMoodPiece {
+export function snapshotMood(
+  piece: MoodPersistablePiece,
+  savedSelections: Record<string, MoodSelectionEntry> | undefined = piece.savedSelections,
+): PersistedMoodPiece {
   return {
     moodSchemaVersion,
     stage: piece.stage,
@@ -206,6 +217,17 @@ export function snapshotMood(piece: MoodPersistablePiece): PersistedMoodPiece {
     oneTakeId: piece.oneTakeId,
     vibe: piece.vibe,
     lens: piece.lens,
+    ...(piece.credits
+      ? {
+          credits: {
+            ...piece.credits,
+            names: { ...piece.credits.names },
+          },
+        }
+      : {}),
+    ...(piece.artDirection ? { artDirection: { ...piece.artDirection } } : {}),
+    ...(piece.keyEstimate ? { keyEstimate: { ...piece.keyEstimate } } : {}),
+    ...(savedSelections ? { savedSelections: { ...savedSelections } } : {}),
     mics: piece.mics.map((mic) => ({
       id: mic.id,
       takes: mic.takes.map((take) => ({
@@ -300,6 +322,19 @@ async function buildMoodMetadataRecord(
       oneTakeId: piece.oneTakeId,
       vibe: piece.vibe,
       lens: piece.lens,
+      ...(piece.credits
+        ? {
+            credits: {
+              ...piece.credits,
+              names: { ...piece.credits.names },
+            },
+          }
+        : {}),
+      ...(piece.artDirection ? { artDirection: { ...piece.artDirection } } : {}),
+      ...(piece.keyEstimate ? { keyEstimate: { ...piece.keyEstimate } } : {}),
+      ...(piece.savedSelections
+        ? { savedSelections: { ...piece.savedSelections } }
+        : {}),
       mics,
       updatedAt: piece.updatedAt,
     },
@@ -409,14 +444,30 @@ async function resolveMoodMetadataRecord(
     oneTakeId: metadata.oneTakeId,
     vibe: metadata.vibe,
     lens: metadata.lens,
+    ...(metadata.credits
+      ? {
+          credits: {
+            ...metadata.credits,
+            names: { ...metadata.credits.names },
+          },
+        }
+      : {}),
+    ...(metadata.artDirection ? { artDirection: { ...metadata.artDirection } } : {}),
+    ...(metadata.keyEstimate ? { keyEstimate: { ...metadata.keyEstimate } } : {}),
+    ...(metadata.savedSelections
+      ? { savedSelections: { ...metadata.savedSelections } }
+      : {}),
     mics,
     updatedAt: metadata.updatedAt,
     ...(missingBlobs.length > 0 ? { missingBlobs } : {}),
   };
 }
 
-export async function saveMoodPiece(piece: MoodPersistablePiece): Promise<void> {
-  const persisted = snapshotMood(piece);
+export async function saveMoodPiece(
+  piece: MoodPersistablePiece,
+  savedSelections: Record<string, MoodSelectionEntry> | undefined = piece.savedSelections,
+): Promise<void> {
+  const persisted = snapshotMood(piece, savedSelections);
   const { metadata, referencedBlobKeys, blobReferences } = await buildMoodMetadataRecord(
     persisted,
     true,

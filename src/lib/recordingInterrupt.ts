@@ -8,18 +8,18 @@ export interface RecordingInterruptHandler {
 let recordingInterruptHandlers: RecordingInterruptHandler[] = [];
 
 export function registerRecordingInterruptHandler(
-  handler: RecordingInterruptHandler | null,
+  handler: RecordingInterruptHandler,
 ): () => void {
-  if (!handler) {
-    recordingInterruptHandlers = [];
-    return () => undefined;
-  }
   recordingInterruptHandlers = [...recordingInterruptHandlers, handler];
   return () => {
     recordingInterruptHandlers = recordingInterruptHandlers.filter(
       (candidate) => candidate !== handler,
     );
   };
+}
+
+export function __resetRecordingInterruptHandlersForTesting(): void {
+  recordingInterruptHandlers = [];
 }
 
 export function interruptActiveRecording(reason: "user" | "interrupted"): boolean {

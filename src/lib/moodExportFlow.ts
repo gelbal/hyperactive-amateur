@@ -2,20 +2,21 @@
 // ABOUTME: Owns the stop signal, boundary-aligned recorder start, and exportSong's mood drive hooks.
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
-import { waitMs } from "./async";
+import { waitUntilAudioTime } from "./async";
 import { getAudioContext } from "./audio";
+import { flushPending } from "./autoSave";
 import { exportSong, MOOD_EXPORT_MAX_MS, type ExportResult } from "./export";
 import { getActiveExportSession } from "./exportSession";
 import { nextCycleBoundary } from "./moodClock";
 import { startMoodPerformanceForExportFlow, stopMoodPerformance } from "./moodTransport";
 import { getActiveCanvas } from "./videoEngine";
 
-export interface MoodExportOptions {
+interface MoodExportOptions {
   mimeType: string;
   onProgress?: (fraction: number) => void;
 }
 
-export interface MoodExportHandle {
+interface MoodExportHandle {
   result: Promise<ExportResult>;
   // Ends the render (a SUCCESS — the take is done); the performance keeps
   // running. Resolve-only: exportSong's stop signal must never reject.
@@ -24,19 +25,6 @@ export interface MoodExportHandle {
   // roll — the UI must not offer finish before this (an early finish would
   // stop a recorder that captured nothing).
   recordingStarted: Promise<void>;
-}
-
-// No abort signal on purpose: exportSong races prepare against its own
-// abort promise, so a dangling wait after an abort resolves harmlessly.
-async function waitUntilAudioTime(
-  deadlineSeconds: number,
-  audioContext: Pick<BaseAudioContext, "currentTime">,
-): Promise<void> {
-  for (;;) {
-    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
-    if (remainingMs <= 0) return;
-    await waitMs(remainingMs);
-  }
 }
 
 export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
@@ -110,6 +98,8 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
           audioContext.currentTime <= epoch
             ? epoch
             : nextCycleBoundary(epoch, cycleSeconds, Tone.now());
+        // No abort signal on purpose: exportSong races prepare against its own
+        // abort promise, so a dangling wait after an abort resolves harmlessly.
         await waitUntilAudioTime(boundaryTime, audioContext);
         markRecordingStarted();
       },
@@ -123,7 +113,14 @@ export function startMoodExport(options: MoodExportOptions): MoodExportHandle {
     // export started — otherwise the UI shows a live performance over a
     // transport the interruption handlers already stopped. A finished or
     // capped render is a success and keeps performing.
-    if (performanceStartedByExport) stopMoodPerformance();
+    if (performanceStartedByExport) {
+      stopMoodPerformance();
+      // The stop marks the mix for saving. A hide or pagehide that aborted
+      // the render already ran its own flush (a pagehide can come with
+      // document.hidden still false), so flush again while the page can
+      // still write.
+      flushPending();
+    }
     throw err;
   });
   // exportSong registered its session synchronously before its first await,

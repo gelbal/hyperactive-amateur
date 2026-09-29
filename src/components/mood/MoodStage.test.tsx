@@ -1,62 +1,70 @@
 // ABOUTME: MoodStage tests — pins Mood render/display canvas contracts.
 // ABOUTME: Verifies active export-canvas registration and audio-clock paint loop wiring.
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const toneMocks = vi.hoisted(() => ({
-  immediate: vi.fn(() => 4.25),
-}));
+const { toneHarness, toneSpies } = await vi.hoisted(async () => {
+  const { createToneHarness } = await import("../../test-utils/toneTestHarness");
+  const toneHarness = createToneHarness();
+  const toneModule = toneHarness.createToneModule();
+  return {
+    toneHarness,
+    toneSpies: { immediate: vi.fn(() => toneModule.immediate()) },
+  };
+});
 
 const moodRendererMocks = vi.hoisted(() => ({
+  disposeMoodRenderer: vi.fn(),
   drawMoodFrame: vi.fn(),
   initMoodRenderer: vi.fn(),
 }));
 
-vi.mock("tone", () => ({
-  immediate: toneMocks.immediate,
+const moodRecordingFlowMocks = vi.hoisted(() => ({
+  recordMoodTake: vi.fn(),
+  stopMoodTakeEarly: vi.fn(),
 }));
+
+vi.mock("tone", () => {
+  return {
+    ...toneHarness.createToneModule(),
+    immediate: toneSpies.immediate,
+  };
+});
 
 vi.mock("../../lib/moodRenderer", () => moodRendererMocks);
 
+vi.mock("../../lib/moodRecordingFlow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/moodRecordingFlow")>();
+  return {
+    ...actual,
+    recordMoodTake: moodRecordingFlowMocks.recordMoodTake,
+    stopMoodTakeEarly: moodRecordingFlowMocks.stopMoodTakeEarly,
+  };
+});
+
 import { MoodStage } from "./MoodStage";
+import * as moodStageModule from "./MoodStage";
 import { getDisplayBackingSize } from "../../lib/canvasDraw";
-import { STAGE_DESCRIPTORS, createEmptyMoodPiece } from "../../lib/moodStages";
+import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
 import { getActiveCanvas, setActiveCanvas } from "../../lib/videoEngine";
 import { useAppStore } from "../../store/useAppStore";
-import type { MoodPiece, MoodStageId, MoodTake } from "../../types";
-
-function makePiece(stage: MoodStageId): MoodPiece {
-  return createEmptyMoodPiece(stage, "pocket");
-}
-
-function makeTake(id = "take-live"): MoodTake {
-  return {
-    id,
-    videoBlob: new Blob([new Uint8Array([1])], { type: "video/webm" }),
-    audioBlob: null,
-    posterBlob: null,
-    url: `blob:test/${id}`,
-    audioBuffer: { duration: 1.5, sampleRate: 48000 } as AudioBuffer,
-    audioStatus: "ok",
-    posterUrl: null,
-    trimStartMs: 0,
-    trimEndMs: 1500,
-    durationSeconds: 1.5,
-    cycleMultiple: 1,
-    syncOffsetMs: 0,
-    part: null,
-    partSource: null,
-    recordedAt: 1,
-  };
-}
+import type { MoodPiece, MoodStageId } from "../../types";
+import { makeMoodPiece, makeMoodTake } from "../../test-utils/moodFixtures";
 
 function makeSplitsPieceWithTake(takeId = "take-live"): MoodPiece {
-  const piece = makePiece("corners");
+  const piece = makeMoodPiece({ stage: "corners" });
   return {
     ...piece,
     lens: "splits",
     mics: piece.mics.map((mic, index) =>
-      index === 0 ? { ...mic, takes: [makeTake(takeId)] } : mic,
+      index === 0
+        ? {
+            ...mic,
+            takes: [
+              makeMoodTake({ id: takeId, durationSeconds: 1.5, trimEndMs: 1_500 }),
+            ],
+          }
+        : mic,
     ),
   };
 }
@@ -79,10 +87,15 @@ describe("MoodStage", () => {
     cancelAnimationFrameSpy = vi
       .spyOn(window, "cancelAnimationFrame")
       .mockImplementation(() => undefined);
-    toneMocks.immediate.mockClear();
-    toneMocks.immediate.mockReturnValue(4.25);
+    toneHarness.setImmediate(4.25);
+    toneHarness.setLookahead(0);
+    toneSpies.immediate.mockClear();
     moodRendererMocks.drawMoodFrame.mockReset();
+    moodRendererMocks.disposeMoodRenderer.mockReset();
     moodRendererMocks.initMoodRenderer.mockReset();
+    moodRecordingFlowMocks.recordMoodTake.mockReset();
+    moodRecordingFlowMocks.stopMoodTakeEarly.mockReset();
+    moodRecordingFlowMocks.stopMoodTakeEarly.mockReturnValue(true);
     setActiveCanvas(null);
     useAppStore.getState().actions.reset();
   });
@@ -168,7 +181,7 @@ describe("MoodStage", () => {
   it.each(Object.keys(STAGE_DESCRIPTORS) as MoodStageId[])(
     "keeps the %s render canvas backing store on the stage descriptor",
     (stage) => {
-      const { container } = render(<MoodStage piece={makePiece(stage)} />);
+      const { container } = render(<MoodStage piece={makeMoodPiece({ stage })} />);
       const { renderCanvas } = renderCanvases(container);
       const descriptor = STAGE_DESCRIPTORS[stage];
 
@@ -187,15 +200,17 @@ describe("MoodStage", () => {
     setDevicePixelRatio(3);
     installResizeObserver(427, 240);
 
-    const { container } = render(<MoodStage piece={makePiece("row")} />);
+    const { container } = render(<MoodStage piece={makeMoodPiece({ stage: "row" })} />);
     const { displayCanvas } = renderCanvases(container);
 
     expect(displayCanvas.width).toBe(getDisplayBackingSize(427, 3));
     expect(displayCanvas.height).toBe(getDisplayBackingSize(240, 3));
   });
 
-  it("registers the render canvas for export and clears it on unmount", () => {
-    const { container, unmount } = render(<MoodStage piece={makePiece("corners")} />);
+  it("clears the export canvas and disposes renderer resources on unmount", () => {
+    const { container, unmount } = render(
+      <MoodStage piece={makeMoodPiece({ stage: "corners" })} />,
+    );
     const { renderCanvas } = renderCanvases(container);
 
     expect(getActiveCanvas()).toBe(renderCanvas);
@@ -203,10 +218,24 @@ describe("MoodStage", () => {
     unmount();
 
     expect(getActiveCanvas()).toBeNull();
+    expect(moodRendererMocks.disposeMoodRenderer).toHaveBeenCalledTimes(1);
+  });
+
+  it("initializes a fresh renderer after a disposed stage remount", () => {
+    const first = render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+    first.unmount();
+
+    const second = render(<MoodStage piece={makeMoodPiece({ stage: "row" })} />);
+    const { renderCanvas } = renderCanvases(second.container);
+
+    expect(moodRendererMocks.disposeMoodRenderer).toHaveBeenCalledTimes(1);
+    expect(moodRendererMocks.initMoodRenderer).toHaveBeenNthCalledWith(1, expect.anything(), "corners");
+    expect(moodRendererMocks.initMoodRenderer).toHaveBeenNthCalledWith(2, renderCanvas, "row");
+    expect(getActiveCanvas()).toBe(renderCanvas);
   });
 
   it("announces stopped, performing, and recording from one polite stage live region", () => {
-    const { container } = render(<MoodStage piece={makePiece("row")} />);
+    const { container } = render(<MoodStage piece={makeMoodPiece({ stage: "row" })} />);
     const liveRegions = container.querySelectorAll('[aria-live="polite"]');
     expect(liveRegions).toHaveLength(1);
     expect(liveRegions[0]).toHaveClass("sr-only");
@@ -230,7 +259,7 @@ describe("MoodStage", () => {
   });
 
   it("paints from Tone.immediate and mirrors the render canvas every frame", () => {
-    const { container } = render(<MoodStage piece={makePiece("stack")} />);
+    const { container } = render(<MoodStage piece={makeMoodPiece({ stage: "stack" })} />);
     const { renderCanvas, displayCanvas } = renderCanvases(container);
     const displayCtx = displayCanvas.getContext("2d") as unknown as {
       drawImage: ReturnType<typeof vi.fn>;
@@ -239,7 +268,7 @@ describe("MoodStage", () => {
     expect(rafCallback).not.toBeNull();
     rafCallback?.(123);
 
-    expect(toneMocks.immediate).toHaveBeenCalledTimes(1);
+    expect(toneSpies.immediate).toHaveBeenCalledTimes(1);
     expect(moodRendererMocks.drawMoodFrame).toHaveBeenCalledWith(
       4.25,
       expect.objectContaining({
@@ -260,7 +289,7 @@ describe("MoodStage", () => {
   });
 
   it("positions the count-in overlay over the hot mic tile", () => {
-    const piece = makePiece("corners");
+    const piece = makeMoodPiece({ stage: "corners" });
     useAppStore.getState().actions.setRecordingState("countdown", null);
     useAppStore.getState().actions.setCountdownEndsAt(6);
     useAppStore.getState().actions.setMoodHotMic("mic-2");
@@ -270,6 +299,9 @@ describe("MoodStage", () => {
     // 1.75s remaining at a 90bpm count-in (0.667s beats) = 3 beats left.
     const overlay = screen.getByLabelText("Mood count-in for hot mic");
     expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("3");
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveStyle({
+      fontSize: "min(8rem, 58cqh)",
+    });
     expect(overlay).toHaveStyle({
       left: "0%",
       top: "50%",
@@ -281,7 +313,7 @@ describe("MoodStage", () => {
   it("counts down in beats, not seconds, so digits match the audible ticks", () => {
     // Overdub branch: cycle 16 → beat = 2s. 1.75s remaining = the LAST beat,
     // so the digit must read 1 even though nearly 2 wall seconds remain.
-    const piece = { ...makePiece("corners"), cycleSeconds: 16 };
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 16 };
     useAppStore.getState().actions.setRecordingState("countdown", null);
     useAppStore.getState().actions.setCountdownEndsAt(6);
     useAppStore.getState().actions.setMoodHotMic("mic-1");
@@ -289,6 +321,207 @@ describe("MoodStage", () => {
     render(<MoodStage piece={piece} />);
 
     expect(screen.getByTestId("mood-count-in-digit").textContent).toBe("1");
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveClass(
+      "text-orange-500",
+      "mood-count-in-final",
+    );
+  });
+
+  it.each(["countdown", "recording"] as const)(
+    "adds the full-opacity capture border while %s",
+    (recordingState) => {
+      useAppStore.getState().actions.setRecordingState(recordingState, 0);
+
+      render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+
+      expect(screen.getByLabelText("Corners stage")).toHaveClass(
+        "border-4",
+        "border-red-500",
+      );
+    },
+  );
+
+  it("keeps the capture border off while idle", () => {
+    render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+
+    expect(screen.getByLabelText("Corners stage")).not.toHaveClass(
+      "border-4",
+      "border-red-500",
+    );
+  });
+
+  it("keeps the tile scrim for countdown and removes it while recording", () => {
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveClass("bg-black/55");
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("recording", 0);
+    });
+
+    expect(screen.getByTestId("mood-capture-overlay")).not.toHaveClass("bg-black/55");
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveClass("bg-transparent");
+  });
+
+  it("turns the One's recording tile into the sole early-stop button", () => {
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(4);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+
+    const punchOut = screen.getByRole("button", {
+      name: "Stop take — sets the loop",
+    });
+    expect(punchOut).toHaveClass("pointer-events-auto");
+    expect(punchOut).toHaveTextContent("● REC 0.3s");
+    expect(punchOut).toHaveTextContent("tap to stop · 2–8s feels best");
+
+    fireEvent.click(punchOut);
+
+    expect(moodRecordingFlowMocks.stopMoodTakeEarly).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the One punch-out and switches both capture chips to saving at the deadline", () => {
+    toneHarness.setImmediate(8);
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(4);
+    useAppStore.getState().actions.setCaptureEndsAt(8);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    const { unmount } = render(<MoodStage piece={makeMoodPiece({ stage: "corners" })} />);
+
+    const punchOut = screen.getByRole("button", {
+      name: "Stop take — sets the loop",
+    });
+    expect(punchOut).toBeDisabled();
+    expect(punchOut).toHaveTextContent("saving…");
+    expect(punchOut).not.toHaveTextContent("tap to stop");
+
+    unmount();
+    const overdub = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 2 };
+    render(<MoodStage piece={overdub} />);
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveTextContent("saving…");
+    expect(screen.getByTestId("mood-capture-overlay")).not.toHaveTextContent("● REC");
+  });
+
+  it("keeps an overdub recording overlay non-interactive and shows loop progress", () => {
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 2 };
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(4);
+    useAppStore.getState().actions.setCaptureEndsAt(12);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(
+      screen.queryByRole("button", { name: "Stop take — sets the loop" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveClass(
+      "pointer-events-none",
+      "bg-transparent",
+    );
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveTextContent(
+      "● REC · loop 1 of 4",
+    );
+  });
+
+  it("keeps the Solo capture overlay on the hot mic full-bleed", () => {
+    const piece: MoodPiece = {
+      ...makeMoodPiece({ stage: "corners" }),
+      cycleSeconds: 2,
+      lens: "solo",
+    };
+    useAppStore.getState().actions.setRecordingState("recording", 0);
+    useAppStore.getState().actions.setMoodHotMic("mic-3");
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-capture-overlay")).toHaveStyle({
+      left: "0%",
+      top: "0%",
+      width: "100%",
+      height: "100%",
+    });
+  });
+
+  it("shows the overdub join line and eight-beat strip before the final three beats", () => {
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(10);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    const strip = screen.getByTestId("mood-count-in-beat-strip");
+    expect(screen.getByText("joins at the top of the loop")).toBeInTheDocument();
+    expect(strip.children).toHaveLength(8);
+    expect(strip.querySelectorAll(".bg-orange-500")).toHaveLength(2);
+    expect(screen.queryByTestId("mood-count-in-digit")).not.toBeInTheDocument();
+  });
+
+  it("fills the beat strip by beats remaining, not by the count-in's tick count", () => {
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(10);
+    // Its first tick is 5 beats out; the strip still shows 6 beats to go.
+    useAppStore.getState().actions.setMoodCountInTicks(5);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    const strip = screen.getByTestId("mood-count-in-beat-strip");
+    expect(strip.querySelectorAll(".bg-orange-500")).toHaveLength(2);
+  });
+
+  it("shows a three-tick overdub count-in as digits from the tap, not the long-wait strip", () => {
+    // 3.75 beats out with three ticks: the silent part of the first beat
+    // already reads 3, not "joins at the top of the loop".
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(8);
+    useAppStore.getState().actions.setMoodCountInTicks(3);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.queryByTestId("mood-count-in-beat-strip")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveTextContent("3");
+  });
+
+  it("fills the overdub beat strip without wrapping long count-ins", () => {
+    const filledOverdubBeatCount = (
+      moodStageModule as typeof moodStageModule & {
+        filledOverdubBeatCount?: (beatsRemaining: number) => number;
+      }
+    ).filledOverdubBeatCount;
+
+    expect(filledOverdubBeatCount).toBeTypeOf("function");
+    expect([9, 8, 7, 1].map((beats) => filledOverdubBeatCount?.(beats))).toEqual([
+      0, 0, 1, 7,
+    ]);
+  });
+
+  it("switches an overdub count-in to big digits for the final three beats", () => {
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveTextContent("2");
+    expect(screen.queryByText("joins at the top of the loop")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mood-count-in-beat-strip")).not.toBeInTheDocument();
+  });
+
+  it("shows no digit above the count-in's first tick", () => {
+    // 1.75 beats out, but this count-in started 1.5 beats before the
+    // punch-in: its only tick is the accented 1, so no silent 2 shows first.
+    const piece = { ...makeMoodPiece({ stage: "corners" }), cycleSeconds: 8 };
+    useAppStore.getState().actions.setRecordingState("countdown", 0);
+    useAppStore.getState().actions.setCountdownEndsAt(6);
+    useAppStore.getState().actions.setMoodCountInTicks(1);
+    useAppStore.getState().actions.setMoodHotMic("mic-0");
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-count-in-digit")).toHaveTextContent("1");
   });
 
   it("renders the Splits zero-live state as a cycle-driven DOM boundary pulse", () => {
@@ -309,6 +542,14 @@ describe("MoodStage", () => {
       "data-cycle",
       "4",
     );
+  });
+
+  it("renders the zero-live boundary pulse for Solo", () => {
+    const piece: MoodPiece = { ...makeSplitsPieceWithTake(), lens: "solo" };
+
+    render(<MoodStage piece={piece} />);
+
+    expect(screen.getByTestId("mood-splits-zero-live")).toBeInTheDocument();
   });
 
   it("hides the Splits zero-live overlay when a valid live selection exists", () => {
@@ -363,7 +604,10 @@ describe("MoodStage", () => {
   });
 
   it("shows only the invitation for a fresh Splits piece with no takes", () => {
-    const piece: MoodPiece = { ...makePiece("corners"), lens: "splits" };
+    const piece: MoodPiece = {
+      ...makeMoodPiece({ stage: "corners" }),
+      lens: "splits",
+    };
 
     render(<MoodStage piece={piece} />);
 

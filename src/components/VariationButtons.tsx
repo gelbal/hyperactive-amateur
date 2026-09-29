@@ -1,6 +1,6 @@
 // ABOUTME: VariationButtons — Busier / Fill / Half-time / Strip / Break mutations of the current pattern.
 // ABOUTME: Each click snapshots the current grid and offers an Undo toast on success.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { suggestTracks } from "../lib/suggestTracks";
@@ -40,6 +40,15 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   } | null>(null);
 
   const hasPattern = tracks.some((t) => t.steps.some((s) => s));
+  // A variation that answers after these buttons went away (a switch to
+  // Mood) is dropped: its Undo would be gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const baseDisabled = pending !== null || clipCount < AI_UNLOCK_CLIPS || !hasPattern;
 
   useEffect(() => {
@@ -51,6 +60,10 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   useEffect(() => {
     onBusyChange?.(pending !== null);
   }, [pending, onBusyChange]);
+
+  // Unmounted mid-request (a clip deleted below the AI unlock), the busy pin
+  // it set on its parent must not outlive it.
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const handleClick = async (variation: Variation) => {
     setError(null);
@@ -72,6 +85,7 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
         currentPattern: before,
         variation,
       });
+      if (!mountedRef.current) return;
       const applied = useAppStore
         .getState()
         .actions.applyPatternIfCurrent(grid, projectRevision, stepCount);

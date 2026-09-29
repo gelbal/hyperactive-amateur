@@ -7,6 +7,9 @@ import { VIDEO_SEEK_LEAD_SECONDS } from "./videoTiming";
 
 const HAVE_CURRENT_DATA = 2;
 const LOOP_EPSILON_SECONDS = 1e-6;
+// At its cut a prepared video plays from its held frame when that frame is
+// this close to where the take's audio is; otherwise it seeks there first.
+const JOIN_TOLERANCE_SECONDS = 0.05;
 
 export interface MoodVideoPoolTake {
   takeId: string;
@@ -16,6 +19,8 @@ export interface MoodVideoPoolTake {
   loopPeriod?: number;
   cycleMultiple?: MoodTake["cycleMultiple"];
   epoch?: number | null;
+  // Sync Assist's nudge, as for the audio: positive starts the take later.
+  syncOffsetMs?: number;
 }
 
 interface PooledMoodVideo {
@@ -28,6 +33,7 @@ interface PooledMoodVideo {
   loopPeriod: number;
   cycleMultiple: MoodTake["cycleMultiple"];
   epoch: number | null;
+  syncOffsetSeconds: number;
   holdingRest: boolean;
   playing: boolean;
   // Period-lock dedup: the index of the take's own loop period (which can be a
@@ -35,6 +41,9 @@ interface PooledMoodVideo {
   // under so a stop/restart re-seeks even inside the same period index.
   restartEpoch: number | null;
   lastPeriodIndex: number | null;
+  // The audio time of the boundary this video is prepared to join at, held
+  // on its first frame until then; null when it is not waiting for a cut.
+  preparedFor: number | null;
   onTimeUpdate: () => void;
   onLoadedMetadata: () => void;
   onEnded: () => void;
@@ -139,11 +148,82 @@ function holdAtContentEnd(entry: PooledMoodVideo): void {
   pauseVideo(entry);
 }
 
+// How far the take has played at audioTime: phase-locked to the epoch and
+// shifted by its sync offset, exactly as its audio player is.
+function takeTimeAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
+  return audioTime - epoch - entry.syncOffsetSeconds;
+}
+
 // The index of the take's OWN loop period at audioTime, phase-locked to the
 // epoch. loopPeriod = cycleMultiple × cycleSeconds, so this correctly counts
 // half-cycle periods (0.5) as well as multi-cycle ones (2, 4).
 function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number): number {
-  return Math.floor((audioTime - epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
+  return Math.floor(takeTimeAt(entry, audioTime, epoch) / entry.loopPeriod + LOOP_EPSILON_SECONDS);
+}
+
+// Where the take's audio is at audioTime: the same epoch phase in its loop
+// period, as a video position, and whether that falls in the period's rest.
+function phasePositionAt(
+  entry: PooledMoodVideo,
+  audioTime: number,
+  epoch: number,
+): { position: number; inRest: boolean } {
+  const periodIndex = periodIndexAt(entry, audioTime, epoch);
+  const phase = Math.max(0, takeTimeAt(entry, audioTime, epoch) - periodIndex * entry.loopPeriod);
+  updateEffectiveLoopEnd(entry);
+  const position = entry.loopStart + phase;
+  return {
+    position,
+    inRest: phase > LOOP_EPSILON_SECONDS && position >= entry.effectiveLoopEnd,
+  };
+}
+
+// Seeks to where the take's audio is at audioTime. A multi-cycle take can
+// join mid-period; past its content the period rests, so the video holds its
+// last frame. With play false the video is held on that frame (a pre-roll).
+function seekToPhase(
+  entry: PooledMoodVideo,
+  audioTime: number,
+  epoch: number | null,
+  play = true,
+): void {
+  if (epoch === null) {
+    seekToLoopStart(entry);
+    if (play) playVideo(entry);
+    else pauseVideo(entry);
+    return;
+  }
+  const { position, inRest } = phasePositionAt(entry, audioTime, epoch);
+  if (inRest) {
+    holdAtContentEnd(entry);
+    return;
+  }
+  entry.holdingRest = false;
+  try {
+    entry.video.currentTime = position;
+  } catch {
+    // currentTime can throw before metadata loads; later boundary seeks retry.
+  }
+  if (play) playVideo(entry);
+  else pauseVideo(entry);
+}
+
+// A prepared video's cut: it plays on from the frame it was held on, which
+// is where its audio starts (up to a frame late); if that pre-roll never
+// landed it seeks there first.
+function startPreparedJoin(entry: PooledMoodVideo, audioTime: number, epoch: number): void {
+  entry.preparedFor = null;
+  entry.lastPeriodIndex = periodIndexAt(entry, audioTime, epoch);
+  const { position, inRest } = phasePositionAt(entry, audioTime, epoch);
+  if (
+    !inRest &&
+    !entry.holdingRest &&
+    Math.abs(entry.video.currentTime - position) <= JOIN_TOLERANCE_SECONDS
+  ) {
+    playVideo(entry);
+    return;
+  }
+  seekToPhase(entry, audioTime, epoch);
 }
 
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
@@ -187,10 +267,12 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     loopPeriod: take.loopPeriod ?? fallbackLoopPeriod(take),
     cycleMultiple: take.cycleMultiple ?? 1,
     epoch: take.epoch ?? null,
+    syncOffsetSeconds: (take.syncOffsetMs ?? 0) / 1000,
     holdingRest: false,
     playing: false,
     restartEpoch: null,
     lastPeriodIndex: null,
+    preparedFor: null,
     onTimeUpdate: () => undefined,
     onLoadedMetadata: () => undefined,
     onEnded: () => undefined,
@@ -241,7 +323,21 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
       existing.loopEnd = take.loopEnd;
       existing.loopPeriod = take.loopPeriod ?? fallbackLoopPeriod(take);
       existing.cycleMultiple = take.cycleMultiple ?? 1;
-      existing.epoch = take.epoch ?? null;
+      const epoch = take.epoch ?? null;
+      if (existing.epoch !== epoch && existing.preparedFor !== null) {
+        // A stop or a new performance cancels a join that has not happened:
+        // the held frame plays on (stopped) or the new epoch re-seeks it.
+        existing.preparedFor = null;
+        playVideo(existing);
+      }
+      existing.epoch = epoch;
+      const syncOffsetSeconds = (take.syncOffsetMs ?? 0) / 1000;
+      if (existing.syncOffsetSeconds !== syncOffsetSeconds) {
+        // A re-synced take re-seeks on the next restart check, in step with
+        // its audio.
+        existing.syncOffsetSeconds = syncOffsetSeconds;
+        existing.lastPeriodIndex = null;
+      }
       updateEffectiveLoopEnd(existing);
       applyCapturePolicy(existing);
       continue;
@@ -303,6 +399,7 @@ export function liveTakesFromSelections(
           : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
       cycleMultiple: take.cycleMultiple,
       epoch,
+      syncOffsetMs: take.syncOffsetMs,
     });
   }
   return [...live.values()];
@@ -316,32 +413,46 @@ export function restartVideosAtPeriodBoundary(audioTime: number, epoch: number):
       entry.restartEpoch = epoch;
       entry.lastPeriodIndex = null;
     }
+    // A prepared join waits, held on its first frame, for its cut.
+    if (entry.preparedFor !== null) {
+      if (audioTime < entry.preparedFor) continue;
+      startPreparedJoin(entry, audioTime, epoch);
+      continue;
+    }
+    // Index -1 is a take synced to start later, still in its previous pass.
     const periodIndex = periodIndexAt(entry, audioTime, epoch);
-    if (periodIndex < 0) continue;
     if (entry.lastPeriodIndex === periodIndex) continue;
     entry.lastPeriodIndex = periodIndex;
-    seekToLoopStart(entry);
-    playVideo(entry);
+    seekToPhase(entry, audioTime, epoch);
   }
 }
 
+// Pre-rolls a video that joins at atAudioTime: a lead ahead it seeks to the
+// frame its audio starts on and holds there, so the cut plays a decoded
+// frame in step with the sound.
 export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
+  // Picked again after its swap locked, a take is also queued for the next
+  // boundary; its earlier join still happens first. A pending join is only
+  // ever consumed by its cut (the first restart check at or after it) or
+  // cancelled with its video (a prune, a stop, a new performance), so one
+  // still set is valid even just after its audible boundary.
+  if (entry.preparedFor !== null && entry.preparedFor < atAudioTime) return;
+  entry.preparedFor = atAudioTime;
 
-  const seekAndPlay = () => {
-    seekToLoopStart(entry);
-    playVideo(entry);
+  const preroll = () => {
+    // A later arm re-prepared this video for another boundary.
+    if (entry.preparedFor !== atAudioTime) return;
+    seekToPhase(entry, atAudioTime, entry.epoch, false);
   };
 
   if (atAudioTime - Tone.now() <= VIDEO_SEEK_LEAD_SECONDS) {
-    seekAndPlay();
+    preroll();
     return;
   }
 
-  Tone.getDraw().schedule(() => {
-    seekAndPlay();
-  }, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
+  Tone.getDraw().schedule(preroll, atAudioTime - VIDEO_SEEK_LEAD_SECONDS);
 }
 
 export function videoForTake(takeId: string): HTMLVideoElement | null {
@@ -357,7 +468,9 @@ export function isVideoReadyForDraw(video: HTMLVideoElement): boolean {
   );
 }
 
-export function __resetMoodVideoPoolForTesting(): void {
+// Leaving Mood: every hidden video stops decoding and releases its source,
+// so none keeps looping under Chop. Mood rebuilds the pool when it mounts.
+export function teardownMoodVideoPool(): void {
   for (const entry of videos.values()) {
     teardown(entry);
   }
@@ -366,6 +479,10 @@ export function __resetMoodVideoPoolForTesting(): void {
   pausedForCapture.clear();
   host?.remove();
   host = null;
+}
+
+export function __resetMoodVideoPoolForTesting(): void {
+  teardownMoodVideoPool();
 }
 
 export function __getMoodVideoPoolStateForTesting(): Array<{

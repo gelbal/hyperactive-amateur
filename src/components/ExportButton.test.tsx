@@ -624,6 +624,17 @@ describe("ExportButton in Mood", () => {
     expect(popover.className.split(/\s+/)).not.toContain("fixed");
   });
 
+  it("explains that export waits for the active performance to stop", () => {
+    act(() => {
+      useAppStore.getState().actions.setMoodPerforming(true, 4);
+    });
+    render(<ExportButton />);
+
+    const exportButton = screen.getByRole("button", { name: /^export$/i });
+    expect(exportButton).toBeDisabled();
+    expect(exportButton).toHaveAttribute("title", "stop the performance first");
+  });
+
   it("renders through the mood flow with a count-in, finish control, and mood- filename", async () => {
     let resolveResult!: (blob: Blob & { capped?: boolean }) => void;
     let startRecording!: () => void;

@@ -1,6 +1,7 @@
 // ABOUTME: ModeSwitch — two-segment header control for swapping Chop and Mood.
-// ABOUTME: Stops active Chop playback before entering Mood so only one mode owns sound.
+// ABOUTME: Stops the active Chop playback or Mood performance before switching so only one mode owns sound.
 import { stopPlayback } from "../lib/audio";
+import { stopMoodPerformance } from "../lib/moodTransport";
 import { useAppStore } from "../store/useAppStore";
 import type { AppMode } from "../types";
 
@@ -14,6 +15,12 @@ export function ModeSwitch() {
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const recordingState = useAppStore((s) => s.recording.state);
   const disabled = isExporting || recordingState !== "idle";
+  const disabledTitle =
+    recordingState !== "idle"
+      ? "locked during capture"
+      : isExporting
+        ? "frozen during export"
+        : undefined;
 
   const switchMode = (nextMode: AppMode) => {
     if (disabled || nextMode === appMode) return;
@@ -24,6 +31,14 @@ export function ModeSwitch() {
       state.playback.isPlaying
     ) {
       stopPlayback();
+    }
+    // The loop players and the shared transport outlive the store's stop.
+    if (
+      state.appMode === "mood" &&
+      nextMode === "chop" &&
+      state.mood.performance.isPerforming
+    ) {
+      stopMoodPerformance();
     }
     useAppStore.getState().actions.setAppMode(nextMode);
   };
@@ -42,6 +57,7 @@ export function ModeSwitch() {
             type="button"
             aria-pressed={active}
             disabled={disabled}
+            title={disabledTitle}
             onClick={() => switchMode(mode.id)}
             className={
               "px-3 py-1.5 pointer-coarse:min-h-11 text-sm font-medium rounded-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 " +

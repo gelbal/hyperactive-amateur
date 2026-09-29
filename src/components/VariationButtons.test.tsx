@@ -112,6 +112,41 @@ describe("VariationButtons", () => {
     expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
   });
 
+  it("drops a variation that answers after the buttons unmounted, so no beat changes without its Undo", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+    const pending = deferredGrid();
+    varyPattern.mockReturnValue(pending.promise);
+    const { unmount } = render(<VariationButtons />);
+
+    fireEvent.click(screen.getByLabelText("Break"));
+    await waitFor(() => expect(varyPattern).toHaveBeenCalled());
+    unmount();
+    await act(async () => {
+      pending.resolve(Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true)));
+      await pending.promise;
+    });
+
+    expect(useAppStore.getState().project.tracks[0].steps.every(Boolean)).toBe(false);
+  });
+
+  it("releases its parent's busy pin when it unmounts mid-request", async () => {
+    const actions = useAppStore.getState().actions;
+    for (let i = 0; i < 4; i++) actions.setTrackClip(i, makeClip());
+    actions.toggleStep(0, 0);
+    varyPattern.mockReturnValue(new Promise(() => undefined));
+    const onBusyChange = vi.fn();
+    const { unmount } = render(<VariationButtons onBusyChange={onBusyChange} />);
+
+    fireEvent.click(screen.getByLabelText("Busier"));
+    await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(true));
+    // A clip deleted below the AI unlock unmounts the buttons.
+    unmount();
+
+    expect(onBusyChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("renders pinned offline copy when a variation transport is unavailable", async () => {
     unlockVariation();
     varyPattern.mockRejectedValue(new GeminiOfflineError());

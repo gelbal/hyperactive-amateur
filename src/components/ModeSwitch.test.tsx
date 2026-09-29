@@ -7,8 +7,16 @@ const audioMocks = vi.hoisted(() => ({
   stopPlayback: vi.fn(),
 }));
 
+const moodTransportMocks = vi.hoisted(() => ({
+  stopMoodPerformance: vi.fn(),
+}));
+
 vi.mock("../lib/audio", () => ({
   stopPlayback: audioMocks.stopPlayback,
+}));
+
+vi.mock("../lib/moodTransport", () => ({
+  stopMoodPerformance: moodTransportMocks.stopMoodPerformance,
 }));
 
 import { ModeSwitch } from "./ModeSwitch";
@@ -20,6 +28,7 @@ describe("ModeSwitch", () => {
     useAppStore.getState().actions.setIsExporting(false);
     useAppStore.getState().actions.reset();
     audioMocks.stopPlayback.mockReset();
+    moodTransportMocks.stopMoodPerformance.mockReset();
   });
 
   it("renders Chop and Mood segments with the active mode pressed", () => {
@@ -46,6 +55,19 @@ describe("ModeSwitch", () => {
     );
   });
 
+  it("stops a running Mood performance before entering Chop", () => {
+    const actions = useAppStore.getState().actions;
+    actions.setAppMode("mood");
+    actions.createMoodPiece("corners", "pocket");
+    actions.setMoodPerforming(true, 4);
+    render(<ModeSwitch />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Chop" }));
+
+    expect(moodTransportMocks.stopMoodPerformance).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().appMode).toBe("chop");
+  });
+
   it("switches modes through the store", () => {
     render(<ModeSwitch />);
 
@@ -64,6 +86,14 @@ describe("ModeSwitch", () => {
 
     expect(screen.getByRole("button", { name: "Chop" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Mood" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Chop" })).toHaveAttribute(
+      "title",
+      "frozen during export",
+    );
+    expect(screen.getByRole("button", { name: "Mood" })).toHaveAttribute(
+      "title",
+      "frozen during export",
+    );
 
     act(() => {
       useAppStore.getState().actions.setIsExporting(false);
@@ -74,6 +104,14 @@ describe("ModeSwitch", () => {
 
     expect(screen.getByRole("button", { name: "Chop" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Mood" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Chop" })).toHaveAttribute(
+      "title",
+      "locked during capture",
+    );
+    expect(screen.getByRole("button", { name: "Mood" })).toHaveAttribute(
+      "title",
+      "locked during capture",
+    );
   });
 
   it("stops active Chop playback before switching to Mood", () => {

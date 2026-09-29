@@ -272,6 +272,63 @@ describe("mood persistence", () => {
     expect(loaded?.missingBlobs).toBeUndefined();
   });
 
+  it("round-trips additive optional Credits metadata", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(5),
+      credits: {
+        enabled: true,
+        names: { "mic-0": "Bass", "mic-1": "Ferro" },
+        styleIndex: 2,
+        mode: "together",
+      },
+    };
+
+    expect(snapshotMood(piece).credits).toEqual(piece.credits);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).credits).toEqual(piece.credits);
+    expect((await loadMoodMeta())?.credits).toEqual(piece.credits);
+  });
+
+  it("round-trips cloned additive One aesthetics in schema 1", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(6),
+      artDirection: { fxPreset: "sweep", creditPalette: "print", source: "user" },
+      keyEstimate: { key: "D#", mode: "minor", confidence: 0.88 },
+    };
+
+    const snapshot = snapshotMood(piece);
+    expect(snapshot.artDirection).toEqual(piece.artDirection);
+    expect(snapshot.artDirection).not.toBe(piece.artDirection);
+    expect(snapshot.keyEstimate).toEqual(piece.keyEstimate);
+    expect(snapshot.keyEstimate).not.toBe(piece.keyEstimate);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).artDirection).toEqual(piece.artDirection);
+    expect((await storedMoodMeta()).keyEstimate).toEqual(piece.keyEstimate);
+    expect((await loadMoodMeta())?.artDirection).toEqual(piece.artDirection);
+    expect((await loadMoodMeta())?.keyEstimate).toEqual(piece.keyEstimate);
+  });
+
+  it("round-trips cloned additive saved selections without a schema bump", async () => {
+    const piece: MoodPiece = {
+      ...moodPiece(7),
+      savedSelections: { "mic-0": "off", "mic-1": "off" },
+    };
+
+    const snapshot = snapshotMood(piece);
+    expect(snapshot.moodSchemaVersion).toBe(1);
+    expect(snapshot.savedSelections).toEqual(piece.savedSelections);
+    expect(snapshot.savedSelections).not.toBe(piece.savedSelections);
+
+    await saveMoodPiece(piece);
+
+    expect((await storedMoodMeta()).savedSelections).toEqual(piece.savedSelections);
+    expect((await loadMoodMeta())?.savedSelections).toEqual(piece.savedSelections);
+  });
+
   it("deduplicates identical take blob bytes under one content-addressed key", async () => {
     const sharedBytes = [7, 7, 7];
     const firstTake = moodTake(10, {
@@ -390,6 +447,52 @@ describe("mood persistence", () => {
     await saveMoodPiece({ ...moodPiece(43), mics: [] });
 
     expect(await storedBlobKeys()).toEqual([refs[0]]);
+  });
+
+  it.each([
+    ["a live Mood record with an unreadable mic list (before Mood loads)", MOOD_KEY, { moodSchemaVersion: 1, mics: null }],
+    // Its mic list reads as empty; only the schema version says it may name
+    // blobs in a layout this build does not know.
+    ["a live Mood record from a newer schema", MOOD_KEY, { moodSchemaVersion: 2, mics: [] }],
+    [
+      "a Mood quarantine with a readable mic list but unreadable takes",
+      MOOD_QUARANTINE_KEY,
+      { moodSchemaVersion: 1, mics: [{ id: "mic-0", takes: "unreadable" }] },
+    ],
+    [
+      "a Mood record whose ref field is not a string",
+      MOOD_KEY,
+      { moodSchemaVersion: 1, mics: [{ id: "mic-0", takes: [{ id: "t", videoBlobRef: 7 }] }] },
+    ],
+  ])("holds blob GC while %s", async (_label, key, record) => {
+    await saveMoodPiece(moodPiece(45));
+    const moodRefs = await storedBlobKeys();
+    expect(moodRefs.length).toBeGreaterThan(0);
+    await set(key, record);
+
+    // A Chop save runs the shared GC; nothing can tell which blobs the
+    // unreadable record names.
+    useAppStore.getState().actions.setTrackClip(0, clip(145));
+    useAppStore.getState().actions.clearTrackClip(0);
+    await saveProject(useAppStore.getState());
+
+    for (const ref of moodRefs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
+  });
+
+  it("holds blob GC while the live Chop record comes from a newer schema", async () => {
+    await saveMoodPiece(moodPiece(46));
+    useAppStore.getState().actions.setTrackClip(0, clip(146));
+    await saveProject(useAppStore.getState());
+    const chopRefs = chopMediaRefs(await storedChopMeta());
+    await set("ha:meta", { schemaVersion: 3, tracks: [] });
+
+    await saveMoodPiece({ ...moodPiece(47), mics: [] });
+
+    for (const ref of chopRefs) {
+      expect(isBlobLike(await get(ref))).toBe(true);
+    }
   });
 
   it("reopens the database for Mood after a failed open once the store is reset", async () => {

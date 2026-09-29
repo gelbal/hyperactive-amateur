@@ -1,6 +1,6 @@
 // ABOUTME: App tests — autosave starts after every load that resolves; a rejected load shows one line.
-// ABOUTME: The shell keeps safe-area padding; no storage or recovery banners render.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+// ABOUTME: Pins the header rows for both modes; no storage or recovery banners render.
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rehydrateMocks = vi.hoisted(() => ({
@@ -17,8 +17,33 @@ const autoSaveMocks = vi.hoisted(() => ({
   shutdownAutoSave: vi.fn(),
 }));
 
-vi.mock("./lib/audio", () => ({ initTransport: vi.fn() }));
+const chopRecordingMocks = vi.hoisted(() => ({
+  cancelCurrentRecording: vi.fn(),
+  registerChopRecordingInterrupt: vi.fn(),
+  unregisterChopRecordingInterrupt: vi.fn(),
+}));
+
+const audioMocks = vi.hoisted(() => ({
+  context: { currentTime: 12 },
+}));
+
+const moodModeHarness = vi.hoisted(() => ({
+  pending: new Promise<never>(() => undefined),
+  suspend: true,
+  crash: false,
+}));
+
+vi.mock("./lib/audio", () => ({
+  getAudioContext: () => audioMocks.context,
+  initTransport: vi.fn(),
+}));
 vi.mock("./lib/audioLifecycle", () => ({ initAudioLifecycle: vi.fn(() => vi.fn()) }));
+vi.mock("./lib/recordingFlow", () => ({
+  COUNTDOWN_MS: 3_000,
+  RECORD_DURATION_MS: 2_000,
+  cancelCurrentRecording: chopRecordingMocks.cancelCurrentRecording,
+  registerChopRecordingInterrupt: chopRecordingMocks.registerChopRecordingInterrupt,
+}));
 vi.mock("./lib/streamLifecycle", () => ({ installVisibilityListener: vi.fn(() => vi.fn()) }));
 vi.mock("./lib/install", () => ({
   captureInstallPrompt: vi.fn(() => vi.fn()),
@@ -53,7 +78,34 @@ vi.mock("./components/ExportButton", () => ({ ExportButton: () => <div data-test
 vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => <div data-testid="suggest-button" /> }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
 vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => <div data-testid="feel-button" /> }));
-vi.mock("./components/mood/MoodMode", () => new Promise(() => undefined));
+vi.mock("./components/mood/MoodMode", async () => {
+  const { createElement } = await import("react");
+  const { createPortal } = await import("react-dom");
+  const { useAppStore: useMockStore } = await import("./store/useAppStore");
+  return {
+    default: function MockMoodMode() {
+      if (moodModeHarness.crash) {
+        throw new TypeError("Failed to fetch dynamically imported module: /assets/MoodMode-old.js");
+      }
+      if (moodModeHarness.suspend) throw moodModeHarness.pending;
+      const recordingState = useMockStore((s) => s.recording.state);
+      const slot = document.querySelector<HTMLElement>("[data-mood-header-slot]");
+      if (!slot) return null;
+      const capturing = recordingState !== "idle";
+      return createPortal(
+        createElement(
+          "div",
+          {
+            "data-testid": capturing ? "mood-recording-bar" : "mood-transport-cluster",
+            role: capturing ? "status" : undefined,
+          },
+          capturing ? "Mood recording" : "Mood transport",
+        ),
+        slot,
+      );
+    },
+  };
+});
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
@@ -95,12 +147,29 @@ describe("App autosave gating", () => {
     window.localStorage.clear();
     vi.clearAllMocks();
     clearLogs();
+    moodModeHarness.suspend = true;
+    moodModeHarness.crash = false;
     useAppStore.getState().actions.reset();
     rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
       ok: true,
       degraded: false,
       warnings: [],
     });
+    chopRecordingMocks.registerChopRecordingInterrupt.mockReturnValue(
+      chopRecordingMocks.unregisterChopRecordingInterrupt,
+    );
+  });
+
+  it("registers the Chop recording interrupt handler for the app lifetime", async () => {
+    let unmount: () => void = () => undefined;
+    await act(async () => {
+      ({ unmount } = render(<App />));
+    });
+
+    expect(chopRecordingMocks.registerChopRecordingInterrupt).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(chopRecordingMocks.unregisterChopRecordingInterrupt).toHaveBeenCalledTimes(1);
   });
 
   it("keeps safe-area padding and dynamic viewport height on the shell", async () => {
@@ -268,6 +337,49 @@ describe("App autosave gating", () => {
     vi.unstubAllGlobals();
   });
 
+  it("locks the Mood viewport only when a piece exists and only at sm+tall", async () => {
+    const shell = await renderApp();
+    const main = shell.querySelector("main");
+    expect(main).not.toBeNull();
+    expect(shell).not.toHaveClass(
+      "sm:h-[100dvh]",
+      "sm:overflow-hidden",
+      "sm:flex",
+      "sm:flex-col",
+    );
+    expect(main).not.toHaveClass("sm:flex-1", "sm:min-h-0");
+
+    act(() => {
+      useAppStore.getState().actions.setAppMode("mood");
+    });
+
+    expect(shell).not.toHaveClass(
+      "sm:tall:h-[100dvh]",
+      "sm:tall:overflow-hidden",
+      "sm:tall:flex",
+      "sm:tall:flex-col",
+    );
+    expect(main).not.toHaveClass("sm:tall:flex-1", "sm:tall:min-h-0");
+
+    act(() => {
+      useAppStore.getState().actions.createMoodPiece("corners", "pocket");
+    });
+
+    expect(shell).toHaveClass(
+      "sm:tall:h-[100dvh]",
+      "sm:tall:overflow-hidden",
+      "sm:tall:flex",
+      "sm:tall:flex-col",
+    );
+    expect(main).toHaveClass(
+      "sm:tall:flex-1",
+      "sm:tall:min-h-0",
+      "sm:tall:flex",
+      "sm:tall:flex-col",
+    );
+    expect(shell.className).not.toMatch(/(?:^|\s)sm:h-\[100dvh\](?:\s|$)/);
+  });
+
   it("starts autosave after a clean load", async () => {
     await renderApp();
 
@@ -335,6 +447,30 @@ describe("App autosave gating", () => {
     expect(screen.getByText("Loading mood...")).toBeInTheDocument();
   });
 
+  it("keeps the app and shows one reload line when the Mood screen fails to load", async () => {
+    // After a deploy an open app's lazy Mood chunk can 404. React reports the
+    // caught error on the console and, in development, rethrows it to the
+    // window; this test captures both.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const swallowWindowError = (event: ErrorEvent) => event.preventDefault();
+    window.addEventListener("error", swallowWindowError);
+    moodModeHarness.crash = true;
+    useAppStore.getState().actions.setAppMode("mood");
+
+    await renderApp();
+
+    // The lazy screen resolves on its own schedule; wait for it.
+    expect(await screen.findByText("Couldn't open Mood — reload to try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Mode" })).toBeInTheDocument();
+    const failed = getLogs().find((entry) => entry.event === LOG_EVENTS.MOOD_LOAD_FAILED);
+    expect(failed?.payload).toMatchObject({ message: expect.stringContaining("dynamically imported") });
+    expect(consoleError).toHaveBeenCalled();
+    window.removeEventListener("error", swallowWindowError);
+    consoleError.mockRestore();
+  });
+
   it("shows the lazy Mood fallback and unmounts the Chop surface in Mood", async () => {
     seedClips(1);
     useAppStore.getState().actions.setAppMode("mood");
@@ -345,6 +481,46 @@ describe("App autosave gating", () => {
     expect(screen.queryByTestId("chop-viewport")).not.toBeInTheDocument();
     expect(screen.queryByTestId("pad-grid")).not.toBeInTheDocument();
     expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
+  });
+
+  it("provides the bare Mood header portal slot before Export", async () => {
+    useAppStore.getState().actions.setAppMode("mood");
+    const shell = await renderApp();
+
+    const slot = shell.querySelector<HTMLElement>("[data-mood-header-slot]");
+    expect(slot).not.toBeNull();
+    expect(slot).toHaveClass("contents");
+
+    act(() => {
+      const actions = useAppStore.getState().actions;
+      actions.createMoodPiece("corners", "pocket");
+      actions.setMoodTake("mic-0", {
+        id: "the-one",
+        videoBlob: new Blob(["take"], { type: "video/webm" }),
+        audioBlob: null,
+        posterBlob: null,
+        url: "blob:take",
+        audioBuffer: { duration: 2, sampleRate: 48000 } as AudioBuffer,
+        audioStatus: "ok",
+        posterUrl: null,
+        trimStartMs: 0,
+        trimEndMs: 2000,
+        durationSeconds: 2,
+        cycleMultiple: 1,
+        syncOffsetMs: 0,
+        part: null,
+        partSource: null,
+        recordedAt: 1,
+      });
+    });
+
+    const exportButton = screen.getByTestId("export-button");
+    expect(
+      slot?.compareDocumentPosition(exportButton) ?? 0,
+    ).toEqual(expect.any(Number));
+    expect(
+      (slot?.compareDocumentPosition(exportButton) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("mounts the export affordance in Mood once a cycle exists", async () => {
@@ -384,6 +560,54 @@ describe("App autosave gating", () => {
     expect(controls.previousElementSibling).toContainElement(
       screen.getByRole("group", { name: "Mode" }),
     );
+  });
+
+  it("Mood's controls line holds the transport cluster and Export; capture swaps in the recording bar", async () => {
+    moodModeHarness.suspend = false;
+    useAppStore.getState().actions.setAppMode("mood");
+    const actions = useAppStore.getState().actions;
+    actions.createMoodPiece("corners", "pocket");
+    actions.setMoodTake("mic-0", {
+      id: "the-one",
+      videoBlob: new Blob(["take"], { type: "video/webm" }),
+      audioBlob: null,
+      posterBlob: null,
+      url: "blob:take",
+      audioBuffer: { duration: 2, sampleRate: 48000 } as AudioBuffer,
+      audioStatus: "ok",
+      posterUrl: null,
+      trimStartMs: 0,
+      trimEndMs: 2000,
+      durationSeconds: 2,
+      cycleMultiple: 1,
+      syncOffsetMs: 0,
+      part: null,
+      partSource: null,
+      recordedAt: 1,
+    });
+    const shell = await renderApp();
+
+    const slot = shell.querySelector<HTMLElement>("[data-mood-header-slot]");
+    const controlRow = slot?.parentElement as HTMLElement;
+    // A full-width controls row after the mode switch's cell, like Chop's;
+    // the switch stays on the title line.
+    expect(controlRow).toHaveClass("w-full", "lg:w-auto", "mt-3", "lg:mt-0", "flex", "flex-wrap");
+    expect(controlRow.previousElementSibling).toContainElement(
+      screen.getByRole("group", { name: "Mode" }),
+    );
+    expect(within(controlRow).queryByRole("group", { name: "Mode" })).not.toBeInTheDocument();
+    // The lazy screen resolves on its own schedule; wait for its portal.
+    expect(await within(controlRow).findByTestId("mood-transport-cluster")).toBeInTheDocument();
+    expect(within(controlRow).queryByTestId("mood-recording-bar")).not.toBeInTheDocument();
+    expect(within(controlRow).getByTestId("export-button")).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("countdown", null);
+    });
+
+    expect(within(controlRow).queryByTestId("mood-transport-cluster")).not.toBeInTheDocument();
+    expect(within(controlRow).getByTestId("mood-recording-bar")).toBeInTheDocument();
+    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
   });
 
   it("hides Chop header controls in Mood and restores them in Chop", async () => {

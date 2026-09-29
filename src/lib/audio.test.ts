@@ -27,7 +27,7 @@ interface SynthMock {
   triggerAttackRelease: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   toDestination: () => SynthMock;
-  connect: () => SynthMock;
+  connect: ReturnType<typeof vi.fn>;
 }
 const synthInstances: SynthMock[] = [];
 function makeSynth(): SynthMock {
@@ -35,10 +35,25 @@ function makeSynth(): SynthMock {
     triggerAttackRelease: vi.fn(),
     dispose: vi.fn(),
     toDestination: () => s,
-    connect: () => s,
+    connect: vi.fn(),
   };
+  s.connect.mockReturnValue(s);
   synthInstances.push(s);
   return s;
+}
+
+interface FilterMock {
+  toDestination: () => FilterMock;
+  dispose: ReturnType<typeof vi.fn>;
+}
+const filterInstances: FilterMock[] = [];
+function makeFilter(): FilterMock {
+  const filter: FilterMock = {
+    toDestination: () => filter,
+    dispose: vi.fn(),
+  };
+  filterInstances.push(filter);
+  return filter;
 }
 
 interface PlayerMock {
@@ -70,7 +85,7 @@ vi.mock("tone", () => ({
     return makeSynth();
   }),
   // All three push into synthInstances in construction order, which is the
-  // kit's track order.
+  // kit's track order; Mood's count-in voices follow the kit's eight.
   MetalSynth: vi.fn(function MetalSynth() {
     return makeSynth();
   }),
@@ -80,11 +95,10 @@ vi.mock("tone", () => ({
   Synth: vi.fn(function Synth() {
     return makeSynth();
   }),
-  // The hats' high-pass; kept out of synthInstances so its indices stay the
-  // track order.
+  // High-pass filters (the kit's hats, Mood's count-in noise) are tracked
+  // apart so synthInstances indices stay the track order.
   Filter: vi.fn(function Filter() {
-    const f = { dispose: vi.fn(), toDestination: () => f };
-    return f;
+    return makeFilter();
   }),
   Player: vi.fn(function Player() {
     return makePlayer();
@@ -97,7 +111,7 @@ import {
   initTransport,
   __resetAudioForTesting,
   togglePlayback,
-  triggerCountInClick,
+  triggerMoodCountInTick,
   triggerTrackNow,
 } from "./audio";
 import { useAppStore } from "../store/useAppStore";
@@ -146,6 +160,7 @@ describe("audio: per-step trigger logic", () => {
     transportMock.stop.mockClear();
     transportMock.clear.mockClear();
     synthInstances.length = 0;
+    filterInstances.length = 0;
     playerInstances.length = 0;
     videoEngineTrigger.mockClear();
     vi.mocked(Tone.start).mockClear();
@@ -190,18 +205,23 @@ describe("audio: per-step trigger logic", () => {
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
   });
 
-  it("plays the Mood count-in click on its own voice, never a kit voice, and disposes it on reset", () => {
+  it("keeps the Chop step loop silent while a Mood performance owns the transport", () => {
     initTransport();
+    const a = useAppStore.getState().actions;
+    a.toggleStep(2, 0);
+    a.createMoodPiece("corners", "pocket");
+    a.setMoodPerforming(true, 0);
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
 
-    triggerCountInClick(6);
+    cb?.(0);
 
-    const click = synthInstances[8];
-    expect(click.triggerAttackRelease).toHaveBeenCalledWith("C2", "16n", 6, 0.35);
     for (const voice of synthInstances.slice(0, 8)) {
       expect(voice.triggerAttackRelease).not.toHaveBeenCalled();
     }
-    __resetAudioForTesting();
-    expect(click.dispose).toHaveBeenCalledTimes(1);
+
+    a.setMoodPerforming(false);
+    cb?.(0);
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
   });
 
   it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {
@@ -256,6 +276,52 @@ describe("audio: per-step trigger logic", () => {
     transportMock.scheduleRepeat.mock.calls[0]?.[0](0);
     expect(synthInstances[8].triggerAttackRelease).toHaveBeenCalledTimes(1);
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives Mood count-in ticks a flat base then distinct rising 3-2-1 pitches", () => {
+    initTransport();
+    const kitFilters = filterInstances.length;
+
+    triggerMoodCountInTick(1, { beatsRemaining: 6, accent: false });
+    triggerMoodCountInTick(2, { beatsRemaining: 3, accent: false });
+    triggerMoodCountInTick(3, { beatsRemaining: 2, accent: false });
+    triggerMoodCountInTick(4, { beatsRemaining: 1, accent: false });
+
+    // The count-in strike and noise are built after the kit's eight voices.
+    const [strike, noise] = synthInstances.slice(8);
+    expect(strike.triggerAttackRelease.mock.calls).toEqual([
+      ["C5", "32n", 1, 0.36],
+      ["D5", "32n", 2, 0.4],
+      ["E5", "32n", 3, 0.42],
+      ["G5", "32n", 4, 0.45],
+    ]);
+    expect(noise.triggerAttackRelease.mock.calls).toEqual([
+      [0.025, 1, 0.18],
+      [0.025, 2, 0.2],
+      [0.025, 3, 0.21],
+      [0.025, 4, 0.23],
+    ]);
+    expect(noise.connect).toHaveBeenCalledWith(filterInstances[kitFilters]);
+  });
+
+  it("raises the Mood accent pitch and velocity and leaves the kit silent", () => {
+    initTransport();
+
+    triggerMoodCountInTick(4, { beatsRemaining: 1, accent: false });
+    triggerMoodCountInTick(5, { beatsRemaining: 1, accent: true });
+
+    const [strike, noise] = synthInstances.slice(8);
+    expect(strike.triggerAttackRelease.mock.calls).toEqual([
+      ["G5", "32n", 4, 0.45],
+      ["A5", "32n", 5, 0.6],
+    ]);
+    expect(noise.triggerAttackRelease.mock.calls).toEqual([
+      [0.025, 4, 0.23],
+      [0.025, 5, 0.32],
+    ]);
+    for (const voice of synthInstances.slice(0, 8)) {
+      expect(voice.triggerAttackRelease).not.toHaveBeenCalled();
+    }
   });
 
   it("does not create a player or fallback click for clips with unavailable audio", () => {
@@ -371,6 +437,25 @@ describe("audio: per-step trigger logic", () => {
       } else {
         Reflect.deleteProperty(document, "hidden");
       }
+    }
+  });
+
+  it("does not start Chop playback when the app switched to Mood before the unlock settled", async () => {
+    initTransport();
+    const audioStarted = deferred();
+    vi.mocked(Tone.start).mockReturnValueOnce(audioStarted.promise);
+
+    const promise = togglePlayback();
+    // The mode is persisted; restore it so later tests start in Chop.
+    try {
+      useAppStore.getState().actions.setAppMode("mood");
+      audioStarted.resolve();
+      await promise;
+
+      expect(transportMock.start).not.toHaveBeenCalled();
+      expect(useAppStore.getState().playback.isPlaying).toBe(false);
+    } finally {
+      useAppStore.getState().actions.setAppMode("chop");
     }
   });
 

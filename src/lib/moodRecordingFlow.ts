@@ -3,9 +3,16 @@
 import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodPiece, MoodTake, MoodTimeFeel } from "../types";
-import { getAudioContext, triggerCountInClick } from "./audio";
+import { getAudioContext, triggerMoodCountInTick } from "./audio";
 import { AudioUnavailableError, ensureAudioRunning, noteMicAcquireStarted } from "./audioLifecycle";
-import { isAbortError } from "./aiClient";
+import {
+  errorMessage,
+  getAbortReason,
+  isFlowAbort,
+  makeAbortError,
+  throwIfFlowAborted,
+  waitUntilAudioTime,
+} from "./async";
 import { saveNow } from "./autoSave";
 import { autoTrim } from "./autoTrim";
 import { sliceAudioBuffer } from "./audioBufferSlice";
@@ -37,6 +44,7 @@ import {
   getMoodRecordingPreviewStream,
   setMoodRecordingPreviewStream,
 } from "./moodCapture";
+import { suspendMoodPadsForCapture } from "./moodFx";
 import { setCaptureGain } from "./moodPlayers";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
 import { classifyPart } from "./moodPartTag";
@@ -45,6 +53,7 @@ import { snapTake } from "./moodTakeSnap";
 import {
   armMoodSelectionCommit,
   startMoodPerformanceForRecordingFlow,
+  stopMoodPerformance,
 } from "./moodTransport";
 import { setCaptureVideoPolicy } from "./moodVideoPool";
 import { captureFirstFrame } from "./posterFrame";
@@ -53,7 +62,6 @@ import {
   registerRecordingInterruptHandler,
   waitForUsableTracks,
 } from "./streamLifecycle";
-import { makeAbortError, throwIfFlowAborted, waitMs } from "./async";
 import { audioBufferToWav } from "./wavEncoder";
 
 const POCKET_FIRST_TAKE_COUNT_IN_BPM = 90;
@@ -61,30 +69,37 @@ const COUNT_IN_BEATS = 3;
 const AUDIO_UNAVAILABLE_COPY = "Couldn't start audio — try again.";
 const RECORDING_INTERRUPTED_COPY =
   "Recording interrupted — the microphone or camera was taken by another app or call.";
+const INSTANT_PUNCH_OUT_SECONDS = 0.15;
 
 type MoodRecordingCancelReason = "user" | "interrupted";
 
 export { getMoodRecordingPreviewStream } from "./moodCapture";
 
-export interface RecordMoodTakeOptions {
+interface RecordMoodTakeOptions {
   onError?: (message: string) => void;
   stream?: MediaStream;
 }
 
 let currentController: AbortController | null = null;
 let currentFlow: Promise<boolean> | null = null;
-let currentStopController: RecordClipStopController | null = null;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+interface ActiveMoodStopController {
+  controller: RecordClipStopController;
+  startedAt: number;
+  stoppedAt: number | null;
 }
+let currentStopController: ActiveMoodStopController | null = null;
+const backfilledOneTakeIds = new Set<string>();
+let backfillClassificationController: AbortController | null = null;
 
-function getAbortReason(signal: AbortSignal): MoodRecordingCancelReason {
-  return signal.reason === "interrupted" ? "interrupted" : "user";
-}
+class InstantMoodPunchOutError extends Error {}
 
-function isFlowAbort(err: unknown, signal: AbortSignal): boolean {
-  return isAbortError(err) || (signal.aborted && err === signal.reason);
+function reportMoodTakeFailure(
+  options: RecordMoodTakeOptions,
+  reason: string,
+): false {
+  logger.warn(LOG_EVENTS.MOOD_TAKE_FAILED, { reason });
+  options.onError?.(reason);
+  return false;
 }
 
 function cycleCountdownDeadline(
@@ -97,6 +112,10 @@ function cycleCountdownDeadline(
   return boundary - now >= beatSeconds ? boundary : boundary + cycleSeconds;
 }
 
+// A transport event this close to the lookahead clock may already be
+// behind the transport's scheduling position.
+const COUNT_IN_TRANSPORT_MARGIN_SECONDS = 0.02;
+
 function scheduleCountInClicks(
   startAt: number,
   countdownEndsAt: number,
@@ -106,11 +125,18 @@ function scheduleCountInClicks(
   const noop = () => undefined;
   if (!Number.isFinite(beatSeconds) || beatSeconds <= 0) return noop;
   const lastTickBeforePunchIn = countdownEndsAt - 0.000_001;
+  const optionsAt = (when: number) => {
+    const beatsRemaining =
+      Math.floor((lastTickBeforePunchIn - when) / beatSeconds) + 1;
+    return { beatsRemaining, accent: beatsRemaining === 1 };
+  };
   if (mode === "first-take") {
     // First-take count-ins can run before the Transport starts; pre-scheduling
     // leaves at most two residual ticks inside the silent pre-capture stage.
+    // A cancelled first take may therefore still play up to two residual, possibly
+    // accented ticks; that is the deliberate pre-scheduling trade.
     for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
-      triggerCountInClick(when);
+      triggerMoodCountInTick(when, optionsAt(when));
     }
     return noop;
   }
@@ -118,17 +144,25 @@ function scheduleCountInClicks(
   const transport = Tone.getTransport();
   const scheduledIds = new Set<number>();
   let cancelled = false;
-  // scheduleOnce takes TRANSPORT time (seconds since position 0), not the
-  // audio clock — convert each absolute tick time to a transport offset or
-  // every tick fires late by the transport's start-time offset.
-  const transportNow = transport.seconds;
-  for (let when = startAt; when < lastTickBeforePunchIn; when += beatSeconds) {
+  // Overdub ticks sit on the loops' beat grid, counted back from the
+  // punch-in (a cycle boundary), so the accented one is the last beat before
+  // it. They are carried by the transport so a cancelled take can clear them;
+  // scheduleOnce takes TRANSPORT time, so each audio-clock tick is converted.
+  // A tick already inside the lookahead may be behind the transport's
+  // scheduling position, so it plays on the audio clock directly.
+  const beatsBeforePunchIn = Math.floor((countdownEndsAt - startAt) / beatSeconds + 1e-9);
+  for (let beat = beatsBeforePunchIn; beat >= 1; beat -= 1) {
+    const when = countdownEndsAt - beat * beatSeconds;
+    if (when <= Tone.now() + COUNT_IN_TRANSPORT_MARGIN_SECONDS) {
+      triggerMoodCountInTick(when, optionsAt(when));
+      continue;
+    }
     let scheduledId: number | null = null;
-    scheduledId = transport.scheduleOnce((time) => {
+    scheduledId = transport.scheduleOnce(() => {
       if (cancelled) return;
       if (scheduledId !== null) scheduledIds.delete(scheduledId);
-      triggerCountInClick(time);
-    }, transportNow + (when - startAt));
+      triggerMoodCountInTick(when, optionsAt(when));
+    }, transport.getSecondsAtTime(when));
     scheduledIds.add(scheduledId);
   }
   return () => {
@@ -139,19 +173,6 @@ function scheduleCountInClicks(
     }
     scheduledIds.clear();
   };
-}
-
-async function waitUntilAudioTime(
-  deadlineSeconds: number,
-  audioContext: Pick<BaseAudioContext, "currentTime">,
-  signal: AbortSignal,
-): Promise<void> {
-  for (;;) {
-    throwIfFlowAborted(signal, "Aborted before countdown completed");
-    const remainingMs = (deadlineSeconds - audioContext.currentTime) * 1000;
-    if (remainingMs <= 0) return;
-    await waitMs(remainingMs, signal);
-  }
 }
 
 function isMoodRecordingInFlight(): boolean {
@@ -165,15 +186,22 @@ export function cancelCurrentMoodTake(
 }
 
 export function stopMoodTakeEarly(): boolean {
-  if (!currentStopController) return false;
-  currentStopController.stop();
+  const activeStop = currentStopController;
+  if (!activeStop) return false;
+  currentStopController = null;
+  const stoppedAt = getAudioContext().currentTime;
+  activeStop.stoppedAt = stoppedAt;
+  useAppStore.getState().actions.setCaptureEndsAt(stoppedAt);
+  activeStop.controller.stop();
   return true;
 }
 
-registerRecordingInterruptHandler({
-  isActive: isMoodRecordingInFlight,
-  interrupt: (reason) => cancelCurrentMoodTake(reason),
-});
+export function registerMoodRecordingInterrupt(): () => void {
+  return registerRecordingInterruptHandler({
+    isActive: isMoodRecordingInFlight,
+    interrupt: (reason) => cancelCurrentMoodTake(reason),
+  });
+}
 
 function countInBpm(timeFeel: MoodTimeFeel, bpm: number | null): number {
   if (timeFeel === "click" && bpm !== null && Number.isFinite(bpm) && bpm > 0) {
@@ -192,6 +220,17 @@ export function countInBeatSeconds(
     return piece.cycleSeconds / DROP_BEATS_PER_CYCLE;
   }
   return 60 / countInBpm(piece.timeFeel, piece.bpm);
+}
+
+// The cycle a take snaps against: the piece's own, or for a first Click take
+// the one its BPM and bars establish, so a first take may span up to four
+// cycles like any overdub.
+function snapCycleSeconds(piece: MoodPiece): number | null {
+  if (piece.cycleSeconds !== null) return piece.cycleSeconds;
+  if (piece.timeFeel === "click" && piece.bpm !== null && piece.cycleBars !== null) {
+    return establishCycleFromClick(piece.bpm, piece.cycleBars);
+  }
+  return null;
 }
 
 function firstTakeCaptureCapSeconds(
@@ -246,7 +285,7 @@ function attachPosterWhenReady(
     try {
       posterBlob = await captureFirstFrame(sourceBlob);
     } catch (err) {
-      logger.warn(LOG_EVENTS.VIDEO_DRAW_ERROR, {
+      logger.warn(LOG_EVENTS.POSTER_CAPTURE_ERROR, {
         phase: "mood-poster",
         message: errorMessage(err),
       });
@@ -347,21 +386,21 @@ function fireSyncAssistWhenReady(
 function resyncLiveTakeAtBoundary(micId: string, takeId: string): void {
   const state = useAppStore.getState();
   const piece = state.mood.piece;
-  const { performance } = state.mood;
+  const { performance: performanceState } = state.mood;
   if (
     !piece ||
     piece.cycleSeconds === null ||
-    !performance.isPerforming ||
-    performance.epoch === null
+    !performanceState.isPerforming ||
+    performanceState.epoch === null
   ) {
     return;
   }
-  if (performance.selections[micId] !== takeId) return;
-  if ((performance.armed[micId] ?? null) !== null) return;
+  if (performanceState.selections[micId] !== takeId) return;
+  if ((performanceState.armed[micId] ?? null) !== null) return;
   const now = Tone.now();
   armMoodSelectionCommit(
     { micId, entry: takeId },
-    nextCycleBoundary(performance.epoch, piece.cycleSeconds, now),
+    nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now),
     now,
   );
 }
@@ -369,21 +408,53 @@ function resyncLiveTakeAtBoundary(micId: string, takeId: string): void {
 function firePartClassificationWhenReady(
   micId: string,
   take: MoodTake,
+  isOne: boolean,
   signal: AbortSignal,
+  options: {
+    applyPartOnlyIfMissing?: boolean;
+    retryBackfillOnMiss?: boolean;
+  } = {},
 ): void {
-  const expectedRevision = useAppStore.getState().session.moodRevision;
-  void classifyPart(take, undefined, signal)
+  const state = useAppStore.getState();
+  const expectedRevision = state.session.moodRevision;
+  const expectedSessionId = state.session.moodSessionId;
+  state.actions.setMoodPartChecking(take.id, true);
+  void classifyPart(take, isOne, undefined, signal)
     .then((result) => {
-      if (!result) return;
-      useAppStore
-        .getState()
-        .actions.applyMoodPartIfCurrent(
+      if (!result) {
+        if (options.retryBackfillOnMiss && !signal.aborted) {
+          backfilledOneTakeIds.delete(take.id);
+        }
+        return;
+      }
+      const actions = useAppStore.getState().actions;
+      const currentPiece = useAppStore.getState().mood.piece;
+      const currentTake = currentPiece
+        ? findMoodTake(currentPiece, micId, take.id)
+        : null;
+      if (!options.applyPartOnlyIfMissing || currentTake?.part === null) {
+        actions.applyMoodPartIfCurrent(
           micId,
           take.id,
           result.part,
           "ai",
           expectedRevision,
         );
+      }
+      if (result.artDirection) {
+        actions.applyMoodArtDirectionIfCurrent(
+          take.id,
+          result.artDirection,
+          expectedSessionId,
+        );
+      }
+      if (result.keyEstimate) {
+        actions.applyMoodKeyEstimateIfCurrent(
+          take.id,
+          result.keyEstimate,
+          expectedSessionId,
+        );
+      }
     })
     .catch((err) => {
       logger.warn(LOG_EVENTS.MOOD_PART_MISS, {
@@ -391,7 +462,31 @@ function firePartClassificationWhenReady(
         takeId: take.id,
         message: errorMessage(err),
       });
+    })
+    .finally(() => {
+      useAppStore.getState().actions.setMoodPartChecking(take.id, false);
     });
+}
+
+export function backfillMoodOneClassification(): void {
+  const state = useAppStore.getState();
+  if (state.playback.isExporting) return;
+  const piece = state.mood.piece;
+  if (!piece || !piece.oneMicId || !piece.oneTakeId) return;
+  const oneTake = findMoodTake(piece, piece.oneMicId, piece.oneTakeId);
+  if (!oneTake) return;
+  if (piece.keyEstimate && piece.artDirection) return;
+  if (oneTake.audioStatus !== "ok" || !oneTake.audioBuffer) return;
+  if (backfilledOneTakeIds.has(oneTake.id)) return;
+
+  backfillClassificationController?.abort();
+  const controller = new AbortController();
+  backfillClassificationController = controller;
+  backfilledOneTakeIds.add(oneTake.id);
+  firePartClassificationWhenReady(piece.oneMicId, oneTake, true, controller.signal, {
+    applyPartOnlyIfMissing: true,
+    retryBackfillOnMiss: true,
+  });
 }
 
 async function recordWithEarlyStop(
@@ -400,12 +495,28 @@ async function recordWithEarlyStop(
   audioContext: AudioContext,
   signal: AbortSignal,
 ) {
-  const stopController = createRecordClipStopController();
-  currentStopController = stopController;
+  const activeStop: ActiveMoodStopController = {
+    controller: createRecordClipStopController(),
+    startedAt: audioContext.currentTime,
+    stoppedAt: null,
+  };
+  currentStopController = activeStop;
   try {
-    return await recordClip(stream, capMs, audioContext, { signal, stopController });
+    return await recordClip(stream, capMs, audioContext, {
+      signal,
+      stopController: activeStop.controller,
+    });
+  } catch (error) {
+    if (
+      activeStop.stoppedAt !== null &&
+      activeStop.stoppedAt >= activeStop.startedAt &&
+      activeStop.stoppedAt - activeStop.startedAt <= INSTANT_PUNCH_OUT_SECONDS
+    ) {
+      throw new InstantMoodPunchOutError();
+    }
+    throw error;
   } finally {
-    if (currentStopController === stopController) currentStopController = null;
+    if (currentStopController === activeStop) currentStopController = null;
   }
 }
 
@@ -421,7 +532,9 @@ export async function recordMoodTake(
   if (!micHasStackRoom(micId)) return false;
 
   const actions = state.actions;
+  actions.setLastTakeReceipt(null);
   actions.setRecordingState("preparing", null);
+  suspendMoodPadsForCapture();
   actions.setMoodHotMic(micId);
 
   const controller = new AbortController();
@@ -446,8 +559,11 @@ async function runFlow(
   const externalStream = options.stream ?? null;
   let stream: MediaStream | null = null;
   let cancelCountInClicks: () => void = () => undefined;
+  let performanceStartedByFlow: { epoch: number } | null = null;
+  let completed = false;
 
   if (!startingPiece) return false;
+  const isOne = startingPiece.cycleSeconds === null;
   const descriptor = STAGE_DESCRIPTORS[startingPiece.stage];
   const capSeconds =
     startingPiece.cycleSeconds === null
@@ -472,10 +588,12 @@ async function runFlow(
       // audio failure the bounded unlock surfaces on its way out.
       throwIfFlowAborted(signal, "Aborted during audio unlock");
       if (e instanceof AudioUnavailableError) {
-        options.onError?.(AUDIO_UNAVAILABLE_COPY);
-        return false;
+        return reportMoodTakeFailure(options, AUDIO_UNAVAILABLE_COPY);
       }
-      // As in Chop, capture can continue because recordClip has a decode fallback.
+      // As in Chop: ensureAudioRunning wraps every failure in
+      // AudioUnavailableError, so a failed unlock always aborts the flow.
+      // Rethrow so a future unwrapped error surfaces via the outer catch.
+      throw e;
     }
     throwIfFlowAborted(signal, "Aborted before media acquisition");
 
@@ -483,7 +601,16 @@ async function runFlow(
       startingPiece.cycleSeconds !== null &&
       !useAppStore.getState().mood.performance.isPerforming
     ) {
-      await startMoodPerformanceForRecordingFlow();
+      let started = false;
+      try {
+        started = await startMoodPerformanceForRecordingFlow();
+      } finally {
+        const performanceState = useAppStore.getState().mood.performance;
+        if (performanceState.isPerforming && performanceState.epoch !== null) {
+          performanceStartedByFlow = { epoch: performanceState.epoch };
+        }
+      }
+      if (!started) return false;
       throwIfFlowAborted(signal, "Aborted before overdub performance start");
     }
 
@@ -500,8 +627,10 @@ async function runFlow(
         // it; the line names the next action: the settings for a denial, a
         // retry for anything else. Engine error text stays off the screen.
         void requestMedia();
-        options.onError?.(isPermissionDenial(e) ? CAMERA_DENIED_COPY : ACQUIRE_FAILED_COPY);
-        return false;
+        return reportMoodTakeFailure(
+          options,
+          isPermissionDenial(e) ? CAMERA_DENIED_COPY : ACQUIRE_FAILED_COPY,
+        );
       }
     }
     if (!stream) return false;
@@ -520,8 +649,7 @@ async function runFlow(
     const tracksUsable = allTracksUsable(stream) || (await waitForUsableTracks(stream, { signal }));
     if (!tracksUsable) {
       actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
-      options.onError?.(RECORDING_INTERRUPTED_COPY);
-      return false;
+      return reportMoodTakeFailure(options, RECORDING_INTERRUPTED_COPY);
     }
 
     const audioContext = getAudioContext();
@@ -530,28 +658,38 @@ async function runFlow(
     if (startingPiece.cycleSeconds === null) {
       countdownEndsAt = audioContext.currentTime + COUNT_IN_BEATS * beatSeconds;
     } else {
-      const performance = useAppStore.getState().mood.performance;
-      if (!performance.isPerforming || performance.epoch === null) return false;
+      const performanceState = useAppStore.getState().mood.performance;
+      if (!performanceState.isPerforming || performanceState.epoch === null) return false;
       countdownEndsAt = cycleCountdownDeadline(
-        performance.epoch,
+        performanceState.epoch,
         startingPiece.cycleSeconds,
         audioContext.currentTime,
       );
     }
+    const countInStartsAt = audioContext.currentTime;
     cancelCountInClicks = scheduleCountInClicks(
-      audioContext.currentTime,
+      countInStartsAt,
       countdownEndsAt,
       beatSeconds,
       startingPiece.cycleSeconds === null ? "first-take" : "overdub",
+    );
+    // A first take counts in three beats; an overdub's ticks sit on whole
+    // beats back from the punch-in, from the tap on.
+    actions.setMoodCountInTicks(
+      startingPiece.cycleSeconds === null
+        ? COUNT_IN_BEATS
+        : Math.floor((countdownEndsAt - countInStartsAt) / beatSeconds + 1e-9),
     );
     actions.setCountdownEndsAt(countdownEndsAt);
     actions.setRecordingState("countdown", null);
 
     await waitUntilAudioTime(countdownEndsAt, audioContext, signal);
     setCaptureGain(!useAppStore.getState().mood.monitorWithHeadphones);
+    actions.setCaptureEndsAt(countdownEndsAt + capMs / 1000);
     actions.setRecordingState("recording", null);
     const result = await recordWithEarlyStop(stream, capMs, audioContext, signal);
     throwIfFlowAborted(signal, "Aborted after capture");
+    actions.setRecordingState("reviewing", null);
 
     const trim = autoTrim(result.audioBuffer, capMs);
     const bufferDurationMs = Math.max(0, Math.round(result.audioBuffer.duration * 1000));
@@ -561,8 +699,11 @@ async function runFlow(
       Math.min(trim.trimEndMs, bufferDurationMs),
     );
     const contentSeconds = Math.max(0, (trimEndFromContent - trimStartMs) / 1000);
-    const snap = snapTake(contentSeconds, startingPiece.cycleSeconds);
-    if (!snap.ok) return false;
+    const snap = snapTake(contentSeconds, snapCycleSeconds(startingPiece));
+    if (!snap.ok) {
+      actions.setLastTakeReceipt({ kind: "too-short" });
+      return false;
+    }
 
     const trimEndMs =
       !snap.isOne && snap.trimTo !== undefined
@@ -602,22 +743,32 @@ async function runFlow(
       // saveNow logs autosave.error; durability failure is not a recording failure.
     }
     throwIfFlowAborted(signal, "Aborted after Mood take durability save");
+    actions.setLastTakeReceipt({
+      kind: "kept",
+      seconds: take.durationSeconds,
+      multiple: take.cycleMultiple,
+    });
     actions.setRecordingState("idle", null);
     armSelection(micId, take.id);
     attachPosterWhenReady(micId, take.id, result.blob, signal);
     fireSyncAssistWhenReady(micId, take, signal);
-    firePartClassificationWhenReady(micId, take, signal);
+    firePartClassificationWhenReady(micId, take, isOne, signal);
+    completed = true;
     return true;
   } catch (e) {
     if (isFlowAbort(e, signal)) {
       cancelCountInClicks();
       if (getAbortReason(signal) === "interrupted") {
         actions.setRecordingError(RECORDING_INTERRUPTED_COPY);
+        reportMoodTakeFailure(options, RECORDING_INTERRUPTED_COPY);
       }
       return false;
     }
-    options.onError?.(errorMessage(e));
-    return false;
+    if (e instanceof InstantMoodPunchOutError) {
+      actions.setLastTakeReceipt({ kind: "too-short" });
+      return false;
+    }
+    return reportMoodTakeFailure(options, errorMessage(e));
   } finally {
     cancelCountInClicks();
     if (getMoodRecordingPreviewStream() === stream) {
@@ -628,12 +779,25 @@ async function runFlow(
     releaseCaptureIntent?.();
     setCaptureGain(false);
     actions.setCountdownEndsAt(null);
+    actions.setCaptureEndsAt(null);
     actions.setRecordingState("idle", null);
     actions.setMoodHotMic(null);
+    if (performanceStartedByFlow && !completed) {
+      const performanceState = useAppStore.getState().mood.performance;
+      if (
+        performanceState.isPerforming &&
+        performanceState.epoch === performanceStartedByFlow.epoch
+      ) {
+        stopMoodPerformance();
+      }
+    }
   }
 }
 
 export function __resetMoodRecordingFlowForTesting(): void {
+  backfillClassificationController?.abort();
+  backfillClassificationController = null;
+  backfilledOneTakeIds.clear();
   currentController = null;
   currentFlow = null;
   currentStopController = null;

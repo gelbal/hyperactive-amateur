@@ -4,12 +4,26 @@ import * as Tone from "tone";
 import { useAppStore } from "../store/useAppStore";
 import type { MoodLens, MoodPiece, MoodSelectionEntry, MoodTake } from "../types";
 import { canStartMoodPerformanceTap } from "./audibleActionGate";
-import { nextBeatBoundary, nextCycleBoundary, takeLoopPeriod } from "./moodClock";
-import { syncMoodPlayers, type MoodPlayerLiveTake } from "./moodPlayers";
+import {
+  DROP_BEATS_PER_CYCLE,
+  nextBeatBoundary,
+  nextCycleBoundary,
+  takeLoopPeriod,
+} from "./moodClock";
+import { scheduleMoodDropFilter } from "./moodFx";
+import {
+  livePlayerIsStale,
+  playerSyncOffsetMs,
+  scheduleMoodPlayerSwap,
+  syncMoodPlayers,
+  type MoodPlayerLiveTake,
+} from "./moodPlayers";
 import {
   armMoodDropCommit,
   armMoodLensCommit,
   armMoodSelectionCommit,
+  lockedSelectionCommits,
+  pendingSelectionCommits,
 } from "./moodTransport";
 import {
   liveTakesFromSelections,
@@ -46,10 +60,16 @@ function liveVideoTakesIncludingArmed(
     liveTakesFromSelections(piece, selections, epoch).map((take) => [take.takeId, take]),
   );
 
-  for (const mic of piece.mics) {
-    const entry = armed[mic.id];
+  // Armed takes, and takes whose swap is still queued (a locked swap stays
+  // queued after its mic is re-armed for a later boundary): their prepared
+  // videos stay in the pool until their cut.
+  const upcoming = [
+    ...Object.entries(armed).map(([micId, entry]) => ({ micId, entry })),
+    ...pendingSelectionCommits(),
+  ];
+  for (const { micId, entry } of upcoming) {
     if (!entry || entry === "off") continue;
-    const take = mic.takes.find((candidate) => candidate.id === entry);
+    const take = takeForEntry(piece, micId, entry);
     if (!take || live.has(take.id)) continue;
     live.set(take.id, {
       takeId: take.id,
@@ -62,13 +82,14 @@ function liveVideoTakesIncludingArmed(
           : takeLoopPeriod(take.cycleMultiple, piece.cycleSeconds),
       cycleMultiple: take.cycleMultiple,
       epoch,
+      syncOffsetMs: take.syncOffsetMs,
     });
   }
 
   return [...live.values()];
 }
 
-export function livePlayerTakesFromSelections(
+function livePlayerTakesFromSelections(
   piece: MoodPiece,
   selections: SelectionMap,
 ): MoodPlayerLiveTake[] {
@@ -83,25 +104,130 @@ export function livePlayerTakesFromSelections(
   return [...live.values()];
 }
 
+// The pool's takes: live and armed (an armed take keeps its prepared video
+// through an earlier commit), each phase-locked with the sync offset its
+// audio player was built with, so a new offset reaches the video when it
+// reaches the sound.
+function videoTakesForPool(
+  piece: MoodPiece,
+  selections: SelectionMap,
+  armed: ArmedMap,
+  epoch: number | null,
+): MoodVideoPoolTake[] {
+  return liveVideoTakesIncludingArmed(piece, selections, armed, epoch).map((take) => {
+    const syncOffsetMs = playerSyncOffsetMs(take.takeId);
+    return syncOffsetMs === null ? take : { ...take, syncOffsetMs };
+  });
+}
+
+// audioTime is the drain's audible time on the commit path.
 export function syncCommittedMoodEngines(
-  options: { syncPlayers?: boolean } = {},
+  options: { syncPlayers?: boolean; audioTime?: number } = {},
 ): void {
   const state = useAppStore.getState();
   const piece = state.mood.piece;
   if (!piece) return;
 
-  const { performance } = state.mood;
-  syncPool(liveTakesFromSelections(piece, performance.selections, performance.epoch));
+  const { performance: performanceState } = state.mood;
+  if (
+    options.syncPlayers !== false &&
+    performanceState.isPerforming &&
+    performanceState.epoch !== null &&
+    piece.cycleSeconds !== null
+  ) {
+    // The live take of every mic with a swap still queued (its resync, Off
+    // or another take) keeps its player until that commit, whose swap on the
+    // audio clock replaces it.
+    const swapQueued = new Set(
+      pendingSelectionCommits()
+        .map((event) => performanceState.selections[event.micId])
+        .filter((entry): entry is string => entry !== undefined && entry !== "off"),
+    );
+    syncMoodPlayers(
+      livePlayerTakesFromSelections(piece, performanceState.selections),
+      performanceState.epoch,
+      piece.cycleSeconds,
+      options.audioTime,
+      swapQueued,
+    );
+  }
 
-  if (options.syncPlayers === false) return;
-  if (!performance.isPerforming || performance.epoch === null) return;
-  if (piece.cycleSeconds === null) return;
-
-  syncMoodPlayers(
-    livePlayerTakesFromSelections(piece, performance.selections),
-    performance.epoch,
-    piece.cycleSeconds,
+  syncPool(
+    videoTakesForPool(
+      piece,
+      performanceState.selections,
+      performanceState.armed,
+      performanceState.epoch,
+    ),
   );
+}
+
+// Audio swaps run on the audio clock, not the paint path: once a swap is
+// locked (the arm clock passed its boundary, so no re-arm can change it)
+// its players are scheduled to swap exactly at the boundary, about a
+// lookahead before the paint-path commit adopts them. Runs every frame;
+// the players module schedules each swap once.
+export function scheduleLockedPlayerSwaps(): void {
+  const state = useAppStore.getState();
+  const piece = state.mood.piece;
+  const { performance: performanceState } = state.mood;
+  if (
+    !piece ||
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
+    return;
+  }
+
+  const locked = lockedSelectionCommits();
+  // Arms made while the arm clock sat on a boundary all land on it, in
+  // order; only a mic's last one is its swap there.
+  const swaps = locked.filter(
+    (event, index) =>
+      !locked
+        .slice(index + 1)
+        .some(
+          (later) => later.micId === event.micId && later.boundaryTime === event.boundaryTime,
+        ),
+  );
+  const projected: SelectionMap = { ...performanceState.selections };
+  for (const event of swaps) {
+    const outgoing = projected[event.micId] ?? "off";
+    projected[event.micId] = event.entry;
+    const incomingTake = takeForEntry(piece, event.micId, event.entry);
+    scheduleMoodPlayerSwap(
+      outgoing === "off" ? null : outgoing,
+      incomingTake ? { takeId: incomingTake.id, take: incomingTake } : null,
+      event.boundaryTime,
+      performanceState.epoch,
+      piece.cycleSeconds,
+    );
+  }
+
+  resyncStaleLiveTakes(piece, performanceState.selections, performanceState.epoch);
+}
+
+// A live take whose audio changed under its player (a repair that decoded
+// its audio, a new sync offset) is re-armed for the next boundary, where the
+// swap above rebuilds it on the audio clock. A mic with a queued swap
+// resyncs through that swap.
+function resyncStaleLiveTakes(piece: MoodPiece, selections: SelectionMap, epoch: number): void {
+  if (piece.cycleSeconds === null) return;
+  let queuedMics: Set<string> | null = null;
+  for (const mic of piece.mics) {
+    const take = takeForEntry(piece, mic.id, selections[mic.id] ?? "off");
+    if (!take || !livePlayerIsStale(take)) continue;
+    queuedMics ??= new Set(pendingSelectionCommits().map((event) => event.micId));
+    if (queuedMics.has(mic.id)) continue;
+    const now = Tone.now();
+    armMoodSelectionCommit(
+      { micId: mic.id, entry: take.id },
+      nextCycleBoundary(epoch, piece.cycleSeconds, now),
+      now,
+    );
+    queuedMics.add(mic.id);
+  }
 }
 
 export function armSelection(micId: string, entry: MoodSelectionEntry): void {
@@ -119,25 +245,31 @@ export function armSelection(micId: string, entry: MoodSelectionEntry): void {
   state.actions.armMoodSelection(micId, entry);
 
   const armedState = useAppStore.getState();
-  const performance = armedState.mood.performance;
-  if (!performance.isPerforming || performance.epoch === null || piece.cycleSeconds === null) {
+  const performanceState = armedState.mood.performance;
+  if (
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
     armedState.actions.commitMoodSelections([commit]);
     syncCommittedMoodEngines({ syncPlayers: false });
     return;
   }
 
   const now = Tone.now();
-  const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodSelectionCommit(commit, boundaryTime, now);
   syncPool(
-    liveVideoTakesIncludingArmed(
+    videoTakesForPool(
       piece,
-      performance.selections,
-      performance.armed,
-      performance.epoch,
+      performanceState.selections,
+      performanceState.armed,
+      performanceState.epoch,
     ),
   );
-  if (entry !== "off") {
+  // The live take is already playing in step: re-selecting it (to cancel a
+  // queued swap) must not pre-roll its video.
+  if (entry !== "off" && entry !== current) {
     prepareUpcoming(entry, boundaryTime);
   }
 }
@@ -150,15 +282,19 @@ export function armLens(lens: MoodLens): void {
   const piece = state.mood.piece;
   if (!piece) return;
 
-  const performance = state.mood.performance;
-  if (!performance.isPerforming || performance.epoch === null || piece.cycleSeconds === null) {
+  const performanceState = state.mood.performance;
+  if (
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
+    piece.cycleSeconds === null
+  ) {
     state.actions.setMoodLens(lens);
     return;
   }
 
   state.actions.setMoodArmedLens(lens === piece.lens ? null : lens);
   const now = Tone.now();
-  const boundaryTime = nextCycleBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextCycleBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodLensCommit(lens, boundaryTime, now);
 }
 
@@ -167,20 +303,25 @@ export function armDrop(): void {
   if (!canStartMoodPerformanceTap(state)) return;
 
   const piece = state.mood.piece;
-  const performance = state.mood.performance;
+  const performanceState = state.mood.performance;
   if (
     !piece ||
     piece.vibe === "clean" ||
-    !performance.isPerforming ||
-    performance.epoch === null ||
+    !performanceState.isPerforming ||
+    performanceState.epoch === null ||
     piece.cycleSeconds === null
   ) {
     return;
   }
 
-  const nextActive = !(performance.armedDropActive ?? performance.dropActive);
+  const nextActive = !(performanceState.armedDropActive ?? performanceState.dropActive);
   state.actions.setMoodArmedDrop(nextActive);
   const now = Tone.now();
-  const boundaryTime = nextBeatBoundary(performance.epoch, piece.cycleSeconds, now);
+  const boundaryTime = nextBeatBoundary(performanceState.epoch, piece.cycleSeconds, now);
   armMoodDropCommit(nextActive, boundaryTime, now);
+  scheduleMoodDropFilter(
+    nextActive,
+    boundaryTime,
+    piece.cycleSeconds / DROP_BEATS_PER_CYCLE,
+  );
 }

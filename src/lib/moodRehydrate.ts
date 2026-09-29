@@ -1,19 +1,33 @@
 // ABOUTME: Mood rehydrate core — load schema-1 metadata, normalize, and protect repairs.
 // ABOUTME: Blob decoding is intentionally deferred to lazy Mood hydration.
-import type {
-  MoodLens,
-  MoodPart,
-  MoodPiece,
-  MoodStageId,
-  MoodTake,
-  MoodTimeFeel,
-  MoodVibeId,
+import {
+  MOOD_CYCLE_BARS,
+  MOOD_CREDIT_PALETTE_IDS,
+  MOOD_CREDIT_MODE_IDS,
+  MOOD_FX_PRESET_IDS,
+  MOOD_KEY_IDS,
+  MOOD_LENS_IDS,
+  MOOD_TAKE_CYCLE_MULTIPLES,
+  MOOD_VIBE_IDS,
+  type MoodCredits,
+  type MoodArtDirection,
+  type MoodKeyEstimate,
+  type MoodPart,
+  type MoodPiece,
+  type MoodSelectionEntry,
+  type MoodStageId,
+  type MoodTake,
+  type MoodTimeFeel,
 } from "../types";
 import { isBlob, isRecord, resetPersistenceStore } from "./persistence";
 import { waitMs } from "./async";
 import { LOG_EVENTS, logger } from "./logger";
 import { DEFAULT_RETRY_DELAYS_MS, type RehydrateOptions } from "./rehydrate";
 import { MAX_TAKES_PER_MIC, STAGE_DESCRIPTORS } from "./moodStages";
+import {
+  clampCreditStyleIndex,
+  CREDIT_NAME_MAX_LENGTH,
+} from "./moodCredits";
 import * as moodPersistence from "./moodPersistence";
 import type {
   PersistedMoodMic,
@@ -22,7 +36,7 @@ import type {
 } from "./moodPersistence";
 import { captureFirstFrame } from "./posterFrame";
 
-export type MoodAudioContextLike = Pick<AudioContext, "decodeAudioData">;
+type MoodAudioContextLike = Pick<AudioContext, "decodeAudioData">;
 
 export interface MoodPosterRegenerationJob {
   micId: string;
@@ -78,13 +92,11 @@ export type MoodRehydrateResult =
 
 const MOOD_STAGES = Object.keys(STAGE_DESCRIPTORS) as MoodStageId[];
 const MOOD_FEELS: MoodTimeFeel[] = ["pocket", "click"];
-const MOOD_VIBES: MoodVibeId[] = ["clean", "print", "mixtape", "blocks", "camcorder"];
-const MOOD_LENSES: MoodLens[] = ["wall", "splits"];
 const MOOD_PARTS: MoodPart[] = ["lead", "harmony", "bass", "beatbox", "adlib"];
 const MOOD_PART_SOURCES = ["ai", "user"] as const;
 const MOOD_AUDIO_STATUSES = ["ok", "unavailable"] as const;
-const MOOD_CYCLE_BARS = [1, 2, 4] as const;
-const MOOD_CYCLE_MULTIPLES = [0.5, 1, 2, 4] as const;
+const MOOD_ART_SOURCES = ["ai", "user"] as const;
+const MOOD_KEY_MODES = ["major", "minor"] as const;
 
 function warn(warnings: string[], message: string): void {
   warnings.push(message);
@@ -101,6 +113,29 @@ async function decodeMoodBlob(
 ): Promise<AudioBuffer> {
   const buffer = await blob.arrayBuffer();
   return audioContext.decodeAudioData(buffer.slice(0));
+}
+
+// Why a take's audio could not be decoded, for the on-device log: the take
+// itself only carries its repair state.
+export function logMoodDecodeFailure(
+  phase: "load" | "repair",
+  micId: string,
+  takeId: string,
+  videoBlob: Blob,
+  audioBlob: Blob | null,
+  err: unknown,
+): void {
+  logger.warn(LOG_EVENTS.AUDIO_DECODE_FAILED, {
+    scope: "mood",
+    phase,
+    micId,
+    takeId,
+    hasSidecar: audioBlob !== null,
+    blobType: videoBlob.type,
+    blobSize: videoBlob.size,
+    name: err instanceof Error ? err.name : "",
+    message: err instanceof Error ? err.message : String(err),
+  });
 }
 
 export async function decodeMoodTakeAudio(
@@ -215,25 +250,32 @@ function normalizeTake(
     return null;
   }
 
-  const trimStartMs = finiteNumber(rawTake.trimStartMs);
-  const trimEndMs = finiteNumber(rawTake.trimEndMs);
-  if (
-    trimStartMs === null ||
-    trimEndMs === null ||
-    trimStartMs < 0 ||
-    trimEndMs <= trimStartMs
-  ) {
-    warn(warnings, `Take ${takeId} in ${micId} trim window was invalid and was dropped.`);
-    return null;
-  }
-
   const durationSeconds = finiteNumber(rawTake.durationSeconds);
   if (durationSeconds === null || durationSeconds <= 0) {
     warn(warnings, `Take ${takeId} in ${micId} duration was invalid and was dropped.`);
     return null;
   }
 
-  if (!MOOD_CYCLE_MULTIPLES.includes(rawTake.cycleMultiple as MoodTake["cycleMultiple"])) {
+  // Trims are metadata over an immutable blob: an invalid window is reset to
+  // the whole take rather than costing the take its bytes.
+  let trimStartMs = finiteNumber(rawTake.trimStartMs);
+  let trimEndMs = finiteNumber(rawTake.trimEndMs);
+  if (
+    trimStartMs === null ||
+    trimEndMs === null ||
+    trimStartMs < 0 ||
+    trimEndMs <= trimStartMs
+  ) {
+    warn(warnings, `Take ${takeId} in ${micId} trim window was invalid and reset.`);
+    trimStartMs = 0;
+    trimEndMs = durationSeconds * 1000;
+  }
+
+  if (
+    !MOOD_TAKE_CYCLE_MULTIPLES.includes(
+      rawTake.cycleMultiple as MoodTake["cycleMultiple"],
+    )
+  ) {
     warn(warnings, `Take ${takeId} in ${micId} had an invalid cycleMultiple and was dropped.`);
     return null;
   }
@@ -366,6 +408,121 @@ function normalizeOnePointers(
   return { oneMicId: rawOneMicId, oneTakeId: rawOneTakeId };
 }
 
+function normalizeCredits(
+  rawCredits: unknown,
+  mics: PersistedMoodMic[],
+  warnings: string[],
+): MoodCredits | undefined {
+  if (rawCredits === undefined) return undefined;
+  if (!isRecord(rawCredits)) {
+    warn(warnings, "Mood Credits metadata was invalid and cleared.");
+    return undefined;
+  }
+
+  const validMicIds = new Set(mics.map((mic) => mic.id));
+  const names: Record<string, string> = {};
+  let namesRepaired = false;
+  if (isRecord(rawCredits.names)) {
+    for (const [micId, value] of Object.entries(rawCredits.names)) {
+      if (!validMicIds.has(micId) || typeof value !== "string") {
+        namesRepaired = true;
+        continue;
+      }
+      const normalized = value.trim().slice(0, CREDIT_NAME_MAX_LENGTH);
+      if (normalized.length === 0) {
+        if (value.length > 0) namesRepaired = true;
+        continue;
+      }
+      if (normalized !== value) namesRepaired = true;
+      names[micId] = normalized;
+    }
+  } else {
+    namesRepaired = true;
+  }
+  if (namesRepaired) {
+    warn(warnings, "Mood Credits names contained invalid entries and were repaired.");
+  }
+
+  const styleIndex = clampCreditStyleIndex(rawCredits.styleIndex);
+  if (styleIndex !== rawCredits.styleIndex) {
+    warn(warnings, "Mood Credits styleIndex was invalid and clamped.");
+  }
+
+  let mode: MoodCredits["mode"];
+  if (rawCredits.mode !== undefined) {
+    if (
+      typeof rawCredits.mode === "string" &&
+      MOOD_CREDIT_MODE_IDS.includes(rawCredits.mode as (typeof MOOD_CREDIT_MODE_IDS)[number])
+    ) {
+      mode = rawCredits.mode as MoodCredits["mode"];
+    } else {
+      warn(warnings, "Mood Credits mode was invalid and cleared.");
+    }
+  }
+
+  return {
+    enabled: Boolean(rawCredits.enabled),
+    names,
+    styleIndex,
+    ...(mode ? { mode } : {}),
+  };
+}
+
+function normalizeArtDirection(raw: unknown): MoodArtDirection | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (
+    !MOOD_FX_PRESET_IDS.includes(raw.fxPreset as MoodArtDirection["fxPreset"]) ||
+    !MOOD_CREDIT_PALETTE_IDS.includes(
+      raw.creditPalette as MoodArtDirection["creditPalette"],
+    ) ||
+    !MOOD_ART_SOURCES.includes(raw.source as MoodArtDirection["source"])
+  ) {
+    return undefined;
+  }
+  return {
+    fxPreset: raw.fxPreset as MoodArtDirection["fxPreset"],
+    creditPalette: raw.creditPalette as MoodArtDirection["creditPalette"],
+    source: raw.source as MoodArtDirection["source"],
+  };
+}
+
+function normalizeKeyEstimate(raw: unknown): MoodKeyEstimate | undefined {
+  if (!isRecord(raw)) return undefined;
+  const confidence = finiteNumber(raw.confidence);
+  if (
+    !MOOD_KEY_IDS.includes(raw.key as MoodKeyEstimate["key"]) ||
+    !MOOD_KEY_MODES.includes(raw.mode as MoodKeyEstimate["mode"]) ||
+    confidence === null ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
+    return undefined;
+  }
+  return {
+    key: raw.key as MoodKeyEstimate["key"],
+    mode: raw.mode as MoodKeyEstimate["mode"],
+    confidence,
+  };
+}
+
+function normalizeSavedSelections(
+  raw: unknown,
+  mics: PersistedMoodMic[],
+): Record<string, MoodSelectionEntry> | undefined {
+  if (!isRecord(raw)) return undefined;
+  const normalized: Record<string, MoodSelectionEntry> = {};
+  const micById = new Map(mics.map((mic) => [mic.id, mic]));
+  for (const [micId, entry] of Object.entries(raw)) {
+    if (typeof entry !== "string") continue;
+    const mic = micById.get(micId);
+    if (!mic) continue;
+    if (entry === "off" || mic.takes.some((take) => take.id === entry)) {
+      normalized[micId] = entry;
+    }
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function warnMissingMoodBlobs(persisted: PersistedMoodPiece, warnings: string[]): void {
   for (const missing of persisted.missingBlobs ?? []) {
     if (missing.field === "videoBlob") {
@@ -458,7 +615,8 @@ export async function decodeMoodTakes(
             let audioStatus: MoodTake["audioStatus"] = "ok";
             try {
               audioBuffer = await decodeMoodTakeAudio(take, audioContext);
-            } catch {
+            } catch (err) {
+              logMoodDecodeFailure("load", mic.id, take.id, take.videoBlob, take.audioBlob ?? null, err);
               audioStatus = "unavailable";
               if (!wasUnavailable) warnMoodAudioUnavailable(warnings, mic.id, take.id);
             }
@@ -511,6 +669,19 @@ export async function decodeMoodTakes(
       oneTakeId: piece.oneTakeId,
       vibe: piece.vibe,
       lens: piece.lens,
+      ...(piece.credits
+        ? {
+            credits: {
+              ...piece.credits,
+              names: { ...piece.credits.names },
+            },
+          }
+        : {}),
+      ...(piece.artDirection ? { artDirection: { ...piece.artDirection } } : {}),
+      ...(piece.keyEstimate ? { keyEstimate: { ...piece.keyEstimate } } : {}),
+      ...(piece.savedSelections
+        ? { savedSelections: { ...piece.savedSelections } }
+        : {}),
       mics,
       updatedAt: piece.updatedAt,
     },
@@ -530,6 +701,11 @@ export function normalizeMoodMeta(raw: unknown, warnings: string[]): PersistedMo
   const timeFeel = normalizeEnum(warnings, "Mood feel", source.timeFeel, MOOD_FEELS, "pocket");
   const mics = normalizeMics(source.mics, stage, warnings);
   const onePointers = normalizeOnePointers(source.oneMicId, source.oneTakeId, mics, warnings);
+  const credits = normalizeCredits(source.credits, mics, warnings);
+  const artDirection = normalizeArtDirection(source.artDirection);
+  const keyEstimate = normalizeKeyEstimate(source.keyEstimate);
+  const savedSelections = normalizeSavedSelections(source.savedSelections, mics);
+  const persistedVibe = source.vibe === "strobe" ? "crossroll" : source.vibe;
 
   return {
     moodSchemaVersion: 1,
@@ -549,8 +725,12 @@ export function normalizeMoodMeta(raw: unknown, warnings: string[]): PersistedMo
       source.cycleSeconds,
     ),
     ...onePointers,
-    vibe: normalizeEnum(warnings, "Mood vibe", source.vibe, MOOD_VIBES, "clean"),
-    lens: normalizeEnum(warnings, "Mood lens", source.lens, MOOD_LENSES, "wall"),
+    vibe: normalizeEnum(warnings, "Mood vibe", persistedVibe, MOOD_VIBE_IDS, "clean"),
+    lens: normalizeEnum(warnings, "Mood lens", source.lens, MOOD_LENS_IDS, "wall"),
+    ...(credits ? { credits } : {}),
+    ...(onePointers.oneTakeId && artDirection ? { artDirection } : {}),
+    ...(onePointers.oneTakeId && keyEstimate ? { keyEstimate } : {}),
+    ...(savedSelections ? { savedSelections } : {}),
     mics,
     updatedAt: normalizeUpdatedAt(source.updatedAt, warnings),
   };

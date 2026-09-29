@@ -1,6 +1,6 @@
 // ABOUTME: SuggestButton — calls Gemini to fill the step grid based on track tags + tempo.
 // ABOUTME: Disabled until ≥4 tracks have clips; shows an undo toast for 5 seconds after applying.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sparkles, Undo2 } from "lucide-react";
 import { selectClipCount, useAppStore } from "../store/useAppStore";
 import { suggestTracks } from "../lib/suggestTracks";
@@ -38,6 +38,15 @@ export function SuggestButton() {
   const [undoSnapshot, setUndoSnapshot] = useState<boolean[][] | null>(null);
 
   const disabled = pending || clipCount < AI_UNLOCK_CLIPS || isExporting;
+  // A request that answers after the button went away (a switch to Mood, the
+  // clip count dropping below the unlock) is dropped: its Undo would be gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!undoSnapshot) return;
@@ -75,6 +84,7 @@ export function SuggestButton() {
         stepCount,
         tracks: suggestTracks(requestTracks, tagReasoning),
       });
+      if (!mountedRef.current) return;
       const applied = useAppStore
         .getState()
         .actions.applyPatternIfCurrent(grid, projectRevision, stepCount);

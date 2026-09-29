@@ -4,9 +4,18 @@ import colors from "tailwindcss/colors";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyVibe, initVibeResources, setPrintDensity } from "./moodVibes";
-import { CAMCORDER, MIXTAPE, PRINT } from "./moodVibePalettes";
+import {
+  CAMCORDER,
+  CAMCORDER_NOISE_HOLD_SECONDS,
+  CROSSROLL,
+  GHOST,
+  MIXTAPE,
+  PRINT,
+  SOLAR,
+  WEAVE,
+} from "./moodVibePalettes";
 import { STAGE_DESCRIPTORS } from "./moodStages";
-import type { MoodStageId, MoodVibeId } from "../types";
+import { MOOD_VIBE_IDS, type MoodStageId } from "../types";
 
 type CanvasCall = {
   method: string;
@@ -98,21 +107,21 @@ describe("moodVibes", () => {
 
   it("precomputes lattice geometry per density and stage shape", () => {
     const corners = initVibeResources("corners").print;
-    expect([corners.normal.canvas.width, corners.normal.canvas.height]).toEqual([48, 48]);
+    expect([corners.normal.canvas.width, corners.normal.canvas.height]).toEqual([128, 128]);
     expect([corners.degraded.canvas.width, corners.degraded.canvas.height]).toEqual([
-      32, 32,
+      84, 84,
     ]);
 
     const row = initVibeResources("row").print;
-    expect([row.normal.canvas.width, row.normal.canvas.height]).toEqual([48, 27]);
-    expect([row.degraded.canvas.width, row.degraded.canvas.height]).toEqual([32, 18]);
+    expect([row.normal.canvas.width, row.normal.canvas.height]).toEqual([128, 72]);
+    expect([row.degraded.canvas.width, row.degraded.canvas.height]).toEqual([84, 47]);
 
     const stack = initVibeResources("stack").print;
-    expect([stack.normal.canvas.width, stack.normal.canvas.height]).toEqual([27, 48]);
-    expect([stack.degraded.canvas.width, stack.degraded.canvas.height]).toEqual([18, 32]);
+    expect([stack.normal.canvas.width, stack.normal.canvas.height]).toEqual([72, 128]);
+    expect([stack.degraded.canvas.width, stack.degraded.canvas.height]).toEqual([47, 84]);
 
-    expect(corners.normal.centers).toHaveLength(48 * 48 * 2);
-    expect(corners.degraded.centers).toHaveLength(32 * 32 * 2);
+    expect(corners.normal.centers).toHaveLength(128 * 128 * 2);
+    expect(corners.degraded.centers).toHaveLength(84 * 84 * 2);
   });
 
   it("switches the lattice with the degrade knob for the session", () => {
@@ -143,7 +152,7 @@ describe("moodVibes", () => {
     expect(resources.print.normal.centers).toBe(centers);
   });
 
-  it("pulls fixed Mixtape, Camcorder, and Print palettes from Tailwind defaults", () => {
+  it("pulls fixed Mixtape, Camcorder, Print, Ghost, and Solar tuning from Tailwind defaults", () => {
     expect(PRINT).toEqual({
       paper: colors.stone[100],
       ink: colors.stone[900],
@@ -161,6 +170,27 @@ describe("moodVibes", () => {
       noiseAlpha: 0.08,
       noiseTileSize: 64,
     });
+    expect(GHOST).toEqual({
+      echoAlphas: [0.22, 0.14, 0.08],
+      feedbackAlpha: 0.72,
+    });
+    expect(SOLAR).toEqual({
+      pale: colors.white,
+      orange: colors.orange[500],
+      zinc: colors.zinc[950],
+      orangeAlpha: 0.8,
+      zincAlpha: 0.45,
+    });
+    expect(WEAVE).toMatchObject({
+      wash: colors.amber[200],
+      gate: colors.stone[950],
+      scratch: colors.stone[200],
+    });
+    expect(CROSSROLL).toMatchObject({
+      bar: colors.zinc[950],
+      sprocket: colors.white,
+      seamHeightPx: 24,
+    });
   });
 
   it("draws Blocks through one persistent tiny canvas per renderer resource bundle", () => {
@@ -171,8 +201,8 @@ describe("moodVibes", () => {
     const blocksCanvas = resources.blocks.canvas;
     const blocksCtx = resources.blocks.ctx as RecordedContext;
 
-    expect(blocksCanvas.width).toBe(Math.max(1, Math.round(descriptor.canvasSize.w / 12)));
-    expect(blocksCanvas.height).toBe(Math.max(1, Math.round(descriptor.canvasSize.h / 12)));
+    expect(blocksCanvas.width).toBe(Math.max(1, Math.round(descriptor.canvasSize.w / 6)));
+    expect(blocksCanvas.height).toBe(Math.max(1, Math.round(descriptor.canvasSize.h / 6)));
 
     applyVibe(ctx, canvas, "blocks", resources);
     applyVibe(ctx, canvas, "blocks", resources);
@@ -303,7 +333,7 @@ describe("moodVibes", () => {
     ]);
   });
 
-  it("reuses Mixtape and Camcorder resources across frames", () => {
+  it("reuses Mixtape and Camcorder resources across audio-clock frames", () => {
     const { canvas, ctx } = renderContext("row");
     const resources = initVibeResources("row");
     const mixtape = resources.mixtape;
@@ -320,8 +350,8 @@ describe("moodVibes", () => {
     expect(resources.mixtape).toBe(mixtape);
 
     ctx.__haCanvasCalls.length = 0;
-    applyVibe(ctx, canvas, "camcorder", resources);
-    applyVibe(ctx, canvas, "camcorder", resources);
+    applyVibe(ctx, canvas, "camcorder", resources, 2);
+    applyVibe(ctx, canvas, "camcorder", resources, 2);
 
     expect(resources.camcorder).toBe(camcorder);
     expect(resources.camcorder.frameCanvas).toBe(frameCanvas);
@@ -331,29 +361,357 @@ describe("moodVibes", () => {
     expect(resources.camcorder.noisePatterns).toBe(noisePatterns);
     expect(resources.camcorder.noiseTiles[0]).toBe(noiseTiles[0]);
     expect(resources.camcorder.noisePatterns[0]).toBe(noisePatterns[0]);
-    expect(resources.camcorder.frameCounter).toBe(2);
     expect(
       ctx.__haCanvasCalls
         .filter((call) => call.globalCompositeOperation === "overlay")
-        .map((call) => call.fillStyle),
-    ).toEqual([noisePatterns[0], noisePatterns[1]]);
+        .map((call) => noisePatterns.indexOf(call.fillStyle as CanvasPattern)),
+    ).toEqual([2, 2]);
   });
 
-  it("dispatches every spec vibe id without throwing", () => {
-    const allVibes: MoodVibeId[] = ["clean", "blocks", "mixtape", "camcorder", "print"];
+  it("steps Camcorder noise on a fifteen-hertz audio-clock hold", () => {
     const { canvas, ctx } = renderContext("row");
     const resources = initVibeResources("row");
 
-    for (const vibe of allVibes) {
-      applyVibe(ctx, canvas, vibe, resources);
+    expect(CAMCORDER_NOISE_HOLD_SECONDS).toBeCloseTo(1 / 15);
+    for (const audioTime of [
+      0,
+      CAMCORDER_NOISE_HOLD_SECONDS - 0.001,
+      CAMCORDER_NOISE_HOLD_SECONDS + 0.001,
+      CAMCORDER_NOISE_HOLD_SECONDS * 2 - 0.001,
+      CAMCORDER_NOISE_HOLD_SECONDS * 2 + 0.001,
+    ]) {
+      applyVibe(ctx, canvas, "camcorder", resources, audioTime);
+    }
+
+    expect(
+      ctx.__haCanvasCalls
+        .filter((call) => call.globalCompositeOperation === "overlay")
+        .map((call) =>
+          resources.camcorder.noisePatterns.indexOf(call.fillStyle as CanvasPattern),
+        ),
+    ).toEqual([0, 0, 1, 1, 2]);
+  });
+
+  it("selects identical Camcorder noise at matching times across 30Hz and 120Hz paints", () => {
+    const { canvas, ctx } = renderContext("row");
+    const resources = initVibeResources("row");
+    const noiseAtEndOfPattern = (paintTimes: number[]) => {
+      ctx.__haCanvasCalls.length = 0;
+      for (const audioTime of paintTimes) {
+        applyVibe(ctx, canvas, "camcorder", resources, audioTime);
+      }
+      const fillStyle = ctx.__haCanvasCalls
+        .filter((call) => call.globalCompositeOperation === "overlay")
+        .at(-1)?.fillStyle;
+      return resources.camcorder.noisePatterns.indexOf(fillStyle as CanvasPattern);
+    };
+
+    const at30Hz = noiseAtEndOfPattern([0, 1 / 30, 2 / 30, 3 / 30, 4 / 30, 0.2]);
+    const at120Hz = noiseAtEndOfPattern([
+      ...Array.from({ length: 24 }, (_, index) => index / 120),
+      0.2,
+    ]);
+
+    expect(at30Hz).toBe(3);
+    expect(at120Hz).toBe(at30Hz);
+  });
+
+  it("draws Kaleido from one persistent snapshot with four flipped quadrants", () => {
+    const { canvas, ctx } = renderContext("row");
+    const resources = initVibeResources("row");
+    const kaleido = resources.kaleido;
+    const snapshotCanvas = kaleido.snapshotCanvas;
+    const snapshotCtx = kaleido.snapshotCtx as RecordedContext;
+    const halfWidth = canvas.width / 2;
+    const halfHeight = canvas.height / 2;
+
+    // No established beat grid uses a fixed top-left source quadrant.
+    applyVibe(ctx, canvas, "kaleido", resources, 8.25, 0, null);
+    // Beat one jumps the source quadrant to top-right, using audio time only.
+    applyVibe(ctx, canvas, "kaleido", resources, 1.25, 0, 1);
+
+    expect(resources.kaleido).toBe(kaleido);
+    expect(resources.kaleido.snapshotCanvas).toBe(snapshotCanvas);
+    expect(drawImageCalls(snapshotCtx).map((call) => call.args[0])).toEqual([
+      canvas,
+      canvas,
+    ]);
+    expect(drawImageCalls(ctx).map((call) => call.args)).toEqual([
+      ...Array.from({ length: 4 }, () => [
+        snapshotCanvas,
+        0,
+        0,
+        halfWidth,
+        halfHeight,
+        0,
+        0,
+        halfWidth,
+        halfHeight,
+      ]),
+      ...Array.from({ length: 4 }, () => [
+        snapshotCanvas,
+        halfWidth,
+        0,
+        halfWidth,
+        halfHeight,
+        0,
+        0,
+        halfWidth,
+        halfHeight,
+      ]),
+    ]);
+    expect(ctx.save).toHaveBeenCalledTimes(8);
+    expect(ctx.restore).toHaveBeenCalledTimes(8);
+    expect(ctx.translate).toHaveBeenNthCalledWith(1, 0, 0);
+    expect(ctx.translate).toHaveBeenNthCalledWith(2, canvas.width, 0);
+    expect(ctx.translate).toHaveBeenNthCalledWith(3, 0, canvas.height);
+    expect(ctx.translate).toHaveBeenNthCalledWith(4, canvas.width, canvas.height);
+    expect(ctx.scale).toHaveBeenNthCalledWith(1, 1, 1);
+    expect(ctx.scale).toHaveBeenNthCalledWith(2, -1, 1);
+    expect(ctx.scale).toHaveBeenNthCalledWith(3, 1, -1);
+    expect(ctx.scale).toHaveBeenNthCalledWith(4, -1, -1);
+  });
+
+  it("draws Weave from persistent film plates with audio-clock sway and splice bump", () => {
+    const { canvas, ctx } = renderContext("corners");
+    const resources = initVibeResources("corners");
+    const weave = resources.weave;
+    const frameCanvas = weave.frameCanvas;
+    const gateCanvas = weave.gateCanvas;
+    const scratchTiles = weave.scratchTiles;
+    const scratchPatterns = weave.scratchPatterns;
+    const frameCtx = weave.frameCtx as RecordedContext;
+    const phase = 0.25;
+    const beatIndex = 8;
+    const swayAngle = Math.PI * 2 * phase + beatIndex;
+    const splice = 1 - phase;
+    const expectedDx =
+      WEAVE.swayXPx * Math.sin(swayAngle) + WEAVE.spliceBumpPx * splice;
+    const expectedDy =
+      WEAVE.swayYPx * Math.cos(swayAngle) - WEAVE.spliceBumpPx * 0.25 * splice;
+
+    applyVibe(ctx, canvas, "weave", resources, 8.25, 0, 1);
+
+    expect(resources.weave).toBe(weave);
+    expect(resources.weave.frameCanvas).toBe(frameCanvas);
+    expect(resources.weave.gateCanvas).toBe(gateCanvas);
+    expect(resources.weave.scratchTiles).toBe(scratchTiles);
+    expect(resources.weave.scratchPatterns).toBe(scratchPatterns);
+    expect(drawImageCalls(frameCtx)).toEqual([
+      expect.objectContaining({ args: [canvas, 0, 0] }),
+    ]);
+    const frameDraw = drawImageCalls(ctx)[0];
+    expect(frameDraw.args[0]).toBe(frameCanvas);
+    expect(frameDraw.args[1]).toBeCloseTo(expectedDx);
+    expect(frameDraw.args[2]).toBeCloseTo(expectedDy);
+    expect(frameDraw.args.slice(3)).toEqual([canvas.width, canvas.height]);
+    expect(drawImageCalls(ctx)[1]).toMatchObject({
+      args: [gateCanvas, 0, 0],
+      globalCompositeOperation: "multiply",
+    });
+    expect(ctx.__haCanvasCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "fillRect",
+          args: [0, 0, canvas.width, canvas.height],
+          fillStyle: WEAVE.wash,
+          globalCompositeOperation: "screen",
+        }),
+        expect.objectContaining({
+          method: "fillRect",
+          args: [0, 0, canvas.width, canvas.height],
+          fillStyle: scratchPatterns[0],
+          globalCompositeOperation: "screen",
+        }),
+      ]),
+    );
+
+    ctx.__haCanvasCalls.length = 0;
+    frameCtx.__haCanvasCalls.length = 0;
+    applyVibe(ctx, canvas, "weave", resources, 9.25, 0, 1);
+
+    expect(resources.weave.frameCanvas).toBe(frameCanvas);
+    expect(resources.weave.gateCanvas).toBe(gateCanvas);
+    expect(resources.weave.scratchTiles).toBe(scratchTiles);
+    expect(resources.weave.scratchPatterns).toBe(scratchPatterns);
+    expect(drawImageCalls(frameCtx).map((call) => call.args[0])).toEqual([canvas]);
+    expect(
+      ctx.__haCanvasCalls.find(
+        (call) =>
+          call.method === "fillRect" &&
+          call.globalCompositeOperation === "screen" &&
+          call.fillStyle === scratchPatterns[1],
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps Crossroll identity through beat six and rolls once on beat seven", () => {
+    const { canvas, ctx } = renderContext("corners");
+    const resources = initVibeResources("corners");
+    const crossroll = resources.crossroll;
+    const frameCanvas = crossroll.frameCanvas;
+    const seamCanvas = crossroll.seamCanvas;
+    const frameCtx = crossroll.frameCtx as RecordedContext;
+
+    applyVibe(ctx, canvas, "crossroll", resources, 3.25, 0, 1);
+
+    expect(resources.crossroll).toBe(crossroll);
+    expect(resources.crossroll.frameCanvas).toBe(frameCanvas);
+    expect(resources.crossroll.seamCanvas).toBe(seamCanvas);
+    expect(ctx.__haCanvasCalls).toEqual([]);
+    expect(drawImageCalls(frameCtx)).toHaveLength(0);
+
+    applyVibe(ctx, canvas, "crossroll", resources, 7.5, 0, 1);
+
+    expect(drawImageCalls(frameCtx)).toEqual([
+      expect.objectContaining({ args: [canvas, 0, 0] }),
+    ]);
+    expect(drawImageCalls(ctx)).toEqual([
+      expect.objectContaining({ args: [frameCanvas, 0, canvas.height / 2] }),
+      expect.objectContaining({ args: [frameCanvas, 0, -canvas.height / 2] }),
+      expect.objectContaining({
+        args: [seamCanvas, 0, canvas.height / 2 - CROSSROLL.seamHeightPx / 2],
+      }),
+    ]);
+  });
+
+  it("reuses persistent Ghost and Solar resources across frames", () => {
+    const { canvas, ctx } = renderContext("row");
+    const resources = initVibeResources("row");
+    const ghost = resources.ghost;
+    const solar = resources.solar;
+    const ghostFeedback = ghost.feedbackCanvas;
+    const ghostVignette = ghost.vignetteCanvas;
+    const ghostTransforms = ghost.transforms;
+    const solarPlates = solar.plates;
+
+    applyVibe(ctx, canvas, "ghost", resources, 10, 10, 0.5);
+    applyVibe(ctx, canvas, "solar", resources, 10.13, 10, 0.5);
+
+    expect(resources.ghost).toBe(ghost);
+    expect(resources.ghost.feedbackCanvas).toBe(ghostFeedback);
+    expect(resources.ghost.vignetteCanvas).toBe(ghostVignette);
+    expect(resources.ghost.transforms).toBe(ghostTransforms);
+    expect(resources.solar).toBe(solar);
+    expect(resources.solar.plates).toBe(solarPlates);
+    expect(resources.solar.plates.pale).toBe(solarPlates.pale);
+    expect(resources.solar.plates.orange).toBe(solarPlates.orange);
+    expect(resources.solar.plates.zinc).toBe(solarPlates.zinc);
+  });
+
+  it("draws three fixed Ghost screen echoes, clamps feedback, then updates it", () => {
+    const { canvas, ctx } = renderContext("stack");
+    const resources = initVibeResources("stack");
+    const ghost = resources.ghost;
+    const feedbackCtx = ghost.feedbackCtx as RecordedContext;
+
+    applyVibe(ctx, canvas, "ghost", resources, 2, 0, 0.5);
+
+    const screenDraws = drawImageCalls(ctx).filter(
+      (call) => call.globalCompositeOperation === "screen",
+    );
+    expect(screenDraws).toHaveLength(3);
+    expect(screenDraws.map((call) => call.globalAlpha)).toEqual([0.22, 0.14, 0.08]);
+    expect(screenDraws.map((call) => call.args)).toEqual(
+      ghost.transforms.map((transform) => [
+        ghost.feedbackCanvas,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+        transform.x,
+        transform.y,
+        transform.w,
+        transform.h,
+      ]),
+    );
+    expect(drawImageCalls(feedbackCtx)).toEqual([
+      expect.objectContaining({
+        args: [ghost.vignetteCanvas, 0, 0],
+        globalAlpha: 1,
+        globalCompositeOperation: "destination-in",
+      }),
+      expect.objectContaining({
+        args: [canvas, 0, 0],
+        globalAlpha: 0.72,
+        globalCompositeOperation: "source-over",
+      }),
+    ]);
+  });
+
+  it("switches Solar exposure plates hard on audio-clock beat subdivisions", () => {
+    const { canvas, ctx } = renderContext("row");
+    const resources = initVibeResources("row");
+    const { plates } = resources.solar;
+
+    applyVibe(ctx, canvas, "solar", resources, 4, 4, 0.8);
+    expect(drawImageCalls(ctx)).toHaveLength(0);
+
+    applyVibe(ctx, canvas, "solar", resources, 4.21, 4, 0.8);
+    expect(drawImageCalls(ctx)).toEqual([
+      expect.objectContaining({
+        args: [plates.pale, 0, 0],
+        globalAlpha: 1,
+        globalCompositeOperation: "difference",
+      }),
+    ]);
+
+    ctx.__haCanvasCalls.length = 0;
+    applyVibe(ctx, canvas, "solar", resources, 4.41, 4, 0.8);
+    expect(drawImageCalls(ctx)).toEqual([
+      expect.objectContaining({
+        args: [plates.orange, 0, 0],
+        globalAlpha: 0.8,
+        globalCompositeOperation: "screen",
+      }),
+    ]);
+
+    ctx.__haCanvasCalls.length = 0;
+    applyVibe(ctx, canvas, "solar", resources, 4.61, 4, 0.8);
+    expect(drawImageCalls(ctx)).toEqual([
+      expect.objectContaining({
+        args: [plates.zinc, 0, 0],
+        globalAlpha: 0.45,
+        globalCompositeOperation: "multiply",
+      }),
+    ]);
+  });
+
+  it("dispatches all ten vibe ids from the stopped-preview audio-clock anchor", () => {
+    const { canvas, ctx } = renderContext("row");
+    const resources = initVibeResources("row");
+
+    for (const vibe of MOOD_VIBE_IDS) {
+      applyVibe(ctx, canvas, vibe, resources, 7.25, 0, 1);
     }
 
     // toBe, not toEqual: two blank canvases of the same size are
     // structurally equal, so toEqual cannot tell tint from snapshot.
     const sources = drawImageCalls(ctx).map((call) => call.args[0]);
-    expect(sources).toHaveLength(3);
+    expect(sources).toHaveLength(16);
     expect(sources[0]).toBe(resources.blocks.canvas);
     expect(sources[1]).toBe(resources.camcorder.tintCanvas);
     expect(sources[2]).toBe(resources.camcorder.tintCanvas);
+    expect(sources.slice(3, 7)).toEqual([
+      resources.kaleido.snapshotCanvas,
+      resources.kaleido.snapshotCanvas,
+      resources.kaleido.snapshotCanvas,
+      resources.kaleido.snapshotCanvas,
+    ]);
+    expect(sources.slice(7, 9)).toEqual([
+      resources.weave.frameCanvas,
+      resources.weave.gateCanvas,
+    ]);
+    expect(sources.slice(9, 12)).toEqual([
+      resources.crossroll.frameCanvas,
+      resources.crossroll.frameCanvas,
+      resources.crossroll.seamCanvas,
+    ]);
+    expect(sources.slice(12, 15)).toEqual([
+      resources.ghost.feedbackCanvas,
+      resources.ghost.feedbackCanvas,
+      resources.ghost.feedbackCanvas,
+    ]);
+    expect(sources[15]).toBe(resources.solar.plates.pale);
   });
 });

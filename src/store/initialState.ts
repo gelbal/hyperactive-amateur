@@ -1,6 +1,16 @@
 // ABOUTME: Factory for a fresh, empty AppState — 8 untouched tracks at 90 BPM.
 // ABOUTME: Pure function so callers can rely on independent objects between calls.
-import type { AppMode, AppState, MoodPerformanceState, Track } from "../types";
+import type { AppMode, AppState, Track } from "../types";
+import {
+  APP_MODE_STORAGE_KEY,
+  createInitialMoodState,
+} from "./moodSlice";
+
+export {
+  APP_MODE_STORAGE_KEY,
+  createIdleMoodPerformance,
+  MOOD_HEADPHONES_STORAGE_KEY,
+} from "./moodSlice";
 
 const TRACK_COUNT = 8;
 export const DEFAULT_STEP_COUNT = 16;
@@ -10,9 +20,6 @@ export const MAX_STEP_COUNT = 64;
 
 export const VIDEO_DEVICE_STORAGE_KEY = "hyperactive-amateur-video-device";
 export const AUDIO_DEVICE_STORAGE_KEY = "hyperactive-amateur-audio-device";
-export const APP_MODE_STORAGE_KEY = "ha:lastMode";
-export const MOOD_HEADPHONES_STORAGE_KEY = "ha:mood:headphones";
-
 function readStoredDeviceId(key: string): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -33,15 +40,6 @@ function readStoredAppMode(): AppMode {
   }
 }
 
-function readStoredMoodHeadphones(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(MOOD_HEADPHONES_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 function createEmptyTrack(id: number, stepCount: number): Track {
   return {
     id,
@@ -52,20 +50,6 @@ function createEmptyTrack(id: number, stepCount: number): Track {
     muted: false,
     tag: null,
     showVideo: true,
-  };
-}
-
-export function createIdleMoodPerformance(): MoodPerformanceState {
-  return {
-    isPerforming: false,
-    epoch: null,
-    selections: {},
-    armed: {},
-    armedLens: null,
-    armedDropActive: null,
-    dropActive: false,
-    hotMicId: null,
-    cycleCount: 0,
   };
 }
 
@@ -85,24 +69,20 @@ export function createInitialState(): AppState {
         createEmptyTrack(i, DEFAULT_STEP_COUNT),
       ),
     },
-    mood: {
-      piece: null,
-      hydration: "cold",
-      monitorWithHeadphones: readStoredMoodHeadphones(),
-      performance: createIdleMoodPerformance(),
-    },
+    mood: createInitialMoodState(),
     playback: {
       isPlaying: false,
       audioState: "unknown",
       isExporting: false,
       currentStep: 0,
-      activeTriggers: [],
       triggerSeq: new Array(TRACK_COUNT).fill(0),
     },
     recording: {
       activeTrackId: null,
       countdownEndsAt: null,
+      captureEndsAt: null,
       error: null,
+      lastTakeReceipt: null,
       state: "idle",
     },
     ui: {
@@ -120,6 +100,7 @@ export function createInitialState(): AppState {
     session: {
       projectRevision: 0,
       moodRevision: 0,
+      moodSessionId: 0,
       storageDurability: "unknown",
       manuallyToggledShowVideo: [],
       manuallyTagged: [],

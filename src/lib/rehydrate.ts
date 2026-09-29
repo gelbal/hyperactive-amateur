@@ -2,6 +2,7 @@
 // ABOUTME: Recovery is silent: notes go to the log, the pre-repair backup is best-effort insurance, autosave never waits.
 import {
   InvalidMetadataError,
+  isBlob,
   loadProject,
   migrateLegacyProject,
   PERSISTED_SCHEMA_VERSION,
@@ -59,16 +60,6 @@ function cleanResult(ok: boolean): RehydrateResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function isBlob(value: unknown): value is Blob {
-  if (typeof Blob !== "undefined" && value instanceof Blob) return true;
-  return (
-    isRecord(value) &&
-    typeof value.arrayBuffer === "function" &&
-    typeof value.size === "number" &&
-    typeof value.type === "string"
-  );
 }
 
 function warn(warnings: string[], message: string): void {

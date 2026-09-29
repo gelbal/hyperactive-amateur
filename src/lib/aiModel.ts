@@ -1,4 +1,4 @@
-// ABOUTME: The one Gemini model id the client asks for; every AI feature (suggest, variations, auto-tag) reads it here.
+// ABOUTME: The one Gemini model id the client asks for; every AI feature (suggest, variations, auto-tag, Mood sync and part tags) reads it here.
 // ABOUTME: The proxy allowlist in api/gemini.ts must list this id (api/ never imports from src/ — Vercel bundles it alone).
 
 // gemini-3.5-flash-lite is Google's named replacement for gemini-3.1-flash-lite

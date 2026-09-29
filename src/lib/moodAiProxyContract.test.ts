@@ -134,12 +134,40 @@ async function captureRealBody(run: (client: {
     models: {
       generateContent: async (params: object) => {
         captured = params;
-        return { text: JSON.stringify({ offsetMs: 10, confidence: 1, part: "lead" }) };
+        return {
+          text: JSON.stringify({
+            offsetMs: 10,
+            confidence: 1,
+            part: "lead",
+            fxPreset: "neutral",
+            creditPalette: "signal",
+            key: "C",
+            mode: "major",
+            keyConfidence: 1,
+          }),
+        };
       },
     },
   });
   if (!captured) throw new Error("helper never issued a request");
   return JSON.stringify(captured);
+}
+
+// Guards the stub itself: a classifier that falls open (returns null) means
+// the stub response stopped matching the schema and the captured body is no
+// longer the body a healthy run would send.
+async function captureRealBodyStrict(
+  run: Parameters<typeof captureRealBody>[0],
+): Promise<string> {
+  let result: unknown = Symbol("unset");
+  const body = await captureRealBody(async (client) => {
+    result = await run(client);
+    return result;
+  });
+  if (result === null || result === undefined) {
+    throw new Error("classifier fell open — the stub response no longer matches its schema");
+  }
+  return body;
 }
 
 describe("mood AI proxy contract", () => {
@@ -173,8 +201,41 @@ describe("mood AI proxy contract", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts the real Part Tags request body", async () => {
-    const body = await captureRealBody((client) => classifyPart(makeTake(), client));
+  it("accepts the byte-pinned overdub Part Tags request body", async () => {
+    const body = await captureRealBodyStrict((client) => classifyPart(makeTake(), false, client));
+    const parsed = JSON.parse(body) as {
+      contents: Array<{ parts: Array<{ inlineData?: { data?: string } }> }>;
+    };
+    const inlineData = parsed.contents[0].parts[0].inlineData?.data;
+    expect(body).toBe(JSON.stringify({
+      model: "gemini-3.5-flash-lite",
+      contents: [{
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: "audio/wav", data: inlineData } },
+          { text: "You are Part Tags for a browser music video looper. Classify the take as exactly one vocal part: lead, harmony, bass, beatbox, or adlib. Use lead for the main sung or spoken hook, harmony for supporting pitched vocals, bass for low vocal bass, beatbox for mouth percussion, and adlib for short hype, texture, or non-main vocal sounds. Return JSON only with part and confidence. Use confidence 0..1 for how clearly the take fits the chosen part." },
+        ],
+      }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            part: { type: "STRING", enum: ["lead", "harmony", "bass", "beatbox", "adlib"] },
+            confidence: { type: "NUMBER" },
+          },
+          required: ["part", "confidence"],
+        },
+      },
+    }));
+
+    const res = await handleGeminiRequest(await signedRequest(body));
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the real One-variant Part Tags request body", async () => {
+    const body = await captureRealBodyStrict((client) => classifyPart(makeTake(), true, client));
 
     const res = await handleGeminiRequest(await signedRequest(body));
     expect(res.status).toBe(200);
@@ -190,7 +251,7 @@ describe("mood AI proxy contract", () => {
     const half = Math.floor(MOOD_SYNC_TOTAL_BYTES_MAX / 2);
     const inline = "A".repeat(half - 1024);
     const body = JSON.stringify({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash-lite",
       contents: [
         {
           role: "user",
