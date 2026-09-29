@@ -358,4 +358,55 @@ describe("Mood boundary swaps, end to end", () => {
     expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
     expect(videoForTake("take-b")).toBe(preparedB);
   });
+  it("starts a take's video at its cut when it is picked again just after its audible boundary", async () => {
+    await performFromEpochTen();
+    toneHarness.setImmediate(10.4);
+    armSelection("mic-0", "take-b");
+    frame(11.5);
+    toneHarness.draw.advanceTo(11.92);
+    // Picked again at 12.005, before the paint drain commits it.
+    toneHarness.setImmediate(12.005);
+    armSelection("mic-0", "take-b");
+
+    frame(12.01);
+    frame(12.3);
+
+    const takeB = __getMoodVideoPoolStateForTesting().find((entry) => entry.takeId === "take-b");
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-b");
+    expect(takeB?.playing).toBe(true);
+  });
+
+  it.each([
+    ["Off", "off"],
+    ["another take", "take-d"],
+  ])(
+    "keeps a re-synced take's player through another mic's commit when its mic is re-armed to %s",
+    async (_label, entry) => {
+      await performFromEpochTen();
+      useAppStore.getState().actions.setMoodTake("mic-1", take("take-d"));
+      const playerC = toneNodes.players[1];
+      toneHarness.setImmediate(10.4);
+      armSelection("mic-0", "take-b");
+      toneHarness.setImmediate(11.96);
+      useAppStore
+        .getState()
+        .actions.applyMoodSyncOffsetIfCurrent(
+          "mic-1",
+          "take-c",
+          200,
+          useAppStore.getState().session.moodRevision,
+        );
+      frame(11.96);
+      // The performer re-arms mic 1 for 14, replacing its queued resync.
+      toneHarness.setImmediate(11.97);
+      armSelection("mic-1", entry);
+
+      frame(12.01);
+
+      expect(playerC.dispose).not.toHaveBeenCalled();
+      frame(13.92);
+      frame(14.0);
+      expect(playerC.stop).toHaveBeenCalledWith(14);
+    },
+  );
 });

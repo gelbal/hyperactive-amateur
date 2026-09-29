@@ -434,14 +434,11 @@ export function prepareUpcoming(takeId: string, atAudioTime: number): void {
   const entry = videos.get(takeId);
   if (!entry) return;
   // Picked again after its swap locked, a take is also queued for the next
-  // boundary; its earlier join still happens first.
-  if (
-    entry.preparedFor !== null &&
-    entry.preparedFor < atAudioTime &&
-    entry.preparedFor > Tone.immediate()
-  ) {
-    return;
-  }
+  // boundary; its earlier join still happens first. A pending join is only
+  // ever consumed by its cut (the first restart check at or after it) or
+  // cancelled with its video (a prune, a stop, a new performance), so one
+  // still set is valid even just after its audible boundary.
+  if (entry.preparedFor !== null && entry.preparedFor < atAudioTime) return;
   entry.preparedFor = atAudioTime;
 
   const preroll = () => {

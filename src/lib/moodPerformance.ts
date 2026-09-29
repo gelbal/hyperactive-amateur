@@ -135,19 +135,20 @@ export function syncCommittedMoodEngines(
     performanceState.epoch !== null &&
     piece.cycleSeconds !== null
   ) {
-    // Live takes with a resync still queued (a swap to the take already
-    // live) keep their players until that commit.
-    const resyncQueued = new Set(
+    // The live take of every mic with a swap still queued (its resync, Off
+    // or another take) keeps its player until that commit, whose swap on the
+    // audio clock replaces it.
+    const swapQueued = new Set(
       pendingSelectionCommits()
-        .filter((event) => event.entry === performanceState.selections[event.micId])
-        .map((event) => event.entry),
+        .map((event) => performanceState.selections[event.micId])
+        .filter((entry): entry is string => entry !== undefined && entry !== "off"),
     );
     syncMoodPlayers(
       livePlayerTakesFromSelections(piece, performanceState.selections),
       performanceState.epoch,
       piece.cycleSeconds,
       options.audioTime,
-      resyncQueued,
+      swapQueued,
     );
   }
 

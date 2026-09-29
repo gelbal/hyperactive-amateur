@@ -131,7 +131,7 @@ export function syncMoodPlayers(
   epoch: number,
   cycleSeconds: number,
   audioTime: number = Tone.immediate(),
-  resyncQueued: ReadonlySet<string> = new Set(),
+  swapQueued: ReadonlySet<string> = new Set(),
 ): void {
   const nextTakeIds = new Set<string>();
   const now = audioTime;
@@ -161,11 +161,11 @@ export function syncMoodPlayers(
       continue;
     }
 
-    // A live take whose audio changed (a repair, a new sync offset) with its
-    // resync still queued keeps its player until that boundary, where the
-    // audio-clock swap brings the new one in; another mic's commit must not
-    // rebuild it early.
-    if (existing && resyncQueued.has(liveTake.takeId)) continue;
+    // A live take whose audio changed (a repair, a new sync offset) while a
+    // swap is queued on its mic (its resync, Off or another take) keeps its
+    // player until that boundary, where the audio-clock swap replaces it;
+    // another mic's commit must not rebuild it early.
+    if (existing && swapQueued.has(liveTake.takeId)) continue;
 
     if (existing?.player) {
       disposePlayer(existing.player);
