@@ -63,7 +63,7 @@ export function createToneHarness() {
 
   const scheduleOnce = vi.fn((callback: TransportCallback, time: number) => {
     const id = nextId++;
-    const absoluteTime = immediateTime + (time - transportSeconds);
+    const absoluteTime = audioTimeAtPosition(time);
     onceTasks.push({ id, time, absoluteTime, callback });
     return id;
   });
@@ -101,6 +101,14 @@ export function createToneHarness() {
     transportRunning
       ? Math.min(lookahead, Math.max(0, immediateTime + lookahead - transportStartedAt))
       : 0;
+  // One transport timeline (slope 1) that getSecondsAtTime and scheduleOnce
+  // share with `seconds`: transportSeconds is the position at the audible
+  // clock, less the part of the lookahead a just-started transport has not
+  // run yet (it reads 0 at Tone.now() right after start).
+  const startGap = () => (transportRunning ? lookahead - secondsLead() : 0);
+  const positionAt = (time: number) => transportSeconds + (time - immediateTime) - startGap();
+  const audioTimeAtPosition = (position: number) =>
+    immediateTime + (position - transportSeconds) + startGap();
   const transportStart = vi.fn(() => {
     transportRunning = true;
     transportStartedAt = immediateTime + lookahead;
@@ -131,7 +139,7 @@ export function createToneHarness() {
     },
     // Transport seconds at an audio-clock time, so
     // scheduleOnce(cb, getSecondsAtTime(t)) fires at t.
-    getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
+    getSecondsAtTime: positionAt,
     get swing() {
       return transportSwing;
     },
@@ -226,7 +234,7 @@ export function createToneHarness() {
           set seconds(value: number) {
             transportSeconds = value - secondsLead();
           },
-          getSecondsAtTime: (time: number) => transportSeconds + (time - immediateTime),
+          getSecondsAtTime: positionAt,
           get swing() {
             return transportSwing;
           },

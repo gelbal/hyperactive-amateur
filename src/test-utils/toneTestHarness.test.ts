@@ -69,6 +69,23 @@ describe("test clock harness", () => {
     expect(Tone.getTransport().seconds).toBe(12.5);
   });
 
+  it("keeps seconds, getSecondsAtTime and scheduleOnce on one transport timeline", () => {
+    const harness = createToneHarness();
+    const Tone = harness.createToneModule();
+    const transport = Tone.getTransport();
+    const callback = vi.fn();
+
+    harness.setImmediate(10);
+    transport.start();
+    // Right after start, at Tone.now() the position is 0 by every reading.
+    expect(transport.seconds).toBe(0);
+    expect(transport.getSecondsAtTime(Tone.now())).toBeCloseTo(0);
+    const eventId = transport.scheduleOnce(callback, transport.seconds + 0.5);
+
+    harness.transport.fireOnce(eventId);
+    expect(callback.mock.calls[0][0]).toBeCloseTo(10.6);
+  });
+
   it("interprets scheduleOnce times in Transport time and fires at absolute audio time", () => {
     const harness = createToneHarness();
     const Tone = harness.createToneModule();
