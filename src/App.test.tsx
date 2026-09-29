@@ -7,6 +7,11 @@ const rehydrateMocks = vi.hoisted(() => ({
   rehydrateFromStorage: vi.fn(),
 }));
 
+const moodRehydrateMocks = vi.hoisted(() => ({
+  rehydrateMoodFromStorage: vi.fn(),
+  decodeMoodTakes: vi.fn(),
+}));
+
 const autoSaveMocks = vi.hoisted(() => ({
   startAutoSave: vi.fn(),
   shutdownAutoSave: vi.fn(),
@@ -21,6 +26,10 @@ vi.mock("./lib/install", () => ({
 }));
 vi.mock("./lib/rehydrate", () => ({
   rehydrateFromStorage: rehydrateMocks.rehydrateFromStorage,
+}));
+vi.mock("./lib/moodRehydrate", () => ({
+  rehydrateMoodFromStorage: moodRehydrateMocks.rehydrateMoodFromStorage,
+  decodeMoodTakes: moodRehydrateMocks.decodeMoodTakes,
 }));
 vi.mock("./lib/autoSave", () => ({
   startAutoSave: autoSaveMocks.startAutoSave,
@@ -265,6 +274,13 @@ describe("App autosave gating", () => {
     expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
   });
 
+  it("does not hydrate Mood at App boot", async () => {
+    await renderApp();
+
+    expect(moodRehydrateMocks.rehydrateMoodFromStorage).not.toHaveBeenCalled();
+    expect(moodRehydrateMocks.decodeMoodTakes).not.toHaveBeenCalled();
+  });
+
   it("starts autosave for a degraded-but-hydrated load and shows no recovery notice", async () => {
     rehydrateMocks.rehydrateFromStorage.mockResolvedValue({
       ok: true,
@@ -306,6 +322,17 @@ describe("App autosave gating", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the one failed-load line in Mood, where nothing is saved either", async () => {
+    rehydrateMocks.rehydrateFromStorage.mockRejectedValue(new Error("load blew up"));
+    useAppStore.getState().actions.setAppMode("mood");
+
+    await renderApp();
+
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+    expect(screen.getByText(LOAD_FAILED_COPY)).toBeInTheDocument();
+    expect(screen.getByText("Loading mood...")).toBeInTheDocument();
   });
 
   it("shows the lazy Mood fallback and unmounts the Chop surface in Mood", async () => {

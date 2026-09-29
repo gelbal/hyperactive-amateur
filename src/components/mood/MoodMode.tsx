@@ -1,8 +1,12 @@
 // ABOUTME: MoodMode — lazy-loaded root shell for the layered-loop Mood mode.
 // ABOUTME: Starts with a stage picker and shows the placeholder stage until real performance UI lands.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BpmDialControl } from "../BpmDial";
+import { LoadFailedNotice } from "../LoadFailedNotice";
+import { getAudioContext } from "../../lib/audio";
+import { LOG_EVENTS, logger } from "../../lib/logger";
 import { STAGE_DESCRIPTORS } from "../../lib/moodStages";
+import * as moodRehydrate from "../../lib/moodRehydrate";
 import { useAppStore } from "../../store/useAppStore";
 import type { MoodPiece, MoodStageId, MoodTimeFeel } from "../../types";
 
@@ -275,12 +279,87 @@ function MoodPieceControls({
   );
 }
 
+function queueMoodPosterJobs(jobs: moodRehydrate.MoodPosterRegenerationJob[] = []): void {
+  for (const job of jobs) {
+    void job.posterPromise.then((posterBlob) => {
+      if (!posterBlob) return;
+      const posterUrl = URL.createObjectURL(posterBlob);
+      useAppStore
+        .getState()
+        .actions.attachMoodTakePoster(job.micId, job.takeId, posterBlob, posterUrl);
+    });
+  }
+}
+
 export function MoodMode() {
   const piece = useAppStore((s) => s.mood.piece);
+  const hydration = useAppStore((s) => s.mood.hydration);
   const isExporting = useAppStore((s) => s.playback.isExporting);
   const isPerforming = useAppStore((s) => s.mood.performance.isPerforming);
+  const hydrationStartedRef = useRef(false);
+  const unmountedRef = useRef(false);
 
-  if (!piece) return <StagePicker disabled={isExporting} />;
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hydration !== "cold" || hydrationStartedRef.current) return;
+    hydrationStartedRef.current = true;
+    useAppStore.getState().actions.setMoodHydration("hydrating");
+    void moodRehydrate
+      .rehydrateMoodFromStorage()
+      .then(async (loaded) => {
+        if (unmountedRef.current) return;
+        if (loaded.ok && loaded.piece) {
+          const decoded = await moodRehydrate.decodeMoodTakes(loaded.piece, getAudioContext());
+          if (unmountedRef.current) return;
+          // Decode repairs are diagnostics like the load's own; the take's
+          // repair state carries the only actionable part.
+          if (decoded.warnings.length > 0) {
+            logger.info(LOG_EVENTS.RECOVERY_APPLIED, { scope: "mood", warnings: decoded.warnings });
+          }
+          useAppStore.getState().actions.hydrateMoodPiece(decoded.piece);
+          queueMoodPosterJobs(decoded.posterJobs);
+          return;
+        }
+        useAppStore.getState().actions.hydrateMoodPiece(null);
+      })
+      .catch((err: unknown) => {
+        logger.error(LOG_EVENTS.RECOVERY_LOAD_FAILED, {
+          scope: "mood",
+          message: err instanceof Error ? err.message : String(err),
+        });
+        if (unmountedRef.current) return;
+        // Mood saving stays paused for the session: a write would replace
+        // the record that could not be read.
+        useAppStore.getState().actions.setMoodHydration("failed");
+      });
+  }, [hydration]);
+
+  if (hydration === "cold" || hydration === "hydrating") {
+    return <div className="text-zinc-500 text-sm">Loading mood...</div>;
+  }
+
+  const loadFailedNotice =
+    hydration === "failed" ? (
+      <LoadFailedNotice
+        label="Saved mood could not be opened"
+        message="Couldn't open your saved mood — takes won't be saved."
+      />
+    ) : null;
+
+  if (!piece) {
+    return (
+      <>
+        {loadFailedNotice}
+        <StagePicker disabled={isExporting} />
+      </>
+    );
+  }
 
   const stageName = STAGE_LABELS[piece.stage];
   const micCount = piece.mics.length;
@@ -288,6 +367,7 @@ export function MoodMode() {
 
   return (
     <section className="flex w-full max-w-4xl flex-col items-center gap-5">
+      {loadFailedNotice}
       <div className="flex aspect-square w-full max-w-[28rem] flex-col items-center justify-center gap-2 rounded border border-zinc-800 bg-zinc-900 text-center shadow-inner">
         <span className="text-2xl font-black text-zinc-100">{stageName} stage</span>
         <span className="font-mono text-sm tabular-nums text-orange-500">

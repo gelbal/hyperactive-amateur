@@ -97,6 +97,15 @@ function createMoodPerformanceForPiece(piece: MoodPiece): AppState["mood"]["perf
   };
 }
 
+// A Mood record that could not be opened stays failed for the session: that
+// state pauses Mood autosave, and a new piece must not unpause it and write
+// over the record.
+function settledMoodHydration(
+  hydration: AppState["mood"]["hydration"],
+): AppState["mood"]["hydration"] {
+  return hydration === "failed" ? "failed" : "ready";
+}
+
 function hasPositiveBpm(bpm: number | undefined): bpm is number {
   return typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0;
 }
@@ -149,6 +158,8 @@ function clearMoodTakePerformanceRefs(
 
 export interface AppActions {
   setAppMode: (mode: AppMode) => void;
+  setMoodHydration: (hydration: AppState["mood"]["hydration"]) => void;
+  hydrateMoodPiece: (piece: MoodPiece | null) => void;
   createMoodPiece: (
     stage: MoodStageId,
     timeFeel: MoodTimeFeel,
@@ -205,6 +216,13 @@ export interface AppActions {
     audioBuffer: AudioBuffer,
     audioBlob?: Blob | null,
     expectedClip?: Clip,
+  ) => void;
+  restoreMoodTakeAudio: (
+    micId: string,
+    takeId: string,
+    audioBuffer: AudioBuffer,
+    audioBlob?: Blob | null,
+    expectedTake?: MoodTake,
   ) => void;
   clearTrackClip: (trackId: number) => void;
   deleteTrackClip: (trackId: number) => void;
@@ -271,6 +289,31 @@ export const useAppStore = create<AppStore>((set) => ({
       });
     },
 
+    setMoodHydration: (hydration) =>
+      set((state) => ({
+        mood: {
+          ...state.mood,
+          hydration,
+        },
+      })),
+
+    hydrateMoodPiece: (piece) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        if (state.mood.piece && state.mood.piece !== piece) {
+          revokeMoodPieceObjectUrls(state.mood.piece);
+        }
+        return {
+          mood: {
+            piece,
+            hydration: "ready",
+            performance: piece
+              ? createMoodPerformanceForPiece(piece)
+              : createIdleMoodPerformance(),
+          },
+        };
+      }),
+
     createMoodPiece: (stage, timeFeel, opts) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -288,7 +331,7 @@ export const useAppStore = create<AppStore>((set) => ({
         return {
           mood: {
             piece,
-            hydration: "ready",
+            hydration: settledMoodHydration(state.mood.hydration),
             performance: createMoodPerformanceForPiece(piece),
           },
           session: bumpMoodRevision(state.session),
@@ -303,7 +346,7 @@ export const useAppStore = create<AppStore>((set) => ({
         return {
           mood: {
             piece: null,
-            hydration: "ready",
+            hydration: settledMoodHydration(state.mood.hydration),
             performance: createIdleMoodPerformance(),
           },
           session: bumpMoodRevision(state.session),
@@ -851,6 +894,38 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    restoreMoodTakeAudio: (micId, takeId, audioBuffer, audioBlob, expectedTake) =>
+      set((state) => {
+        if (state.playback.isExporting) return state;
+        const piece = state.mood.piece;
+        if (!piece) return state;
+        let restored = false;
+        const mics = piece.mics.map((mic) => {
+          if (mic.id !== micId) return mic;
+          const takes = mic.takes.map((take) => {
+            if (take.id !== takeId) return take;
+            if (take.audioStatus !== "unavailable") return take;
+            if (expectedTake && take !== expectedTake) return take;
+            restored = true;
+            return {
+              ...take,
+              audioBuffer,
+              audioStatus: "ok" as const,
+              audioBlob: audioBlob !== undefined ? audioBlob : take.audioBlob,
+            };
+          });
+          return restored ? { ...mic, takes } : mic;
+        });
+        if (!restored) return state;
+        return {
+          mood: {
+            ...state.mood,
+            piece: { ...piece, mics, updatedAt: Date.now() },
+          },
+          session: bumpMoodRevision(state.session),
+        };
+      }),
+
     clearTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -1206,9 +1281,15 @@ export const useAppStore = create<AppStore>((set) => ({
       const next = createInitialState();
       set({
         ...next,
+        // Scratch clears Chop only. A fresh Mood slice would read as the
+        // piece being scratched, and autosave would clear the saved Mood
+        // piece and collect its takes.
+        appMode: state.appMode,
+        mood: state.mood,
         session: {
           ...next.session,
           projectRevision: state.session.projectRevision + 1,
+          moodRevision: state.session.moodRevision,
         },
       });
       // Wipe the persisted record; subsequent edits will write a fresh one.

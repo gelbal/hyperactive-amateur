@@ -1,7 +1,6 @@
 // ABOUTME: Root React component for Hyperactive Amateur — header (title + controls), viewport, pads, grid.
 // ABOUTME: Owns global app effects: Tone.Transport bootstrap, rehydration, auto-save, keyboard hooks.
 import { Suspense, lazy, useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { StepGrid } from "./components/StepGrid";
 import { PlayButton } from "./components/PlayButton";
 import { ExportButton } from "./components/ExportButton";
@@ -11,6 +10,7 @@ import { FeelDisclosure } from "./components/FeelDisclosure";
 import { Viewport } from "./components/Viewport";
 import { PadGrid } from "./components/PadGrid";
 import { ModeSwitch } from "./components/ModeSwitch";
+import { LoadFailedNotice } from "./components/LoadFailedNotice";
 import { selectClipCount, selectEditorOpen, useAppStore } from "./store/useAppStore";
 import { AI_UNLOCK_CLIPS } from "./lib/aiSuggest";
 import { initTransport } from "./lib/audio";
@@ -169,23 +169,31 @@ export function App() {
       <main className="flex flex-col items-center gap-6 py-6 px-4 sm:px-0">
         {hydrating ? (
           <div className="text-zinc-500 text-sm">Loading project…</div>
-        ) : isChopMode ? (
+        ) : (
           <>
-            {loadFailed && <LoadFailedNotice />}
-            <Viewport />
-            {editorOpen ? (
-              <PadGrid />
+            {/* A Chop load that failed keeps all autosave off, so the line
+                shows in both modes. */}
+            {loadFailed && (
+              <LoadFailedNotice label="Saved project could not be opened" message={LOAD_FAILED_COPY} />
+            )}
+            {isChopMode ? (
+              <>
+                <Viewport />
+                {editorOpen ? (
+                  <PadGrid />
+                ) : (
+                  <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
+                    Record your first sound to unlock the pads, the step grid, and
+                    the AI tools.
+                  </p>
+                )}
+              </>
             ) : (
-              <p className="text-xs text-zinc-500 max-w-[28rem] text-center px-6">
-                Record your first sound to unlock the pads, the step grid, and
-                the AI tools.
-              </p>
+              <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
+                <MoodMode />
+              </Suspense>
             )}
           </>
-        ) : (
-          <Suspense fallback={<div className="text-zinc-500 text-sm">Loading mood...</div>}>
-            <MoodMode />
-          </Suspense>
         )}
       </main>
       {isChopMode && editorOpen && <StepGrid />}
@@ -220,29 +228,6 @@ function LogPanel() {
               )
               .join("\n")}
       </pre>
-    </section>
-  );
-}
-
-// The one message the app keeps: without it the user would record a whole
-// session into nothing. It names the consequence and the next action.
-function LoadFailedNotice() {
-  return (
-    <section
-      aria-label="Saved project could not be opened"
-      className="w-full max-w-3xl border border-amber-500/40 bg-amber-950/30 px-3 py-3 text-amber-100 sm:px-4"
-    >
-      <div className="flex items-center gap-3">
-        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" aria-hidden />
-        <p className="min-w-0 flex-1 text-sm">{LOAD_FAILED_COPY}</p>
-        <button
-          type="button"
-          onClick={() => location.reload()}
-          className="h-8 shrink-0 whitespace-nowrap rounded border border-amber-400/30 px-3 text-sm text-amber-100 hover:bg-amber-900/50"
-        >
-          Reload
-        </button>
-      </div>
     </section>
   );
 }
