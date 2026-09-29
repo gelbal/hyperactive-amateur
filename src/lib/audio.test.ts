@@ -93,7 +93,13 @@ vi.mock("tone", () => ({
   immediate: vi.fn(() => 0),
 }));
 
-import { initTransport, __resetAudioForTesting, togglePlayback, triggerTrackNow } from "./audio";
+import {
+  initTransport,
+  __resetAudioForTesting,
+  togglePlayback,
+  triggerCountInClick,
+  triggerTrackNow,
+} from "./audio";
 import { useAppStore } from "../store/useAppStore";
 import * as Tone from "tone";
 import type { Clip } from "../types";
@@ -182,6 +188,20 @@ describe("audio: per-step trigger logic", () => {
     cb?.(0);
     // Track 2 is the snare, a NoiseSynth: (duration, time, velocity).
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
+  });
+
+  it("plays the Mood count-in click on its own voice, never a kit voice, and disposes it on reset", () => {
+    initTransport();
+
+    triggerCountInClick(6);
+
+    const click = synthInstances[8];
+    expect(click.triggerAttackRelease).toHaveBeenCalledWith("C2", "16n", 6, 0.35);
+    for (const voice of synthInstances.slice(0, 8)) {
+      expect(voice.triggerAttackRelease).not.toHaveBeenCalled();
+    }
+    __resetAudioForTesting();
+    expect(click.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {

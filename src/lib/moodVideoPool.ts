@@ -19,6 +19,7 @@ export interface MoodVideoPoolTake {
 }
 
 interface PooledMoodVideo {
+  takeId: string;
   video: HTMLVideoElement;
   url: string;
   loopStart: number;
@@ -28,6 +29,7 @@ interface PooledMoodVideo {
   cycleMultiple: MoodTake["cycleMultiple"];
   epoch: number | null;
   holdingRest: boolean;
+  playing: boolean;
   // Period-lock dedup: the index of the take's own loop period (which can be a
   // half-cycle for cycleMultiple 0.5), scoped to the epoch it was computed
   // under so a stop/restart re-seeks even inside the same period index.
@@ -40,6 +42,11 @@ interface PooledMoodVideo {
 
 let host: HTMLDivElement | null = null;
 const videos = new Map<string, PooledMoodVideo>();
+let capturePolicy: { active: boolean; metronomeTakeId: string | null } = {
+  active: false,
+  metronomeTakeId: null,
+};
+const pausedForCapture = new Set<string>();
 
 function ensureHost(): HTMLDivElement {
   if (host) return host;
@@ -61,9 +68,48 @@ function seekToLoopStart(entry: PooledMoodVideo): boolean {
   return true;
 }
 
-function playVideo(entry: PooledMoodVideo): void {
+function pauseVideo(entry: PooledMoodVideo): void {
+  entry.playing = false;
+  entry.video.pause();
+}
+
+function resumeVideo(entry: PooledMoodVideo): void {
   entry.holdingRest = false;
+  entry.playing = true;
   void entry.video.play().catch(() => undefined);
+}
+
+function shouldPauseForCapture(entry: PooledMoodVideo): boolean {
+  return capturePolicy.active && entry.takeId !== capturePolicy.metronomeTakeId;
+}
+
+function pauseForCapture(entry: PooledMoodVideo): void {
+  if (pausedForCapture.has(entry.takeId)) {
+    entry.playing = false;
+    return;
+  }
+  pausedForCapture.add(entry.takeId);
+  pauseVideo(entry);
+}
+
+function playVideo(entry: PooledMoodVideo): void {
+  if (shouldPauseForCapture(entry)) {
+    pauseForCapture(entry);
+    return;
+  }
+  pausedForCapture.delete(entry.takeId);
+  resumeVideo(entry);
+}
+
+function applyCapturePolicy(entry: PooledMoodVideo): void {
+  if (shouldPauseForCapture(entry)) {
+    pauseForCapture(entry);
+    return;
+  }
+  if (pausedForCapture.has(entry.takeId)) {
+    pausedForCapture.delete(entry.takeId);
+    resumeVideo(entry);
+  }
 }
 
 function fallbackLoopPeriod(take: MoodVideoPoolTake): number {
@@ -90,7 +136,7 @@ function holdAtContentEnd(entry: PooledMoodVideo): void {
   } catch {
     // Holding at the current decoded frame is still preferable to a content-loop seek.
   }
-  entry.video.pause();
+  pauseVideo(entry);
 }
 
 // The index of the take's OWN loop period at audioTime, phase-locked to the
@@ -103,7 +149,7 @@ function periodIndexAt(entry: PooledMoodVideo, audioTime: number, epoch: number)
 function loopTrimmedWindow(entry: PooledMoodVideo): void {
   updateEffectiveLoopEnd(entry);
   if (entry.effectiveLoopEnd <= entry.loopStart) {
-    entry.video.pause();
+    pauseVideo(entry);
     return;
   }
 
@@ -122,7 +168,8 @@ function teardown(entry: PooledMoodVideo): void {
   entry.video.removeEventListener("timeupdate", entry.onTimeUpdate);
   entry.video.removeEventListener("loadedmetadata", entry.onLoadedMetadata);
   entry.video.removeEventListener("ended", entry.onEnded);
-  entry.video.pause();
+  pausedForCapture.delete(entry.takeId);
+  pauseVideo(entry);
   entry.video.removeAttribute("src");
   entry.video.load();
   entry.video.remove();
@@ -131,6 +178,7 @@ function teardown(entry: PooledMoodVideo): void {
 function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
   const video = document.createElement("video");
   const entry: PooledMoodVideo = {
+    takeId: take.takeId,
     video,
     url: take.url,
     loopStart: take.loopStart,
@@ -140,6 +188,7 @@ function createEntry(take: MoodVideoPoolTake): PooledMoodVideo {
     cycleMultiple: take.cycleMultiple ?? 1,
     epoch: take.epoch ?? null,
     holdingRest: false,
+    playing: false,
     restartEpoch: null,
     lastPeriodIndex: null,
     onTimeUpdate: () => undefined,
@@ -194,6 +243,7 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
       existing.cycleMultiple = take.cycleMultiple ?? 1;
       existing.epoch = take.epoch ?? null;
       updateEffectiveLoopEnd(existing);
+      applyCapturePolicy(existing);
       continue;
     }
 
@@ -201,6 +251,33 @@ export function syncPool(liveTakes: MoodVideoPoolTake[]): void {
       teardown(existing);
     }
     videos.set(take.takeId, createEntry(take));
+  }
+}
+
+export function setCaptureVideoPolicy(
+  active: boolean,
+  metronomeTakeId: string | null = null,
+): void {
+  capturePolicy = {
+    active,
+    metronomeTakeId: active ? metronomeTakeId : null,
+  };
+
+  if (!active) {
+    const pausedIds = [...pausedForCapture];
+    for (const takeId of pausedIds) {
+      const entry = videos.get(takeId);
+      if (!entry) {
+        pausedForCapture.delete(takeId);
+        continue;
+      }
+      playVideo(entry);
+    }
+    return;
+  }
+
+  for (const entry of videos.values()) {
+    applyCapturePolicy(entry);
   }
 }
 
@@ -285,6 +362,20 @@ export function __resetMoodVideoPoolForTesting(): void {
     teardown(entry);
   }
   videos.clear();
+  capturePolicy = { active: false, metronomeTakeId: null };
+  pausedForCapture.clear();
   host?.remove();
   host = null;
+}
+
+export function __getMoodVideoPoolStateForTesting(): Array<{
+  takeId: string;
+  playing: boolean;
+  pausedForCapture: boolean;
+}> {
+  return [...videos.values()].map((entry) => ({
+    takeId: entry.takeId,
+    playing: entry.playing,
+    pausedForCapture: pausedForCapture.has(entry.takeId),
+  }));
 }

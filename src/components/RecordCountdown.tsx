@@ -2,8 +2,11 @@
 // ABOUTME: Derives visible countdown digits from the shared audio-clock deadline and lets Esc cancel the active flow.
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
-import { cancelCurrentRecording } from "../lib/recordingFlow";
 import { getAudioContext } from "../lib/audio";
+import {
+  cancelActiveRecordingByUser,
+  useRecordingEscapeCancel,
+} from "../lib/useRecordingEscapeCancel";
 
 const SECONDS = 3;
 const TICK_MS = 100;
@@ -19,6 +22,7 @@ export function RecordCountdown() {
   const [count, setCount] = useState(SECONDS);
   const active = state === "preparing" || state === "countdown" || state === "recording";
   const canClickCancel = state === "preparing" || state === "countdown";
+  useRecordingEscapeCancel(active);
 
   useEffect(() => {
     if (state !== "countdown" || countdownEndsAt === null) {
@@ -33,21 +37,10 @@ export function RecordCountdown() {
     return () => window.clearInterval(id);
   }, [state, countdownEndsAt]);
 
-  useEffect(() => {
-    if (!active) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      cancelCurrentRecording("user");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [active]);
-
   if (!active) return null;
 
   const onCancel = () => {
-    cancelCurrentRecording("user");
+    cancelActiveRecordingByUser();
   };
 
   return (

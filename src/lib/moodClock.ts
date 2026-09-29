@@ -10,7 +10,7 @@ import {
 
 export { establishCycleFromClick, establishCycleFromTake };
 
-const DROP_BEATS_PER_CYCLE = 8;
+export const DROP_BEATS_PER_CYCLE = 8;
 const BOUNDARY_EPSILON_SECONDS = 1e-9;
 
 export type MoodCycleMultiple = MoodTake["cycleMultiple"];

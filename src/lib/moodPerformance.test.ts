@@ -240,6 +240,34 @@ describe("moodPerformance", () => {
     expect(moodPlayersMocks.syncMoodPlayers).not.toHaveBeenCalled();
   });
 
+  it.each(["preparing", "countdown", "recording", "reviewing"] as const)(
+    "no-ops armSelection while a take is %s",
+    (recordingState) => {
+      createMoodWithStack(2);
+      useAppStore.getState().actions.setRecordingState(recordingState, 0);
+
+      armSelection("mic-0", "take-a");
+
+      expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
+      expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBeNull();
+      expect(videoForTake("take-a")).toBeNull();
+      expect(moodPlayersMocks.syncMoodPlayers).not.toHaveBeenCalled();
+    },
+  );
+
+  it("arms during a Mood performance export because selections are transient", () => {
+    createMoodWithStack(2);
+    useAppStore.getState().actions.setMoodPerforming(true, 10);
+    useAppStore.getState().actions.setIsExporting(true);
+    toneMocks.setNow(10.5);
+
+    armSelection("mic-0", "take-a");
+
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("off");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("take-a");
+    expect(videoForTake("take-a")).toBeInstanceOf(HTMLVideoElement);
+  });
+
   it("seeds the already committed mix when performance starts", async () => {
     const { takeA } = createMoodWithStack(2);
     armSelection("mic-0", "take-a");

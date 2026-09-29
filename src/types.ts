@@ -133,6 +133,7 @@ export type MoodHydrationState = "cold" | "hydrating" | "ready" | "failed";
 export interface MoodSlice {
   piece: MoodPiece | null;
   hydration: MoodHydrationState;
+  monitorWithHeadphones: boolean;
   performance: MoodPerformanceState;
 }
 

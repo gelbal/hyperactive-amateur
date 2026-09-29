@@ -17,6 +17,29 @@ export interface RecordClipOptions {
   // When this fires, stop the recorder early and reject with AbortError.
   // Callers should not save the resulting (partial) blob.
   signal?: AbortSignal;
+  // When stop() is called, stop the recorder early and resolve with the
+  // chunks collected so far. Callers use this for intentional tap-to-stop.
+  stopController?: RecordClipStopController;
+}
+
+export interface RecordClipStopController {
+  stop: () => void;
+  attachStopHandler: (handler: () => void) => () => void;
+}
+
+export function createRecordClipStopController(): RecordClipStopController {
+  let stopHandler: (() => void) | null = null;
+  return {
+    stop: () => {
+      stopHandler?.();
+    },
+    attachStopHandler: (handler) => {
+      stopHandler = handler;
+      return () => {
+        if (stopHandler === handler) stopHandler = null;
+      };
+    },
+  };
 }
 
 export async function recordClip(
@@ -25,7 +48,7 @@ export async function recordClip(
   audioContext: AudioContext,
   options: RecordClipOptions = {},
 ): Promise<RecordingResult> {
-  const { signal } = options;
+  const { signal, stopController } = options;
   if (signal?.aborted) {
     throw new DOMException("Recording aborted before start", "AbortError");
   }
@@ -44,7 +67,19 @@ export async function recordClip(
     if (event.data && event.data.size > 0) chunks.push(event.data);
   };
 
+  const stopRecorder = () => {
+    if (recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        // Ignore — recorder may have just transitioned to inactive.
+      }
+    }
+  };
+
   let abortListener: (() => void) | null = null;
+  const detachStopController =
+    stopController?.attachStopHandler(stopRecorder) ?? (() => undefined);
   const stopped = new Promise<void>((resolve, reject) => {
     recorder.onstop = () => resolve();
     recorder.onerror = (event) => {
@@ -59,13 +94,7 @@ export async function recordClip(
     };
     if (signal) {
       abortListener = () => {
-        if (recorder.state !== "inactive") {
-          try {
-            recorder.stop();
-          } catch {
-            // Ignore — recorder may have just transitioned to inactive.
-          }
-        }
+        stopRecorder();
         reject(new DOMException("Recording aborted", "AbortError"));
       };
       signal.addEventListener("abort", abortListener);
@@ -77,6 +106,7 @@ export async function recordClip(
   } catch (err) {
     audioCapture?.cancel();
     if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+    detachStopController();
     throw err instanceof Error ? err : new Error(String(err));
   }
 
@@ -98,13 +128,8 @@ export async function recordClip(
   } finally {
     clearTimeout(stopTimer);
     if (signal && abortListener) signal.removeEventListener("abort", abortListener);
-    if (recorder.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
-        // Recorder may already be transitioning to inactive.
-      }
-    }
+    detachStopController();
+    stopRecorder();
   }
 
   const blob = new Blob(chunks, { type: mimeType });
