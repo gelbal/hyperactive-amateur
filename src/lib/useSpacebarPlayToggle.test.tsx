@@ -49,6 +49,7 @@ function Harness({ withInput = false }: { withInput?: boolean }) {
 
 describe("useSpacebarPlayToggle", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     togglePlayback.mockReset();
     togglePlayback.mockResolvedValue(undefined);
     useAppStore.getState().actions.setIsExporting(false);
@@ -108,6 +109,15 @@ describe("useSpacebarPlayToggle", () => {
     useAppStore.getState().actions.deleteTrackClip(0);
     pressSpace();
     expect(togglePlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not toggle Chop playback from Space while Mood is active", () => {
+    render(<Harness />);
+    useAppStore.getState().actions.setAppMode("mood");
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+
+    expect(togglePlayback).not.toHaveBeenCalled();
   });
 
   it("swallows audio-unavailable Space rejections", async () => {

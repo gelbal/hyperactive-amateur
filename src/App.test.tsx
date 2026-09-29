@@ -29,15 +29,22 @@ vi.mock("./lib/autoSave", () => ({
 vi.mock("./lib/useSpacebarPlayToggle", () => ({ useSpacebarPlayToggle: vi.fn() }));
 vi.mock("./lib/useKeyboardTriggers", () => ({ useKeyboardTriggers: vi.fn() }));
 vi.mock("./lib/aiSuggest", () => ({ AI_UNLOCK_CLIPS: 3 }));
-vi.mock("./components/Viewport", () => ({ Viewport: () => null }));
-vi.mock("./components/PadGrid", () => ({ PadGrid: () => <div data-testid="pad-grid" /> }));
-vi.mock("./components/StepGrid", () => ({ StepGrid: () => <div data-testid="step-grid" /> }));
+vi.mock("./components/Viewport", () => ({
+  Viewport: () => <div data-testid="chop-viewport" />,
+}));
+vi.mock("./components/PadGrid", () => ({
+  PadGrid: () => <div data-testid="pad-grid" />,
+}));
+vi.mock("./components/StepGrid", () => ({
+  StepGrid: () => <div data-testid="step-grid" />,
+}));
 vi.mock("./components/PlayButton", () => ({ PlayButton: () => <div data-testid="play-button" /> }));
 vi.mock("./components/BpmDial", () => ({ BpmDial: () => <div data-testid="bpm-dial" /> }));
 vi.mock("./components/ExportButton", () => ({ ExportButton: () => <div data-testid="export-button" /> }));
 vi.mock("./components/SuggestButton", () => ({ SuggestButton: () => <div data-testid="suggest-button" /> }));
 vi.mock("./components/CompatibilityBanner", () => ({ CompatibilityBanner: () => null }));
 vi.mock("./components/FeelDisclosure", () => ({ FeelDisclosure: () => <div data-testid="feel-button" /> }));
+vi.mock("./components/mood/MoodMode", () => new Promise(() => undefined));
 
 import { App } from "./App";
 import { useAppStore } from "./store/useAppStore";
@@ -76,6 +83,7 @@ async function renderApp(): Promise<HTMLElement> {
 
 describe("App autosave gating", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.clearAllMocks();
     clearLogs();
     useAppStore.getState().actions.reset();
@@ -100,13 +108,15 @@ describe("App autosave gating", () => {
     );
   });
 
-  it("before the first clip the header is the title only: no Play, no controls row, no dial", async () => {
+  it("before the first clip the header is the title and the mode switch: no Play, no controls row, no dial", async () => {
     await renderApp();
 
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
     const row = title.parentElement!.parentElement as HTMLElement;
-    expect(row.children).toHaveLength(1);
+    // The title block and the Play cell, which holds only the mode switch.
+    expect(row.children).toHaveLength(2);
     expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
+    expect(row).toContainElement(screen.getByRole("group", { name: "Mode" }));
   });
 
   it("reserves an empty controls row while a saved project hydrates, so the page does not jump when the clips arrive", async () => {
@@ -117,8 +127,10 @@ describe("App autosave gating", () => {
     const title = screen.getByRole("heading", { name: /Hyperactive\s+Amateur/i });
     const row = title.parentElement!.parentElement as HTMLElement;
     const wrapper = row.children[1] as HTMLElement;
-    // No Play while loading: only the reserved controls row.
-    expect(wrapper.children).toHaveLength(1);
+    // No Play while loading: the mode switch's cell and the reserved
+    // controls row.
+    expect(wrapper.children).toHaveLength(2);
+    expect(wrapper.firstElementChild).toContainElement(screen.getByRole("group", { name: "Mode" }));
     expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
     const controls = wrapper.lastElementChild as HTMLElement;
     expect(controls.children).toHaveLength(0);
@@ -164,6 +176,12 @@ describe("App autosave gating", () => {
     expect(controls.className.split(/\s+/)).not.toContain("ml-auto");
     expect(controls.className.split(/\s+/)).not.toContain("justify-end");
     expect(controls).not.toContainElement(play);
+    // The mode switch shares Play's cell (stacked on phones, beside Play at
+    // lg with Play at the right edge), never the controls row.
+    const modeSwitch = screen.getByRole("group", { name: "Mode" });
+    expect(play.parentElement).toContainElement(modeSwitch);
+    expect(play.parentElement).toHaveClass("flex-col", "lg:flex-row-reverse");
+    expect(controls).not.toContainElement(modeSwitch);
     // The tempo lives under Feel; the header holds no dial at any width.
     expect(screen.queryByTestId("bpm-dial")).not.toBeInTheDocument();
 
@@ -288,5 +306,40 @@ describe("App autosave gating", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
+  });
+
+  it("shows the lazy Mood fallback and unmounts the Chop surface in Mood", async () => {
+    seedClips(1);
+    useAppStore.getState().actions.setAppMode("mood");
+
+    await renderApp();
+
+    expect(screen.getByText("Loading mood...")).toBeInTheDocument();
+    expect(screen.queryByTestId("chop-viewport")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pad-grid")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
+  });
+
+  it("hides Chop header controls in Mood and restores them in Chop", async () => {
+    seedClips(1);
+    await renderApp();
+
+    expect(screen.getByTestId("play-button")).toBeInTheDocument();
+    expect(screen.getByTestId("export-button")).toBeInTheDocument();
+    expect(screen.getByTestId("feel-button")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mood" }));
+
+    expect(screen.queryByTestId("play-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("feel-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chop" }));
+
+    expect(screen.getByTestId("play-button")).toBeInTheDocument();
+    expect(screen.getByTestId("export-button")).toBeInTheDocument();
+    expect(screen.getByTestId("feel-button")).toBeInTheDocument();
+    expect(screen.getByTestId("step-grid")).toBeInTheDocument();
   });
 });
