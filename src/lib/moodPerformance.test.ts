@@ -458,6 +458,36 @@ describe("moodPerformance", () => {
     expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
   });
 
+  it("keeps arms and the Drop live during a mood export while piece writers freeze", async () => {
+    createMoodWithStack(4);
+    useAppStore.getState().actions.setMoodVibe("blocks");
+    toneMocks.setNow(10);
+    await startMoodPerformance();
+    useAppStore.getState().actions.setIsExporting(true);
+
+    // Performance surface stays live — every arm, swap, and Drop is part
+    // of the take (spec §9).
+    toneMocks.setNow(10.2);
+    armSelection("mic-0", "take-a");
+    expect(useAppStore.getState().mood.performance.armed["mic-0"]).toBe("take-a");
+    applyDueCommits(14);
+    expect(useAppStore.getState().mood.performance.selections["mic-0"]).toBe("take-a");
+
+    armDrop();
+    expect(useAppStore.getState().mood.performance.armedDropActive).toBe(false);
+    applyDueCommits(14.5);
+    expect(useAppStore.getState().mood.performance.dropActive).toBe(false);
+
+    // Piece writers stay frozen (invariant #4).
+    useAppStore.getState().actions.setMoodVibe("print");
+    expect(useAppStore.getState().mood.piece?.vibe).toBe("blocks");
+    armLens("splits");
+    expect(useAppStore.getState().mood.piece?.lens).toBe("wall");
+    expect(useAppStore.getState().mood.performance.armedLens).toBeNull();
+
+    useAppStore.getState().actions.setIsExporting(false);
+  });
+
   it("applies a due selection even when the same mic re-arms before any drain", async () => {
     createMoodWithStack(4);
     toneMocks.setNow(10);

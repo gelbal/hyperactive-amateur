@@ -347,6 +347,45 @@ describe("App autosave gating", () => {
     expect(screen.queryByTestId("step-grid")).not.toBeInTheDocument();
   });
 
+  it("mounts the export affordance in Mood once a cycle exists", async () => {
+    useAppStore.getState().actions.setAppMode("mood");
+    await renderApp();
+
+    expect(screen.queryByTestId("export-button")).not.toBeInTheDocument();
+
+    act(() => {
+      const actions = useAppStore.getState().actions;
+      actions.createMoodPiece("corners", "pocket");
+      actions.setMoodTake("mic-0", {
+        id: "the-one",
+        videoBlob: new Blob(["take"], { type: "video/webm" }),
+        audioBlob: null,
+        posterBlob: null,
+        url: "blob:take",
+        audioBuffer: { duration: 2, sampleRate: 48000 } as AudioBuffer,
+        audioStatus: "ok",
+        posterUrl: null,
+        trimStartMs: 0,
+        trimEndMs: 2000,
+        durationSeconds: 2,
+        cycleMultiple: 1,
+        syncOffsetMs: 0,
+        part: null,
+        partSource: null,
+        recordedAt: 1,
+      });
+    });
+
+    // Mood's Export sits in a full-width controls row after the mode
+    // switch's cell, like Chop's.
+    const exportButton = screen.getByTestId("export-button");
+    const controls = exportButton.parentElement as HTMLElement;
+    expect(controls).toHaveClass("w-full", "lg:w-auto", "mt-3", "lg:mt-0");
+    expect(controls.previousElementSibling).toContainElement(
+      screen.getByRole("group", { name: "Mode" }),
+    );
+  });
+
   it("hides Chop header controls in Mood and restores them in Chop", async () => {
     seedClips(1);
     await renderApp();

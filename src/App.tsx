@@ -52,6 +52,7 @@ export function App() {
   const showControls = editorOpen || isPlaying;
   const hasAiUnlock = clipCount >= AI_UNLOCK_CLIPS;
   const isChopMode = appMode === "chop";
+  const moodHasCycle = useAppStore((s) => s.mood.piece?.cycleSeconds != null);
 
   useEffect(() => {
     initTransport();
@@ -161,6 +162,12 @@ export function App() {
                     {hasAiUnlock && <SuggestButton />}
                   </>
                 )}
+              </div>
+            )}
+            {/* In Mood the controls row holds Export once the piece has a cycle. */}
+            {!isChopMode && moodHasCycle && (
+              <div className="w-full lg:w-auto mt-3 lg:mt-0 min-h-[2.375rem] pointer-coarse:min-h-11 flex flex-wrap items-center gap-1.5 sm:gap-2 lg:flex-nowrap lg:gap-3">
+                <ExportButton />
               </div>
             )}
           </div>
