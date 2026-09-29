@@ -72,11 +72,11 @@ describe("BoundaryQueue", () => {
   it("replaces mic arms and returns due events in boundary order", () => {
     const queue = createBoundaryQueue();
 
-    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4);
-    queue.armSelection({ micId: "mic-b", entry: "take-2" }, 3);
-    queue.armSelection({ micId: "mic-a", entry: "off" }, 5);
-    queue.armLens("splits", 4);
-    queue.armDrop(true, 2);
+    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4, 0);
+    queue.armSelection({ micId: "mic-b", entry: "take-2" }, 3, 0);
+    queue.armSelection({ micId: "mic-a", entry: "off" }, 5, 0);
+    queue.armLens("splits", 4, 0);
+    queue.armDrop(true, 2, 0);
 
     expect(queue.dueAt(3.5)).toEqual([
       { type: "drop", active: true, boundaryTime: 2 },
@@ -93,15 +93,56 @@ describe("BoundaryQueue", () => {
   it("replaces pending lens and Drop toggles independently", () => {
     const queue = createBoundaryQueue();
 
-    queue.armLens("wall", 4);
-    queue.armLens("splits", 5);
-    queue.armDrop(false, 3);
-    queue.armDrop(true, 6);
+    queue.armLens("wall", 4, 0);
+    queue.armLens("splits", 5, 0);
+    queue.armDrop(false, 3, 0);
+    queue.armDrop(true, 6, 0);
 
     expect(queue.dueAt(4.5)).toEqual([]);
     expect(queue.dueAt(6)).toEqual([
       { type: "lens", lens: "splits", boundaryTime: 5 },
       { type: "drop", active: true, boundaryTime: 6 },
+    ]);
+    expect(queue.dueAt(999)).toEqual([]);
+  });
+
+  it("never drains a ripe event before its boundary on the drain clock", () => {
+    const queue = createBoundaryQueue();
+
+    // Arm-time classification may run on the lookahead clock (Tone.now()
+    // runs ~0.1s ahead of Tone.immediate()): a re-arm inside that sliver
+    // marks the old event ripe while the audible clock is still short of
+    // its boundary. The drain must hold it until audible time reaches it.
+    queue.armDrop(false, 4, 3.5);
+    queue.armDrop(true, 8, 4.02);
+
+    expect(queue.dueAt(3.98)).toEqual([]);
+    expect(queue.dueAt(4)).toEqual([{ type: "drop", active: false, boundaryTime: 4 }]);
+    expect(queue.dueAt(8)).toEqual([{ type: "drop", active: true, boundaryTime: 8 }]);
+  });
+
+  it("preserves due-but-undrained events when the same slot re-arms", () => {
+    const queue = createBoundaryQueue();
+
+    // Arm before the boundary, let the boundary pass with no drain (a
+    // stalled paint loop), then re-arm the same slot. The due event must
+    // survive to the next drain — replacement may only cancel the future.
+    queue.armSelection({ micId: "mic-a", entry: "take-1" }, 4, 3.5);
+    queue.armSelection({ micId: "mic-a", entry: "take-2" }, 8, 4.5);
+    queue.armLens("splits", 4, 3.5);
+    queue.armLens("wall", 8, 4.5);
+    queue.armDrop(false, 4, 3.5);
+    queue.armDrop(true, 8, 4.5);
+
+    expect(queue.dueAt(4.6)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-1", boundaryTime: 4 },
+      { type: "lens", lens: "splits", boundaryTime: 4 },
+      { type: "drop", active: false, boundaryTime: 4 },
+    ]);
+    expect(queue.dueAt(8)).toEqual([
+      { type: "selection", micId: "mic-a", entry: "take-2", boundaryTime: 8 },
+      { type: "lens", lens: "wall", boundaryTime: 8 },
+      { type: "drop", active: true, boundaryTime: 8 },
     ]);
     expect(queue.dueAt(999)).toEqual([]);
   });
