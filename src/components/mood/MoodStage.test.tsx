@@ -205,6 +205,30 @@ describe("MoodStage", () => {
     expect(getActiveCanvas()).toBeNull();
   });
 
+  it("announces stopped, performing, and recording from one polite stage live region", () => {
+    const { container } = render(<MoodStage piece={makePiece("row")} />);
+    const liveRegions = container.querySelectorAll('[aria-live="polite"]');
+    expect(liveRegions).toHaveLength(1);
+    expect(liveRegions[0]).toHaveClass("sr-only");
+    expect(liveRegions[0]).toHaveTextContent("stopped");
+
+    act(() => {
+      useAppStore.getState().actions.setMoodPerforming(true, 4);
+    });
+    expect(liveRegions[0]).toHaveTextContent("performing");
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("recording", 0);
+    });
+    expect(liveRegions[0]).toHaveTextContent("recording");
+
+    act(() => {
+      useAppStore.getState().actions.setRecordingState("idle", null);
+      useAppStore.getState().actions.setMoodPerforming(false, 0);
+    });
+    expect(liveRegions[0]).toHaveTextContent("stopped");
+  });
+
   it("paints from Tone.immediate and mirrors the render canvas every frame", () => {
     const { container } = render(<MoodStage piece={makePiece("stack")} />);
     const { renderCanvas, displayCanvas } = renderCanvases(container);

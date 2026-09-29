@@ -1,6 +1,6 @@
 // ABOUTME: StackSheet — Mood mic take chooser as anchored popover or coarse bottom sheet.
 // ABOUTME: Routes take/off selection through moodPerformance so touch and keys share arming.
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Mic2, Plus, Power, Trash2, X } from "lucide-react";
 import { usePopoverDismiss } from "../../lib/usePopoverDismiss";
 import * as moodPerformance from "../../lib/moodPerformance";
@@ -94,7 +94,7 @@ function PartPicker({
             disabled={disabled}
             onClick={() => choosePart(option.value)}
             className={
-              "rounded px-1 py-0.5 text-[10px] uppercase leading-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-50 " +
+              "rounded px-1 py-0.5 text-[10px] uppercase leading-none transition-colors pointer-coarse:min-h-11 pointer-coarse:px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-50 " +
               (isSelected
                 ? "bg-orange-500 text-zinc-950"
                 : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200")
@@ -150,9 +150,14 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
   });
   const canRecordTake = Boolean(piece) && disabledReason === null;
   const recordLabel = beforeTheOne ? "record the One" : "new take";
-  const recordSubtitle = disabledReason ?? (beforeTheOne ? "First take" : "punches in on the One");
+  const recordSubtitle =
+    disabledReason ?? (beforeTheOne ? "your first loop sets the length" : "records on the One");
   const close = useCallback(() => onClose(), [onClose]);
   usePopoverDismiss(rootRef, open, close);
+
+  useEffect(() => {
+    if (!open) setConfirmDeleteId(null);
+  }, [open]);
 
   if (!open) return null;
 
@@ -233,7 +238,7 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
                       type="button"
                       aria-label={`Confirm remove take ${index + 1}`}
                       onClick={() => deleteTake(take.id)}
-                      className="flex h-10 w-10 items-center justify-center rounded border border-red-500/50 bg-red-950/60 text-red-200 hover:bg-red-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      className="flex h-10 w-10 items-center justify-center rounded border border-red-500/50 bg-red-950/60 text-red-200 pointer-coarse:h-11 pointer-coarse:w-11 hover:bg-red-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                     >
                       <Check size={14} aria-hidden="true" />
                     </button>
@@ -241,7 +246,7 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
                       type="button"
                       aria-label={`Cancel remove take ${index + 1}`}
                       onClick={() => setConfirmDeleteId(null)}
-                      className="flex h-10 w-10 items-center justify-center rounded border border-zinc-700 bg-zinc-950 text-zinc-300 hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                      className="flex h-10 w-10 items-center justify-center rounded border border-zinc-700 bg-zinc-950 text-zinc-300 pointer-coarse:h-11 pointer-coarse:w-11 hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
                     >
                       <X size={14} aria-hidden="true" />
                     </button>
@@ -257,7 +262,7 @@ export function StackSheet({ mic, micNumber, open, onClose }: StackSheetProps) {
                       }
                       disabled={deleteDisabledReason !== null}
                       onClick={() => setConfirmDeleteId(take.id)}
-                      className="flex h-10 w-10 items-center justify-center rounded border border-zinc-800 bg-zinc-950 text-zinc-500 hover:border-red-700 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                      className="flex h-10 w-10 items-center justify-center rounded border border-zinc-800 bg-zinc-950 text-zinc-500 pointer-coarse:h-11 pointer-coarse:w-11 hover:border-red-700 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
                     >
                       <Trash2 size={14} aria-hidden="true" />
                     </button>

@@ -1,5 +1,5 @@
 // ABOUTME: StackSheet tests — pins Mood take sheet layout, dismissal, and row arming.
-// ABOUTME: Covers the coarse-pointer bottom sheet contract and disabled recording placeholder.
+// ABOUTME: Covers the coarse-pointer bottom sheet contract and disabled recording affordance.
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StackSheet } from "./StackSheet";
@@ -106,16 +106,30 @@ describe("StackSheet", () => {
     );
 
     const takeRow = screen.getByRole("button", { name: /^Take 1 1\.5s$/i });
-    expect(takeRow).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
+    expect(takeRow).toHaveClass(
+      "min-h-11",
+      "pointer-coarse:min-h-12",
+      "focus-visible:ring-2",
+      "focus-visible:ring-orange-500",
+    );
     expect(screen.getByRole("button", { name: /Take 2 2\.0s Lead/i })).toBeInTheDocument();
     expect(screen.queryByText("No part yet")).not.toBeInTheDocument();
+    for (const part of ["lead", "harmony", "bass", "beatbox", "adlib", "none"]) {
+      expect(screen.getByRole("button", { name: `part ${part} for take 1` })).toHaveClass(
+        "pointer-coarse:min-h-11",
+      );
+    }
+    expect(screen.getByRole("button", { name: "Remove take 1" })).toHaveClass(
+      "pointer-coarse:h-11",
+      "pointer-coarse:w-11",
+    );
     expect(screen.getByRole("button", { name: /^Off/i })).toHaveClass(
       "min-h-11",
       "pointer-coarse:min-h-12",
     );
 
     const newTake = screen.getByRole("button", {
-      name: /new take/i,
+      name: "new take records on the One",
     });
     expect(newTake).not.toBeDisabled();
     expect(newTake).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
@@ -148,7 +162,7 @@ describe("StackSheet", () => {
     render(<StackSheet mic={fullMic} micNumber={1} open onClose={vi.fn()} />);
 
     const newTake = screen.getByRole("button", {
-      name: /new take.*stack full/i,
+      name: "new take stack full",
     });
     expect(newTake).toBeDisabled();
     expect(screen.getByText("stack full")).toBeInTheDocument();
@@ -160,7 +174,7 @@ describe("StackSheet", () => {
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
     const newTake = screen.getByRole("button", {
-      name: /new take.*another recording active/i,
+      name: "new take another recording active",
     });
     expect(newTake).toBeDisabled();
     expect(screen.getByText("another recording active")).toBeInTheDocument();
@@ -172,7 +186,7 @@ describe("StackSheet", () => {
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
     const newTake = screen.getByRole("button", {
-      name: /new take.*exporting/i,
+      name: "new take exporting",
     });
     expect(newTake).toBeDisabled();
     expect(screen.getAllByText("exporting").length).toBeGreaterThan(0);
@@ -184,7 +198,7 @@ describe("StackSheet", () => {
     render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
 
     const recordOne = screen.getByRole("button", {
-      name: /record the One.*another recording active/i,
+      name: "record the One another recording active",
     });
     expect(recordOne).toBeDisabled();
     expect(screen.queryByText("new take")).not.toBeInTheDocument();
@@ -195,7 +209,9 @@ describe("StackSheet", () => {
     const onClose = vi.fn();
     render(<StackSheet mic={mic} micNumber={1} open onClose={onClose} />);
 
-    const recordOne = screen.getByRole("button", { name: /record the One First take/i });
+    const recordOne = screen.getByRole("button", {
+      name: "record the One your first loop sets the length",
+    });
     expect(recordOne).not.toBeDisabled();
 
     fireEvent.click(recordOne);
@@ -321,5 +337,19 @@ describe("StackSheet", () => {
     expect(screen.queryByRole("button", { name: "Confirm remove take 1" })).not.toBeInTheDocument();
     expect(deleteMoodTake).not.toHaveBeenCalled();
     deleteMoodTake.mockRestore();
+  });
+
+  it("resets inline delete confirmation after the sheet closes", () => {
+    const mic = setupMood();
+    const { rerender } = render(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove take 1" }));
+    expect(screen.getByRole("button", { name: "Confirm remove take 1" })).toBeInTheDocument();
+
+    rerender(<StackSheet mic={mic} micNumber={1} open={false} onClose={vi.fn()} />);
+    rerender(<StackSheet mic={mic} micNumber={1} open onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Confirm remove take 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove take 1" })).toBeInTheDocument();
   });
 });

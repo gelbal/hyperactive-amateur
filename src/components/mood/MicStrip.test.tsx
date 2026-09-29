@@ -91,13 +91,21 @@ describe("MicStrip", () => {
 
     render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
 
-    expect(screen.getByRole("button", { name: /Mic 1, live/i })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(screen.getByRole("button", { name: /Mic 2, armed/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Mic 3, recording/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Mic 4, off/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mic 1 — live: take 1. Open stack" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "mic 2 — armed: take 1. Open stack" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mic 3 — recording. Cancel take" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mic 4 — off. Open stack" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("ARMED")).toBeInTheDocument();
+    expect(screen.getByText("OFF")).toBeInTheDocument();
 
     expect(screen.getByTestId("mic-mic-0-poster")).toHaveAttribute(
       "src",
@@ -127,7 +135,7 @@ describe("MicStrip", () => {
 
     render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
 
-    const hotChip = screen.getByRole("button", { name: /Mic 1, recording.*Cancel take/i });
+    const hotChip = screen.getByRole("button", { name: /mic 1 — recording.*Cancel take/i });
     expect(screen.getByTestId("mic-mic-0-ring")).toHaveClass("border-red-500");
     expect(screen.getByTestId("mic-mic-0-rec-dot")).toBeInTheDocument();
     expect(screen.getByTestId("mic-mic-0-countdown")).toHaveTextContent("3");
@@ -154,7 +162,7 @@ describe("MicStrip", () => {
 
     render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Mic 1, recording.*Stop take/i }));
+    fireEvent.click(screen.getByRole("button", { name: /mic 1 — recording.*Stop take/i }));
 
     expect(moodRecordingMocks.stopMoodTakeEarly).toHaveBeenCalledTimes(1);
     expect(recordingCancelMocks.cancelActiveRecordingByUser).not.toHaveBeenCalled();
@@ -166,14 +174,14 @@ describe("MicStrip", () => {
 
     render(<MicStrip piece={useAppStore.getState().mood.piece!} />);
 
-    const micOne = screen.getByRole("button", { name: /Mic 1, off/i });
+    const micOne = screen.getByRole("button", { name: /mic 1 — off/i });
     expect(micOne).toHaveClass("min-h-11", "pointer-coarse:min-h-12");
     expect(micOne).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(micOne);
 
     expect(micOne).toHaveAttribute("aria-expanded", "true");
-    expect(micOne).toHaveAttribute("aria-pressed", "true");
+    expect(micOne).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("dialog", { name: "Mic 1 stack" })).toBeInTheDocument();
   });
 });
