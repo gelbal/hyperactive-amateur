@@ -7,11 +7,16 @@ import { ensureAudioRunning } from "./audioLifecycle";
 import { timeoutAfter, waitMs } from "./async";
 import { canStartAudibleAction } from "./audibleActionGate";
 import { registerExportSession } from "./exportSession";
+import { LOG_EVENTS, logger } from "./logger";
+import { holdShareCard } from "./videoEngine";
 import { holdScreenWakeLock, type ScreenWakeLockHandle } from "./wakeLock";
 
 const FRAMERATE = 30;
 const EXPORT_STOP_TIMEOUT_MS = 5000;
 const BEATS_PER_BAR = 4;
+// How long a render waits for the share card composed while the panel was
+// open; a later card loses to the flat fallback.
+export const COVER_WAIT_MS = 3000;
 
 export interface ExportStream {
   stream: MediaStream;
@@ -56,10 +61,45 @@ export interface ExportOptions {
   // in as raw streams) so any supported MIME works.
   mimeType: string;
   onProgress?: (fraction: number) => void;
+  // The share card for frame 0, composed from tiles loaded while the panel
+  // was open. The render waits at most COVER_WAIT_MS for it.
+  cover?: Promise<HTMLCanvasElement>;
+  // The flat card (no tiles), composed synchronously at Render: frame 0 when
+  // the cover is late.
+  coverFallback?: HTMLCanvasElement;
 }
 
 export function getExportDurationMs(bars: number, bpm: number): number {
   return (bars * BEATS_PER_BAR * 60_000) / bpm;
+}
+
+// One silent beat on the share card before step 0.
+export function getShareCardHoldMs(bpm: number): number {
+  return 60_000 / bpm;
+}
+
+// What the recording shows: the beat plus the lookahead before step 0
+// sounds. App's transport setup creates the context, so reading it creates
+// none.
+export function getRecordedHoldSec(bpm: number): number {
+  return getShareCardHoldMs(bpm) / 1000 + Tone.getContext().lookAhead;
+}
+
+// Rewinds to step 0 in playing mode and, with a card, holds it on the render
+// canvas and paints it now, so the recorder's first frame is the card.
+function prepareTransport(canvas: HTMLCanvasElement, card: HTMLCanvasElement | null): void {
+  stopPlayback({ allowExportStop: true });
+  useAppStore.getState().actions.setIsPlaying(true);
+  if (!card) return;
+  holdShareCard(card);
+  canvas.getContext("2d")?.drawImage(card, 0, 0, canvas.width, canvas.height);
+}
+
+// With a hold, step 0 lands one beat after now on the audio clock.
+function startTransport(holdMs: number): void {
+  const transport = Tone.getTransport();
+  if (holdMs > 0) transport.start(Tone.now() + holdMs / 1000);
+  else transport.start();
 }
 
 // Real-time render: starts the Transport at step 0 plus a MediaRecorder on the
@@ -70,7 +110,7 @@ export async function exportSong(
   audioContext: AudioContext,
   options: ExportOptions,
 ): Promise<Blob> {
-  const { bars, bpm, mimeType, onProgress } = options;
+  const { bars, bpm, mimeType, onProgress, cover, coverFallback } = options;
   const durationMs = getExportDurationMs(bars, bpm);
 
   let progressTimer: ReturnType<typeof setInterval> | null = null;
@@ -117,6 +157,16 @@ export async function exportSong(
     if (abortError) throw abortError;
     await Promise.race([ensureAudioRunning(), exportAbort]);
     if (abortError) throw abortError;
+    // The card loads inside the session, so an abort ends the wait; nothing
+    // is captured yet and the transport is stopped.
+    const readyCard = cover
+      ? await Promise.race([cover, waitMs(COVER_WAIT_MS).then(() => null), exportAbort])
+      : null;
+    if (abortError) throw abortError;
+    if (cover && !readyCard) logger.warn(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+    const card = readyCard ?? coverFallback ?? null;
+    const holdMs = card ? getShareCardHoldMs(bpm) : 0;
+    const renderMs = durationMs + holdMs;
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
       mimeType,
@@ -142,24 +192,21 @@ export async function exportSong(
       };
     });
 
-    stopPlayback({ allowExportStop: true });
-    useAppStore.getState().actions.setIsPlaying(true);
-    const transport = Tone.getTransport();
-
+    prepareTransport(canvas, card);
     recorder.start(1000);
-    transport.start();
+    startTransport(holdMs);
 
     const startedAt = Date.now();
     if (onProgress) {
       onProgress(0);
       progressTimer = setInterval(() => {
         const elapsed = Date.now() - startedAt;
-        onProgress(Math.min(1, elapsed / durationMs));
+        onProgress(Math.min(1, elapsed / renderMs));
       }, 100);
     }
 
     const renderResult = await Promise.race([
-      waitMs(durationMs).then(() => "duration" as const),
+      waitMs(renderMs).then(() => "duration" as const),
       recorderDone.then(() => "recorder" as const),
       exportAbort,
     ]);

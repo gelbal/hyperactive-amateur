@@ -35,7 +35,8 @@ vi.mock("tone", () => ({
     disconnect: toneMocks.destinationDisconnect,
   })),
   getTransport: vi.fn(() => toneMocks.transport),
-  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
+  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext, lookAhead: 0.1 })),
+  now: vi.fn(() => 10),
 }));
 
 vi.mock("./audioLifecycle", () => ({
@@ -43,7 +44,14 @@ vi.mock("./audioLifecycle", () => ({
   AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
-import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
+import {
+  COVER_WAIT_MS,
+  buildExportStream,
+  defaultExportFilename,
+  downloadBlob,
+  exportSong,
+  getRecordedHoldSec,
+} from "./export";
 import {
   abortActiveExport,
   getActiveExportSession,
@@ -51,6 +59,8 @@ import {
 } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
 import { AudioUnavailableError } from "./audioLifecycle";
+import { LOG_EVENTS, logger } from "./logger";
+import { drawCurrentFrame, hasLiveFrame } from "./videoEngine";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -61,6 +71,26 @@ function makeCanvas(): HTMLCanvasElement {
     })),
   } as unknown as HTMLCanvasElement;
 }
+// A 480 px render canvas whose 2D context records draws.
+function makeCanvasWithContext(): HTMLCanvasElement & { drawImage: ReturnType<typeof vi.fn> } {
+  const canvas = makeCanvas() as HTMLCanvasElement & { drawImage: ReturnType<typeof vi.fn> };
+  const drawImage = vi.fn();
+  Object.assign(canvas, {
+    width: 480,
+    height: 480,
+    drawImage,
+    getContext: vi.fn(() => ({ drawImage })),
+  });
+  return canvas;
+}
+
+function makeCard(): HTMLCanvasElement {
+  const card = document.createElement("canvas");
+  card.width = 480;
+  card.height = 480;
+  return card;
+}
+
 function makeAudioContext() {
   const audioTrack = { kind: "audio", stop: vi.fn() } as unknown as MediaStreamTrack;
   return {
@@ -468,6 +498,146 @@ describe("exportSong", () => {
     await expect(first).rejects.toThrow(/page hidden/);
     expect(useAppStore.getState().playback.isExporting).toBe(false);
   });
+
+  describe("share card", () => {
+    afterEach(() => {
+      toneMocks.transport.stop.mockReset();
+      toneMocks.transport.start.mockReset();
+      vi.restoreAllMocks();
+    });
+
+    it("holds the card before recording and starts the transport one beat later", async () => {
+      const order: string[] = [];
+      const card = makeCard();
+      const canvas = makeCanvasWithContext();
+      toneMocks.transport.stop.mockImplementation(() => order.push("stop"));
+      canvas.drawImage.mockImplementation((source: unknown) => {
+        if (source === card) order.push(hasLiveFrame() ? "paint held card" : "paint");
+      });
+      FakeMediaRecorder.startSpy.mockImplementation(() => order.push("record"));
+      toneMocks.transport.start.mockImplementation(() => order.push("transport"));
+
+      await exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.resolve(card),
+      });
+
+      expect(order.slice(0, 4)).toEqual(["stop", "paint held card", "record", "transport"]);
+      expect(canvas.drawImage).toHaveBeenCalledWith(card, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("rejects on an abort while the cover is pending, before any stream, recorder or hold", async () => {
+      const canvas = makeCanvasWithContext();
+      const promise = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+      });
+      const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+      await vi.waitFor(() => expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalled());
+      expect(abortActiveExport("page hidden")).toBe(true);
+
+      await rejection;
+      expect(canvas.captureStream).not.toHaveBeenCalled();
+      expect(FakeMediaRecorder.startSpy).not.toHaveBeenCalled();
+      expect(toneMocks.transport.start).not.toHaveBeenCalled();
+      expect(hasLiveFrame()).toBe(false);
+    });
+
+    it("releases the card when the export is aborted during the hold", async () => {
+      vi.useFakeTimers();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+        cover: Promise.resolve(makeCard()),
+      });
+      const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(hasLiveFrame()).toBe(true);
+      expect(abortActiveExport("page hidden")).toBe(true);
+      await rejection;
+
+      expect(hasLiveFrame()).toBe(false);
+      const ctx = {
+        canvas: { width: 480, height: 480 },
+        fillStyle: "",
+        fillRect: vi.fn(),
+        drawImage: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+      drawCurrentFrame(ctx, 0);
+      expect(ctx.fillStyle).toBe("#0a0a0a");
+      expect(ctx.drawImage).not.toHaveBeenCalled();
+    });
+
+    it("renders the bars plus the hold and reports progress over both", async () => {
+      vi.useFakeTimers();
+      const onProgress = vi.fn();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+        onProgress,
+        cover: Promise.resolve(makeCard()),
+      });
+
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(onProgress.mock.calls.at(-1)?.[0]).toBeCloseTo(0.5, 1);
+      await vi.advanceTimersByTimeAsync(2400);
+      expect(useAppStore.getState().playback.isExporting).toBe(true);
+      await vi.advanceTimersByTimeAsync(200);
+
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+      expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+    });
+
+    it("a late cover renders the flat fallback card with the hold", async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const fallback = makeCard();
+      const canvas = makeCanvasWithContext();
+      const promise = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+        coverFallback: fallback,
+      });
+
+      await vi.advanceTimersByTimeAsync(COVER_WAIT_MS);
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+      expect(canvas.drawImage).toHaveBeenCalledWith(fallback, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10.5);
+
+      await vi.advanceTimersByTimeAsync(2600);
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
+
+    it("a late cover without a fallback renders as before", async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+      });
+
+      await vi.advanceTimersByTimeAsync(COVER_WAIT_MS);
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+      expect(toneMocks.transport.start).toHaveBeenCalledWith();
+      expect(hasLiveFrame()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
+  });
 });
 
 describe("downloadBlob", () => {
@@ -490,5 +660,12 @@ describe("downloadBlob", () => {
       revokeObjectURL.mockRestore();
       click.mockRestore();
     }
+  });
+});
+
+describe("getRecordedHoldSec", () => {
+  it("is the beat plus Tone's lookahead", () => {
+    expect(getRecordedHoldSec(120)).toBeCloseTo(0.6);
+    expect(getRecordedHoldSec(60)).toBeCloseTo(1.1);
   });
 });

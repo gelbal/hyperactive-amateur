@@ -42,6 +42,8 @@ export const LOG_EVENTS = {
   RECOVERY_QUARANTINED: "recovery.quarantined",
   RECOVERY_LOAD_FAILED: "recovery.load-failed",
   VIDEO_DRAW_ERROR: "video.draw-error",
+  COVER_FAILED: "cover.failed",
+  COVER_LATE: "cover.late",
   AUTOSAVE_FLUSH: "autosave.flush",
 } as const;
 export type LogEvent = (typeof LOG_EVENTS)[keyof typeof LOG_EVENTS];
