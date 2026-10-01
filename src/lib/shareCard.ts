@@ -15,6 +15,7 @@ import {
   dominantPlateShare,
   paintPlates,
   platesFor,
+  showPhotoThrough,
   tileOrigin,
 } from "./coverArt";
 import { LOG_EVENTS, logger } from "./logger";
@@ -122,7 +123,9 @@ function printTile(card: CanvasRenderingContext2D, tile: HTMLCanvasElement | nul
     card.fillRect(x, y, TILE_SIZE, TILE_SIZE);
     return;
   }
-  paintPlates(platesFor(pixels.data, TILE_SIZE), TILE_SIZE, palette, pixels.data);
+  const photo = new Uint8ClampedArray(pixels.data);
+  paintPlates(platesFor(photo, TILE_SIZE), TILE_SIZE, palette, pixels.data);
+  showPhotoThrough(pixels.data, photo);
   card.putImageData(pixels, x, y);
 }
 

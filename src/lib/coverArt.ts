@@ -53,6 +53,9 @@ const METER_SHARE = 0.5;
 const MIN_PLATE_SPREAD = 8;
 // Pixel offset of the ink plate: the silkscreen misregistration.
 const INK_OFFSET = { x: 3, y: 2 };
+// The print is laid over the photo's grey at this share, so the photograph's
+// shading stays readable through the flat plates and faces are easy to see.
+const PHOTO_SHOW_THROUGH = 0.3;
 
 const COVER_TILE_COUNT = 4;
 // The action frame sits this long after the trim start (autoTrim starts
@@ -241,6 +244,18 @@ export function paintPlates(
       out[i * 4 + 1] = colour[1];
       out[i * 4 + 2] = colour[2];
       out[i * 4 + 3] = 255;
+    }
+  }
+}
+
+// Lays the printed tile over the photo's grey: each channel keeps 70 % of
+// the print and takes 30 % of the photo's luminance. `photo` is the tile
+// before printing, same size as `print`.
+export function showPhotoThrough(print: Uint8ClampedArray, photo: Uint8ClampedArray): void {
+  for (let i = 0; i < print.length; i += 4) {
+    const grey = 0.299 * photo[i] + 0.587 * photo[i + 1] + 0.114 * photo[i + 2];
+    for (let channel = 0; channel < 3; channel += 1) {
+      print[i + channel] = (1 - PHOTO_SHOW_THROUGH) * print[i + channel] + PHOTO_SHOW_THROUGH * grey;
     }
   }
 }

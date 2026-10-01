@@ -12,6 +12,7 @@ import {
   dominantPlateShare,
   paintPlates,
   pickCoverClips,
+  showPhotoThrough,
   platesFor,
   tileOrigin,
 } from "./coverArt";
@@ -251,5 +252,17 @@ describe("paintPlates", () => {
     expect(rgbAt(10, 10)).toBe(COVER_PALETTES[0].face);
     expect(rgbAt(0, 0)).toBe(COVER_PALETTES[0].field);
     expect(out[3]).toBe(255);
+  });
+});
+
+describe("showPhotoThrough", () => {
+  it("lets 30 % of the photo's grey show through the print", () => {
+    // A cyan field over a mid-grey photo, and black ink over a light one.
+    const print = new Uint8ClampedArray([0x22, 0xd3, 0xee, 255, 0x09, 0x09, 0x0b, 255]);
+    const photo = new Uint8ClampedArray([128, 128, 128, 255, 250, 200, 150, 255]);
+
+    showPhotoThrough(print, photo);
+
+    expect(Array.from(print)).toEqual([62, 186, 205, 255, 69, 69, 70, 255]);
   });
 });

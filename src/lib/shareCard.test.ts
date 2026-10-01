@@ -267,6 +267,15 @@ describe("composeShareCard", () => {
     return `#${[data[0], data[1], data[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
   }
 
+  // A palette colour printed 70 % over a grey photo.
+  function overGrey(hex: string, grey: number): string {
+    // Rounded the way a pixel buffer rounds (ties to even).
+    const mixed = new Uint8ClampedArray(
+      [1, 3, 5].map((at) => 0.7 * parseInt(hex.slice(at, at + 2), 16) + 0.3 * grey),
+    );
+    return `#${Array.from(mixed, (v) => v.toString(16).padStart(2, "0")).join("")}`;
+  }
+
   it("lays paper first, then four tiles at their origins in their slot colours", () => {
     const card = composeShareCard([tileOf(faceRgba())]);
     const calls = callsOf(card);
@@ -279,8 +288,9 @@ describe("composeShareCard", () => {
     expect(tiles.map((call) => call.args.slice(1))).toEqual(
       [0, 1, 2, 3].map((slot) => [tileOrigin(slot).x, tileOrigin(slot).y]),
     );
+    // The tile's corner is its mid-grey (120) ground: field colour over it.
     expect(tiles.map((call) => cornerHex(call.args[0] as Uint8ClampedArray))).toEqual(
-      COVER_PALETTES.map((palette) => palette.field),
+      COVER_PALETTES.map((palette) => overGrey(palette.field, 120)),
     );
   });
 

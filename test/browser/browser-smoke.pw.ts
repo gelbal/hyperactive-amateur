@@ -571,17 +571,19 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
     return { paper, tile, firstCut };
   }, download.url());
 
-  const near = (actual: number[], hex: string, tolerance: number) =>
-    [1, 3, 5].every(
-      (at, channel) => Math.abs(actual[channel] - parseInt(hex.slice(at, at + 2), 16)) <= tolerance,
-    );
+  const near = (actual: number[], expected: number[], tolerance: number) =>
+    expected.every((value, channel) => Math.abs(actual[channel] - value) <= tolerance);
+  const rgb = (hex: string) => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+  // The print is laid 70 % over the photo's grey.
+  const overGrey = (hex: string, grey: number) => rgb(hex).map((value) => 0.7 * value + 0.3 * grey);
   // Frame 0 is the card: paper in the margin, and tile 0 printed in slot 0's
-  // cyan field, black ink and pink face. Only the action frame has a face:
+  // cyan field (over the 128 ground), black ink (over the 30 hair) and pink
+  // face (over the face, about 229 there). Only the action frame has a face:
   // the poster rehydrate makes at 0.1 s is blank and would print all field.
-  expect(near(exported.paper, "#f8f6f3", 12)).toBe(true);
-  expect(near(exported.tile.ground, "#22d3ee", 24)).toBe(true);
-  expect(near(exported.tile.hair, "#09090b", 24)).toBe(true);
-  expect(near(exported.tile.face, "#f9a8d4", 24)).toBe(true);
+  expect(near(exported.paper, rgb("#f8f6f3"), 12)).toBe(true);
+  expect(near(exported.tile.ground, overGrey("#22d3ee", 128), 24)).toBe(true);
+  expect(near(exported.tile.hair, overGrey("#09090b", 30), 24)).toBe(true);
+  expect(near(exported.tile.face, overGrey("#f9a8d4", 229), 24)).toBe(true);
   // One silent beat at 180 BPM (0.33 s) plus the audio lookahead.
   expect(exported.firstCut).toBeGreaterThanOrEqual(0.25);
   expect(exported.firstCut).toBeLessThanOrEqual(0.9);
