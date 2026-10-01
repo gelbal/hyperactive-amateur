@@ -11,6 +11,7 @@ vi.mock("tone", () => toneHarness.createToneModule());
 import {
   drawCurrentFrame,
   hasLiveFrame,
+  holdShareCard,
   initVideoEngine,
   resetPlaybackState,
   setClipForTrack,
@@ -846,5 +847,140 @@ describe("videoEngine integration", () => {
 
     expect(ctx.fillRect).not.toHaveBeenCalled();
     expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("share card hold", () => {
+  const card = document.createElement("canvas");
+
+  function cardPaints(ctx: CanvasRenderingContext2D): number {
+    return vi.mocked(ctx.drawImage).mock.calls.filter(([source]) => source === card).length;
+  }
+
+  function videoPaints(ctx: CanvasRenderingContext2D): number {
+    return vi
+      .mocked(ctx.drawImage)
+      .mock.calls.filter(([source]) => source instanceof HTMLVideoElement).length;
+  }
+
+  // An export rewinds, enters playing mode and holds the card before step 0.
+  function startHeldExport(): HTMLVideoElement {
+    initVideoEngine();
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    holdShareCard(card);
+    return video;
+  }
+
+  beforeEach(() => {
+    __resetVideoEngineForTesting();
+    useAppStore.getState().actions.reset();
+    toneHarness.setNow(0);
+    toneHarness.setLookahead(0);
+    toneHarness.draw.reset();
+    toneHarness.transport.reset();
+  });
+
+  it("paints the held card over a rest at the full canvas size, and counts as a live frame", () => {
+    startHeldExport();
+
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.0);
+
+    expect(ctx.drawImage).toHaveBeenCalledWith(card, 0, 0, 480, 480);
+    expect(hasLiveFrame()).toBe(true);
+  });
+
+  it("draws no video frame before the downbeat boundary", () => {
+    startHeldExport();
+    toneHarness.transport.fireRepeat(0, 1.5);
+    trigger(0, 1.5);
+
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.45);
+
+    expect(videoPaints(ctx)).toBe(0);
+    expect(cardPaints(ctx)).toBe(1);
+  });
+
+  it("keeps the card up while the first cut is still seeking", () => {
+    const video = startHeldExport();
+    setVideoFrameState(video, { readyState: 1 });
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.05);
+
+    expect(videoPaints(ctx)).toBe(0);
+    expect(cardPaints(ctx)).toBe(1);
+  });
+
+  it("keeps the card up when drawing the video throws", () => {
+    startHeldExport();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+
+    const ctx = makeCanvasContext();
+    vi.mocked(ctx.drawImage).mockImplementation((source) => {
+      if (source instanceof HTMLVideoElement) throw new Error("decode");
+    });
+    drawCurrentFrame(ctx, 1.05);
+
+    expect(cardPaints(ctx)).toBe(1);
+    expect(warn).toHaveBeenCalledWith(LOG_EVENTS.VIDEO_DRAW_ERROR, expect.anything());
+  });
+
+  it("the first drawn video frame releases the card; later empty paints keep the frame, not the card", () => {
+    startHeldExport();
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+
+    const cut = makeCanvasContext();
+    drawCurrentFrame(cut, 1.05);
+    expect(videoPaints(cut)).toBe(1);
+    expect(cardPaints(cut)).toBe(0);
+
+    // Past the 200 ms trim the held frame stays; the card does not return.
+    const afterTrim = makeCanvasContext();
+    drawCurrentFrame(afterTrim, 1.3);
+    expect(cardPaints(afterTrim)).toBe(0);
+    expect(hasLiveFrame()).toBe(true);
+  });
+
+  it("holding the card after a drawn frame shows the card until a new frame is drawn", () => {
+    initVideoEngine();
+    setClipForTrack(0, makeTrimmedClip());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    setVideoFrameState(video, { readyState: 2 });
+    useAppStore.getState().actions.setIsPlaying(true);
+    toneHarness.setLookahead(0.1);
+    toneHarness.setImmediate(1.0);
+    toneHarness.transport.fireRepeat(0, 1.0);
+    trigger(0, 1.0);
+    drawCurrentFrame(makeCanvasContext(), 1.05);
+
+    holdShareCard(card);
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.3);
+
+    expect(cardPaints(ctx)).toBe(1);
+  });
+
+  it("a playback reset releases the card", () => {
+    startHeldExport();
+    resetPlaybackState();
+
+    const ctx = makeCanvasContext();
+    drawCurrentFrame(ctx, 1.0);
+
+    expect(cardPaints(ctx)).toBe(0);
+    expect(ctx.fillRect).toHaveBeenCalled();
+    expect(hasLiveFrame()).toBe(false);
   });
 });
