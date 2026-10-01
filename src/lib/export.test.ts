@@ -457,7 +457,8 @@ describe("exportSong", () => {
     });
     const rejection = expect(promise).rejects.toThrow(/did not finish export/);
 
-    await vi.advanceTimersByTimeAsync(10);
+    // The render: one 10 ms bar plus the 0.1 s lookahead tail.
+    await vi.advanceTimersByTimeAsync(110);
     await vi.advanceTimersByTimeAsync(5000);
 
     await rejection;
@@ -597,9 +598,10 @@ describe("exportSong", () => {
 
       await vi.advanceTimersByTimeAsync(2500);
       expect(onProgress.mock.calls.at(-1)?.[0]).toBeCloseTo(0.5, 1);
-      await vi.advanceTimersByTimeAsync(2400);
+      // One bar plus the beat is 5 s; the lookahead (0.1 s) is still recorded.
+      await vi.advanceTimersByTimeAsync(2550);
       expect(useAppStore.getState().playback.isExporting).toBe(true);
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(100);
 
       await expect(promise).resolves.toBeInstanceOf(Blob);
       expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
@@ -688,6 +690,39 @@ describe("exportSong", () => {
         FakeMediaRecorder.startSpy.mock.invocationCallOrder[0],
       );
       expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("a cover that fails to compose renders the flat fallback and warns", async () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const fallback = makeCard();
+      const canvas = makeCanvasWithContext();
+
+      await exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.reject(new Error("compose bug")),
+        coverFallback: fallback,
+      });
+
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "compose" });
+      expect(canvas.drawImage).toHaveBeenCalledWith(fallback, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("records the lookahead after the last bar, so its final step is not cut", async () => {
+      vi.useFakeTimers();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+      });
+
+      await vi.advanceTimersByTimeAsync(4050);
+      expect(useAppStore.getState().playback.isExporting).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(promise).resolves.toBeInstanceOf(Blob);
     });
 
     it("a late cover without a fallback renders as before", async () => {

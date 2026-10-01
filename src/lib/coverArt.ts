@@ -65,41 +65,33 @@ const ACTION_FRAME_OFFSET_MS = 120;
 // head shot at thumbnail size.
 const CROP_ZOOM = 1.25;
 
-function activeStepCount(track: Track): number {
-  return track.steps.filter(Boolean).length;
+function activeStepCount(track: Track, renderedSteps: number): number {
+  return track.steps.slice(0, renderedSteps).filter(Boolean).length;
 }
 
-function firstActiveStep(track: Track): number {
-  const step = track.steps.indexOf(true);
+function firstActiveStep(track: Track, renderedSteps: number): number {
+  const step = track.steps.slice(0, renderedSteps).indexOf(true);
   return step === -1 ? Number.POSITIVE_INFINITY : step;
 }
 
-// Highest visual tier first (the clips that win cuts), then the busiest,
-// then track order.
-function byScreenTime(a: Track, b: Track): number {
-  return (
-    tagTier(b.tag) - tagTier(a.tag) ||
-    activeStepCount(b) - activeStepCount(a) ||
-    a.id - b.id
-  );
-}
-
-function byFirstAppearance(a: Track, b: Track): number {
-  return firstActiveStep(a) - firstActiveStep(b) || a.id - b.id;
-}
-
 // Up to four clips the exported video shows, in grid order (order of first
-// appearance in the pattern). Falls back to sequenced clips, then to any
-// clip, when no clip would appear on screen.
-export function pickCoverClips(tracks: readonly Track[]): Clip[] {
-  const withClip = tracks.filter((track) => track.clip);
-  const sequenced = withClip.filter((track) => activeStepCount(track) > 0);
-  const onScreen = sequenced.filter((track) => track.showVideo && !track.muted);
-  const pool = [onScreen, sequenced, withClip].find((candidates) => candidates.length > 0) ?? [];
-  return [...pool]
-    .sort(byScreenTime)
+// appearance in the pattern). Only the first `renderedSteps` steps count:
+// a short render of a long pattern never reaches the rest. A clip set to
+// audio only, muted or not played never appears on the cover; with none
+// left the card is flat.
+export function pickCoverClips(
+  tracks: readonly Track[],
+  renderedSteps = Number.POSITIVE_INFINITY,
+): Clip[] {
+  const steps = (track: Track) => activeStepCount(track, renderedSteps);
+  const first = (track: Track) => firstActiveStep(track, renderedSteps);
+  return tracks
+    .filter((track) => track.clip && track.showVideo && !track.muted && steps(track) > 0)
+    // Highest visual tier first (the clips that win cuts), then the
+    // busiest, then track order.
+    .sort((a, b) => tagTier(b.tag) - tagTier(a.tag) || steps(b) - steps(a) || a.id - b.id)
     .slice(0, COVER_TILE_COUNT)
-    .sort(byFirstAppearance)
+    .sort((a, b) => first(a) - first(b) || a.id - b.id)
     .map((track) => track.clip as Clip);
 }
 
@@ -203,7 +195,7 @@ export function platesFor(rgba: Uint8ClampedArray, size: number): Uint8Array {
       const value = lum[i];
       if (value < metered.ink || value < local[i] * LOCAL_INK_RATIO * (1 - away)) {
         plates[i] = PLATE.ink;
-      } else if (value >= metered.face + away * (255 - metered.face)) {
+      } else if (away < 1 && value >= metered.face + away * (255 - metered.face)) {
         plates[i] = PLATE.face;
       }
     }

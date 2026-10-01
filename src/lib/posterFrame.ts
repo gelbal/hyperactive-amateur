@@ -11,9 +11,9 @@ type VideoWithFrameCallback = HTMLVideoElement & {
 };
 
 // Capture a single frame near the start of the video and return it as a JPEG
-// Blob. On any decode error, missing track, seek failure, or timeout, resolve
-// with null — the caller must treat null as "no poster available" and fall
-// back to a placeholder UI.
+// Blob. On any decode error, missing track, seek failure, timeout, or an
+// abort through `signal`, resolve with null — the caller must treat null as
+// "no poster available" and fall back to a placeholder UI.
 //
 // Why this exists: iPad WebKit (which every iPadOS browser uses) does not
 // reliably paint a first-frame poster on a blob-backed <video> with
@@ -23,9 +23,11 @@ export async function captureFirstFrame(
   blob: Blob,
   seekTimeSec: number = DEFAULT_SEEK_TIME_SEC,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<Blob | null> {
   if (typeof document === "undefined") return null;
   if (!blob || blob.size === 0) return null;
+  if (signal?.aborted) return null;
 
   const video = document.createElement("video");
   video.muted = true;
@@ -67,6 +69,7 @@ export async function captureFirstFrame(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       cleanupListeners();
       cleanupVideoFrameCallback();
       try {
@@ -80,6 +83,9 @@ export async function captureFirstFrame(
     };
 
     const timer = setTimeout(() => finish(null), timeoutMs);
+    // An abort releases the decoder at once instead of at the timeout.
+    const onAbort = () => finish(null);
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     const drawCurrentFrame = (): Blob | null | Promise<Blob | null> => {
       const width = video.videoWidth;

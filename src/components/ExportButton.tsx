@@ -1,7 +1,7 @@
 // ABOUTME: ExportButton — top-bar button + popover with cover, bars slider, format picker, progress, review.
 // ABOUTME: Mirrors the FeelDisclosure pattern: anchored popover, click-outside + Escape close, no modal scrim.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Share2, Trash2 } from "lucide-react";
+import { Download, Share2, Trash2, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import {
   exportSong,
@@ -23,8 +23,9 @@ import { canStartAudibleAction } from "../lib/audibleActionGate";
 const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
+const STEPS_PER_BAR = 16;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
-const SHARE_FALLBACK_MESSAGE = "Sharing failed — saved as a download instead.";
+const SHARE_FAILED_MESSAGE = "Sharing failed — use Save to download the video.";
 
 type ExportReview = {
   blob: Blob;
@@ -77,8 +78,12 @@ export function ExportButton() {
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const tilesRef = useRef<Promise<CoverTiles> | null>(null);
   const [tiles, setTiles] = useState<CoverTiles | null>(null);
-  const coverClips = useMemo(() => pickCoverClips(tracks), [tracks]);
-  const coverOn = coverClips.length > 0;
+  const coverClips = useMemo(
+    () => pickCoverClips(tracks, bars * STEPS_PER_BAR),
+    [tracks, bars],
+  );
+  // Any clip gets a cover; with none on screen it is the flat card.
+  const coverOn = tracks.some((track) => track.clip);
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
   const exportDurationMs =
@@ -111,19 +116,26 @@ export function ExportButton() {
     if (!open || !canStart || !coverOn) return;
     const loading = loadCoverTiles(coverClips);
     tilesRef.current = loading;
+    // The old tiles may show a clip that is gone; the preview waits instead.
+    setTiles(null);
     void loading.then((loaded) => {
       if (tilesRef.current === loading && mountedRef.current) setTiles(loaded);
     });
   }, [open, canStart, coverOn, coverClips]);
 
   // Draws the preview when the tiles land or the panel reopens with a fresh
-  // preview canvas.
+  // preview canvas, and clears it while new tiles load. Never while a render
+  // runs: composing is main-thread work beside the recorded paint loop.
   useEffect(() => {
     const preview = previewRef.current;
-    if (!tiles || !preview) return;
-    const card = composeShareCard(tiles);
-    preview.getContext("2d")?.drawImage(card, 0, 0, preview.width, preview.height);
-  }, [tiles, open]);
+    if (!preview || rendering) return;
+    const ctx = preview.getContext("2d");
+    if (!tiles) {
+      ctx?.clearRect(0, 0, preview.width, preview.height);
+      return;
+    }
+    ctx?.drawImage(composeShareCard(tiles), 0, 0, preview.width, preview.height);
+  }, [tiles, open, rendering]);
 
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {
@@ -185,9 +197,9 @@ export function ExportButton() {
     } catch (err) {
       if (isAbortError(err)) return;
       if (!mountedRef.current || reviewRef.current !== currentReview) return;
-      if (saveReview(currentReview) && mountedRef.current) {
-        setShareFallback(SHARE_FALLBACK_MESSAGE);
-      }
+      // The render already saved the video once; another automatic download
+      // would duplicate it, so point to Save instead.
+      setShareFallback(SHARE_FAILED_MESSAGE);
     } finally {
       if (mountedRef.current) setSharePending(false);
     }
@@ -211,11 +223,15 @@ export function ExportButton() {
     // The cover is a promise the export waits for inside its session; the
     // flat fallback is composed now, so frame 0 is a card even when the
     // tiles are late.
-    let cover: Promise<HTMLCanvasElement> | undefined;
+    let cover: Promise<HTMLCanvasElement | null> | undefined;
     let coverFallback: HTMLCanvasElement | undefined;
     const loading = tilesRef.current;
     if (coverOn && loading) {
-      cover = loading.then((loaded) => composeShareCard(loaded));
+      // Tiles landing after the export stopped waiting (its transport has
+      // started) would only cost main-thread time during the recording.
+      cover = loading.then((loaded) =>
+        useAppStore.getState().playback.isPlaying ? null : composeShareCard(loaded),
+      );
       // Observed here so a render that fails before awaiting it cannot
       // leave an unhandled rejection; the export still sees it.
       cover.catch(() => undefined);
@@ -410,8 +426,9 @@ export function ExportButton() {
                   onClick={dismissReview}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-700 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-800"
                 >
-                  <Trash2 size={14} />
-                  Discard
+                  {/* Once saved, closing the review throws nothing away. */}
+                  {review.objectUrl ? <X size={14} /> : <Trash2 size={14} />}
+                  {review.objectUrl ? "Done" : "Discard"}
                 </button>
               </div>
             </div>

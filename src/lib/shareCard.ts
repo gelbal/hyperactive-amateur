@@ -80,9 +80,39 @@ function tilePixels(tile: HTMLCanvasElement): ImageData | null {
   return tile.getContext("2d")?.getImageData(0, 0, TILE_SIZE, TILE_SIZE) ?? null;
 }
 
+// A tile's plates, separated once: tiles are never drawn into after they are
+// made, and every compose (the preview, the export, each repeated slot)
+// prints the same plates.
+const tilePlates = new WeakMap<HTMLCanvasElement, Uint8Array>();
+
+function platesOf(tile: HTMLCanvasElement, pixels: ImageData): Uint8Array {
+  let plates = tilePlates.get(tile);
+  if (!plates) {
+    plates = platesFor(pixels.data, TILE_SIZE);
+    tilePlates.set(tile, plates);
+  }
+  return plates;
+}
+
 function isFlatTile(tile: HTMLCanvasElement): boolean {
   const pixels = tilePixels(tile);
-  return !pixels || dominantPlateShare(platesFor(pixels.data, TILE_SIZE)) > FLAT_PLATE_SHARE;
+  return !pixels || dominantPlateShare(platesOf(tile, pixels)) > FLAT_PLATE_SHARE;
+}
+
+// Decodes a clip's action frame, and stops the decode the moment playback,
+// recording or an export's transport starts (the decode gate closes), so the
+// off-screen video never overlaps them.
+async function decodeActionFrame(blob: Blob, sec: number): Promise<{ frame: Blob | null; stopped: boolean }> {
+  const controller = new AbortController();
+  const unsubscribe = useAppStore.subscribe(() => {
+    if (!canDecodeCoverFrames()) controller.abort();
+  });
+  try {
+    const frame = await captureFirstFrame(blob, sec, COVER_FRAME_TIMEOUT_MS, controller.signal);
+    return { frame, stopped: controller.signal.aborted };
+  } finally {
+    unsubscribe();
+  }
 }
 
 async function loadTileNow(clip: Clip): Promise<HTMLCanvasElement | null> {
@@ -91,13 +121,15 @@ async function loadTileNow(clip: Clip): Promise<HTMLCanvasElement | null> {
   const cached = tileCache.get(clip.blob);
   if (cached?.sec === sec) return cached.tile;
   if (canDecodeCoverFrames()) {
-    const frame = await captureFirstFrame(clip.blob, sec, COVER_FRAME_TIMEOUT_MS);
-    const tile = await decodeTile(frame);
-    if (tile && !isFlatTile(tile)) {
-      tileCache.set(clip.blob, { sec, tile });
-      return tile;
+    const { frame, stopped } = await decodeActionFrame(clip.blob, sec);
+    if (!stopped) {
+      const tile = await decodeTile(frame);
+      if (tile && !isFlatTile(tile)) {
+        tileCache.set(clip.blob, { sec, tile });
+        return tile;
+      }
+      logger.warn(LOG_EVENTS.COVER_FAILED, { stage: "frame", sec });
     }
-    logger.warn(LOG_EVENTS.COVER_FAILED, { stage: "frame", sec });
   }
   return decodeTile(clip.posterBlob);
 }
@@ -118,13 +150,13 @@ function printTile(card: CanvasRenderingContext2D, tile: HTMLCanvasElement | nul
   const { x, y } = tileOrigin(slot);
   const palette = COVER_PALETTES[slot];
   const pixels = tile ? tilePixels(tile) : null;
-  if (!pixels) {
+  if (!tile || !pixels) {
     card.fillStyle = palette.field;
     card.fillRect(x, y, TILE_SIZE, TILE_SIZE);
     return;
   }
   const photo = new Uint8ClampedArray(pixels.data);
-  paintPlates(platesFor(photo, TILE_SIZE), TILE_SIZE, palette, pixels.data);
+  paintPlates(platesOf(tile, pixels), TILE_SIZE, palette, pixels.data);
   showPhotoThrough(pixels.data, photo);
   card.putImageData(pixels, x, y);
 }

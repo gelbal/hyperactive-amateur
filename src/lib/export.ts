@@ -62,8 +62,9 @@ export interface ExportOptions {
   mimeType: string;
   onProgress?: (fraction: number) => void;
   // The share card for frame 0, composed from tiles loaded while the panel
-  // was open. The render waits at most COVER_WAIT_MS for it.
-  cover?: Promise<HTMLCanvasElement>;
+  // was open. The render waits at most COVER_WAIT_MS for it; null means no
+  // card was composed.
+  cover?: Promise<HTMLCanvasElement | null>;
   // The flat card (no tiles), composed synchronously at Render: frame 0 when
   // the cover is late.
   coverFallback?: HTMLCanvasElement;
@@ -158,15 +159,24 @@ export async function exportSong(
     await Promise.race([ensureAudioRunning(), exportAbort]);
     if (abortError) throw abortError;
     // The card loads inside the session, so an abort ends the wait; nothing
-    // is captured yet and the transport is stopped.
-    const readyCard = cover
-      ? await Promise.race([cover, waitMs(COVER_WAIT_MS).then(() => null), exportAbort])
+    // is captured yet and the transport is stopped. A late or failed card
+    // gives way to the flat fallback rather than failing the render.
+    const coverResult = cover
+      ? await Promise.race([
+          cover.catch(() => "failed" as const),
+          waitMs(COVER_WAIT_MS).then(() => "late" as const),
+          exportAbort,
+        ])
       : null;
     if (abortError) throw abortError;
-    if (cover && !readyCard) logger.warn(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+    if (coverResult === "late") logger.warn(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+    if (coverResult === "failed") logger.warn(LOG_EVENTS.COVER_FAILED, { stage: "compose" });
+    const readyCard = coverResult === "late" || coverResult === "failed" ? null : coverResult;
     const card = readyCard ?? coverFallback ?? null;
     const holdMs = card ? getShareCardHoldMs(bpm) : 0;
-    const renderMs = durationMs + holdMs;
+    // Step 0 sounds one lookahead after the transport starts, so the last
+    // bar ends that much later too.
+    const renderMs = durationMs + holdMs + Tone.getContext().lookAhead * 1000;
     exportStream = buildExportStream(canvas, audioContext);
     recorder = new MediaRecorder(exportStream.stream, {
       mimeType,

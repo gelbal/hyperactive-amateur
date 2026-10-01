@@ -83,15 +83,23 @@ describe("pickCoverClips", () => {
     expect(pickedTrackIds(tracks)).toEqual([3]);
   });
 
-  it("falls back to sequenced clips, then to any clip", () => {
-    const sequencedOnly = makeTracks([
+  it("shows no clip the video never shows: none when every clip is audio-only, muted or unsequenced", () => {
+    const offScreen = makeTracks([
       { steps: [2], showVideo: false },
+      { steps: [4], muted: true },
       { steps: [], tag: "vocal" },
     ]);
-    expect(pickedTrackIds(sequencedOnly)).toEqual([0]);
+    expect(pickCoverClips(offScreen)).toEqual([]);
+  });
 
-    const unsequenced = makeTracks([{ clip: false }, { steps: [] }, { steps: [], muted: true }]);
-    expect(pickedTrackIds(unsequenced)).toEqual([1, 2]);
+  it("counts only the steps the render plays", () => {
+    const tracks = makeTracks([{ tag: "vocal", steps: [] }, { tag: "kick", steps: [3] }]).map((track) => ({
+      ...track,
+      steps: [...track.steps, ...Array.from({ length: 16 }, (_, step) => track.id === 0 && step === 4)],
+    }));
+    // Track 0 plays only at step 20 of a 32-step pattern.
+    expect(pickedTrackIds(tracks)).toEqual([1, 0]);
+    expect(pickCoverClips(tracks, 16).map((clip) => tracks.findIndex((t) => t.clip === clip))).toEqual([1]);
   });
 
   it("returns no clips for a project without clips", () => {
@@ -221,6 +229,13 @@ describe("platesFor", () => {
     const plates = platesFor(faceTile(() => 230, 150), TILE_SIZE);
 
     expect(plateAt(plates, -20, 20)).toBe(PLATE.face);
+    expect(plateAt(plates, -100, -100)).toBe(PLATE.field);
+    expect(plateAt(plates, 100, 100)).toBe(PLATE.field);
+  });
+
+  it("prints a blown-out highlight away from the face as field, not face", () => {
+    const plates = platesFor(faceTile(() => 255, 150), TILE_SIZE);
+
     expect(plateAt(plates, -100, -100)).toBe(PLATE.field);
     expect(plateAt(plates, 100, 100)).toBe(PLATE.field);
   });

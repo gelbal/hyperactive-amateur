@@ -257,11 +257,11 @@ describe("ExportButton format picker", () => {
     expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(createObjectURL).toHaveBeenCalledWith(blob);
-    fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
     expect(screen.queryByText(filename)).not.toBeInTheDocument();
   });
 
-  it("saves the render as soon as it finishes, keeping Share, Save and Discard", async () => {
+  it("saves the render as soon as it finishes, keeping Share, Save and Done", async () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     stubNavigatorShare({ canShare: true });
     const createObjectURL = vi.spyOn(URL, "createObjectURL");
@@ -275,7 +275,8 @@ describe("ExportButton format picker", () => {
     expect(screen.getByText(filename)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^share$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^discard$/i })).toBeInTheDocument();
+    // The video is already saved, so closing the review discards nothing.
+    expect(screen.getByRole("button", { name: /^done$/i })).toBeInTheDocument();
   });
 
   it("saves nothing when the render fails", async () => {
@@ -353,7 +354,7 @@ describe("ExportButton format picker", () => {
     expect(file.type).toBe("video/mp4");
   });
 
-  it("keeps the share fallback working after a StrictMode double-mount", async () => {
+  it("keeps the share failure message working after a StrictMode double-mount", async () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     const share = vi.fn().mockRejectedValue(new Error("share failed"));
     stubNavigatorShare({ canShare: true, share });
@@ -379,10 +380,10 @@ describe("ExportButton format picker", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Sharing failed — saved as a download instead."),
+        screen.getByText("Sharing failed — use Save to download the video."),
       ).toBeInTheDocument(),
     );
-    expect(click).toHaveBeenCalledTimes(1);
+    expect(click).not.toHaveBeenCalled();
     // sharePending must reset so the Share button is usable again.
     expect(screen.getByRole("button", { name: /^share$/i })).toBeEnabled();
   });
@@ -402,12 +403,12 @@ describe("ExportButton format picker", () => {
     await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
     expect(screen.getByText(filename)).toBeInTheDocument();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed — use Save to download the video."),
     ).not.toBeInTheDocument();
     expect(createObjectURL).not.toHaveBeenCalled();
   });
 
-  it("falls back to Save when sharing fails for a non-cancel reason", async () => {
+  it("points to Save when sharing fails, without downloading again", async () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     const share = vi.fn().mockRejectedValue(new Error("share failed"));
     stubNavigatorShare({ canShare: true, share });
@@ -425,11 +426,14 @@ describe("ExportButton format picker", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Sharing failed — saved as a download instead."),
+        screen.getByText("Sharing failed — use Save to download the video."),
       ).toBeInTheDocument(),
     );
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(createObjectURL).toHaveBeenCalledWith(blob);
-    expect(click).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a delayed share failure after the review is discarded", async () => {
@@ -451,7 +455,7 @@ describe("ExportButton format picker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
     expect(screen.getByRole("button", { name: /^share$/i })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
     expect(screen.queryByText(filename)).not.toBeInTheDocument();
     createObjectURL.mockClear();
     revokeObjectURL.mockClear();
@@ -466,7 +470,7 @@ describe("ExportButton format picker", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed — use Save to download the video."),
     ).not.toBeInTheDocument();
   });
 
@@ -537,7 +541,7 @@ describe("ExportButton format picker", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
     expect(
-      screen.queryByText("Sharing failed — saved as a download instead."),
+      screen.queryByText("Sharing failed — use Save to download the video."),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^share$/i })).toBeInTheDocument();
   });
@@ -555,7 +559,7 @@ describe("ExportButton format picker", () => {
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/save");
   });
@@ -715,7 +719,9 @@ describe("ExportButton cover", () => {
       "HYPERACTIVE",
       "AMATEUR",
     ]);
-    await waitFor(() => expect(previewDraws()).toBe(1));
+    await act(async () => {
+      await exportOptions().cover;
+    });
   });
 
   it("shows the cover without offering label or on/off choices", async () => {
@@ -726,6 +732,90 @@ describe("ExportButton cover", () => {
     expect(screen.getByRole("img", { name: /cover preview/i })).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /name|logo|signed|plain|off/i })).not.toBeInTheDocument();
     await waitFor(() => expect(previewDraws()).toBe(1));
+  });
+
+  it("opens on a flat card when no clip ever appears on screen", async () => {
+    seedClips(1);
+    act(() => useAppStore.getState().actions.setTrackShowVideo(0, false));
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    expect(exportOptions().cover).toBeInstanceOf(Promise);
+    expect(exportOptions().coverFallback?.width).toBe(480);
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("clears the old preview while the changed clips load", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    const preview = screen.getByRole("img", { name: /cover preview/i }) as HTMLCanvasElement;
+    const before = callsOf(preview).length;
+
+    act(() => useAppStore.getState().actions.setTrackClip(1, makeClip(1)));
+    act(() => useAppStore.getState().actions.toggleStep(1, 2));
+
+    expect(callsOf(preview).slice(before).map((call) => call.op)).toContain("clearRect");
+    await waitFor(() => expect(previewDraws()).toBe(2));
+  });
+
+  it("draws no preview while a render runs", async () => {
+    const frames: Array<(jpeg: Blob) => void> = [];
+    capture.mockImplementation(() => new Promise<Blob | null>((resolve) => frames.push(resolve)));
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    await waitFor(() => expect(frames).toHaveLength(1));
+    await act(async () => {
+      frames[0](new Blob([new Uint8Array([1])], { type: "image/jpeg" }));
+      await exportOptions().cover;
+    });
+
+    expect(previewDraws()).toBe(0);
+  });
+
+  it("composes no cover once the render has started recording", async () => {
+    const frames: Array<(jpeg: Blob) => void> = [];
+    capture.mockImplementation(() => new Promise<Blob | null>((resolve) => frames.push(resolve)));
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    const cover = exportOptions().cover as Promise<HTMLCanvasElement | null>;
+    await waitFor(() => expect(frames).toHaveLength(1));
+
+    // The export stopped waiting and started its transport; then the tile lands.
+    act(() => useAppStore.getState().actions.setIsPlaying(true));
+    await act(async () => {
+      frames[0](new Blob([new Uint8Array([1])], { type: "image/jpeg" }));
+    });
+
+    await expect(cover).resolves.toBeNull();
+  });
+
+  it("puts only clips the render plays on the cover", async () => {
+    const actions = useAppStore.getState().actions;
+    while (useAppStore.getState().project.stepCount < 24) actions.extendSteps();
+    actions.setTrackClip(0, makeClip(0));
+    actions.toggleStep(0, 20);
+    render(<ExportButton />);
+    openPanel();
+    // Four bars play step 20, so the clip is on the cover.
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    expect(capture).toHaveBeenCalledTimes(1);
+
+    // One bar never reaches it: the card has no clip tiles.
+    fireEvent.change(screen.getByLabelText("bars"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    const card = await act(async () => exportOptions().cover);
+
+    expect(callsOf(card as HTMLCanvasElement).filter((call) => call.op === "putImageData")).toEqual([]);
   });
 
   it("hides Cover and renders without a cover when there are no clips", () => {

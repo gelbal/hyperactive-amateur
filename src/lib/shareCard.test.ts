@@ -127,7 +127,7 @@ describe("loadCoverTiles", () => {
 
     const [tile] = await loadCoverTiles([clip]);
 
-    expect(capture).toHaveBeenCalledWith(clip.blob, 0.42, COVER_FRAME_TIMEOUT_MS);
+    expect(capture).toHaveBeenCalledWith(clip.blob, 0.42, COVER_FRAME_TIMEOUT_MS, expect.any(AbortSignal));
     expect(tile?.width).toBe(TILE_SIZE);
     expect(tile?.height).toBe(TILE_SIZE);
   });
@@ -162,6 +162,23 @@ describe("loadCoverTiles", () => {
 
     expect(capture).toHaveBeenCalledTimes(1);
     expect(tiles.every((tile) => tile !== null)).toBe(true);
+  });
+
+  it("stops a decode in flight when the transport starts, and uses the poster without a warning", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const { pending } = deferCaptures();
+    const loading = loadCoverTiles([makeClip(1, jpegOf(faceRgba()))]);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const signal = capture.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    useAppStore.getState().actions.setIsPlaying(true);
+    expect(signal.aborted).toBe(true);
+    pending[0].resolve(null);
+    const [tile] = await loading;
+
+    expect(tile).not.toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("falls back from the action frame to the poster, then to a flat tile, warning each miss", async () => {
