@@ -45,9 +45,10 @@ export const FLAT_PLATE_SHARE = 0.95;
 // instead of printing a circle.
 export const FACE_ZONE: readonly [number, number] = [0.3, 0.46];
 // Ink is the darkest fifth of the metered centre; the face plate starts at
-// its 65th percentile. Metering the centre half reads the face, not the room.
+// its 55th percentile, which keeps a dim or dark-skinned face in its colour
+// instead of in ink. Metering the centre half reads the face, not the room.
 export const INK_PERCENTILE = 0.2;
-export const FACE_PERCENTILE = 0.65;
+export const FACE_PERCENTILE = 0.55;
 // Inside the face zone a pixel also inks when it is this much darker than
 // its neighbourhood, which keeps eyes and mouths on dim faces.
 const LOCAL_INK_RATIO = 0.85;
