@@ -39,6 +39,8 @@ vi.mock("tone", () => ({
   now: vi.fn(() => 10),
 }));
 
+vi.mock("./posterFrame", () => ({ captureFirstFrame: vi.fn() }));
+
 vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
   AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
@@ -61,6 +63,10 @@ import { useAppStore } from "../store/useAppStore";
 import { AudioUnavailableError } from "./audioLifecycle";
 import { LOG_EVENTS, logger } from "./logger";
 import { drawCurrentFrame, hasLiveFrame } from "./videoEngine";
+import { captureFirstFrame } from "./posterFrame";
+import { __resetShareCardForTesting, composeShareCard, loadCoverTiles } from "./shareCard";
+import { fakeBitmap, installRecordingCanvas } from "../test-utils/canvasRecorder";
+import type { Clip } from "../types";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -207,6 +213,8 @@ describe("exportSong", () => {
     }
     __resetExportSessionForTesting();
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("defaultExportFilename: default extension is .webm; .mp4 is honored when passed", () => {
@@ -617,6 +625,69 @@ describe("exportSong", () => {
 
       await vi.advanceTimersByTimeAsync(2600);
       await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
+
+    it("a cover still loading at Render finishes with action frames, and the export records it", async () => {
+      installRecordingCanvas();
+      // A light face under dark hair on a mid-grey ground.
+      const face = new Uint8ClampedArray(216 * 216 * 4);
+      for (let i = 0; i < face.length; i += 4) {
+        const dx = ((i / 4) % 216) + 0.5 - 108;
+        const dy = Math.floor(i / 4 / 216) + 0.5 - 108;
+        const inFace = (dx / 38) ** 2 + ((dy - 8) / 48) ** 2 <= 1;
+        const inHair = (dx / 48) ** 2 + (dy / 62) ** 2 <= 1;
+        const value = inFace ? 200 : inHair ? 30 : 120;
+        face.set([value, value, value, 255], i);
+      }
+      const decodes: Blob[] = [];
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(async (image: Blob) => {
+          decodes.push(image);
+          return fakeBitmap(face);
+        }),
+      );
+      const frames: Array<(jpeg: Blob) => void> = [];
+      vi.mocked(captureFirstFrame).mockImplementation(
+        () => new Promise<Blob | null>((resolve) => frames.push(resolve)),
+      );
+      __resetShareCardForTesting();
+      const clip = (id: number): Clip => ({
+        blob: new Blob([new Uint8Array([id])], { type: "video/webm" }),
+        url: `blob:test/${id}`,
+        audioBuffer: null,
+        audioStatus: "ok",
+        trimStartMs: 300,
+        trimEndMs: 1400,
+        durationMs: 1500,
+        posterBlob: new Blob([new Uint8Array([100 + id])], { type: "image/jpeg" }),
+        posterUrl: null,
+      });
+      const clips = [clip(1), clip(2)];
+      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles, "plain", null));
+      const canvas = makeCanvasWithContext();
+
+      const exporting = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover,
+      });
+      for (let turn = 0; turn < 2; turn += 1) {
+        await vi.waitFor(() => expect(frames).toHaveLength(turn + 1));
+        expect(useAppStore.getState().playback.isExporting).toBe(true);
+        frames[turn](new Blob([new Uint8Array([turn])], { type: "image/jpeg" }));
+      }
+      await exporting;
+
+      const card = await cover;
+      expect(captureFirstFrame).toHaveBeenCalledTimes(2);
+      expect(decodes.some((image) => clips.some((c) => c.posterBlob === image))).toBe(false);
+      expect(canvas.drawImage).toHaveBeenCalledWith(card, 0, 0, 480, 480);
+      expect(canvas.drawImage.mock.invocationCallOrder[0]).toBeLessThan(
+        FakeMediaRecorder.startSpy.mock.invocationCallOrder[0],
+      );
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
     });
 
     it("a late cover without a fallback renders as before", async () => {
