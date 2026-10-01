@@ -4,18 +4,7 @@ import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { LOG_EVENTS, logger } from "./logger";
-
-type TagOrUntagged = Tag | "untagged";
-
-// Higher number wins. Vocal/fx are loud-statement clips; hats are filler.
-const TAG_PRIORITY: Record<TagOrUntagged, number> = {
-  vocal: 5,
-  fx: 4,
-  snare: 3,
-  kick: 2,
-  hat: 1,
-  untagged: 0,
-};
+import { tagTier } from "./tagPriority";
 
 export interface TrackContext {
   tag: Tag | null;
@@ -270,8 +259,7 @@ export function trigger(trackId: number, when: number, displayStartTime = when):
 }
 
 function tagScore(trackId: number, contexts?: Map<number, TrackContext>): number {
-  const tag = contexts?.get(trackId)?.tag ?? null;
-  return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
+  return tagTier(contexts?.get(trackId)?.tag ?? null);
 }
 
 // Pure: pick the visually-winning event by tag priority, ties broken by
