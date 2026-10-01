@@ -8,7 +8,6 @@ import {
   downloadBlob,
   defaultExportFilename,
   getExportDurationMs,
-  getRecordedHoldSec,
   getShareCardHoldMs,
   shareBlob,
 } from "../lib/export";
@@ -313,20 +312,15 @@ export function ExportButton() {
           className="absolute inset-x-3 top-full mt-2 z-30 w-auto max-w-[24rem] mx-auto max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 lg:inset-x-auto lg:right-0 lg:min-w-[18rem] lg:max-w-none lg:mx-0 lg:max-h-none lg:overflow-visible"
         >
           {coverOn && (
-            <div className="flex items-center gap-3">
-              <canvas
-                ref={previewRef}
-                width={192}
-                height={192}
-                role="img"
-                aria-label="Cover preview"
-                className="w-24 h-24 shrink-0 rounded"
-                style={{ backgroundColor: PAPER }}
-              />
-              <p className="text-xs text-zinc-400">
-                {`Opens on this cover for one beat (${getRecordedHoldSec(bpm).toFixed(1)} s), so it's the thumbnail when you share.`}
-              </p>
-            </div>
+            <canvas
+              ref={previewRef}
+              width={192}
+              height={192}
+              role="img"
+              aria-label="Cover preview"
+              className="w-24 h-24 shrink-0 rounded"
+              style={{ backgroundColor: PAPER }}
+            />
           )}
           {formats.length > 1 && (
             <fieldset className="flex flex-col gap-2">

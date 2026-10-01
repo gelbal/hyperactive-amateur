@@ -79,13 +79,6 @@ export function getShareCardHoldMs(bpm: number): number {
   return 60_000 / bpm;
 }
 
-// What the recording shows: the beat plus the lookahead before step 0
-// sounds. App's transport setup creates the context, so reading it creates
-// none.
-export function getRecordedHoldSec(bpm: number): number {
-  return getShareCardHoldMs(bpm) / 1000 + Tone.getContext().lookAhead;
-}
-
 // Rewinds to step 0 in playing mode and, with a card, holds it on the render
 // canvas and paints it now, so the recorder's first frame is the card.
 function prepareTransport(canvas: HTMLCanvasElement, card: HTMLCanvasElement | null): void {

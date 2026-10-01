@@ -886,14 +886,12 @@ describe("ExportButton cover", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
-  it("states the recorded hold and adds it to the render estimate", async () => {
+  it("shows the cover without a caption and adds its hold to the render estimate", async () => {
     seedClips(1);
     render(<ExportButton />);
     openPanel();
 
-    expect(
-      screen.getByText("Opens on this cover for one beat (0.6 s), so it's the thumbnail when you share."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/opens on this cover/i)).not.toBeInTheDocument();
     expect(
       screen.getByText("Keep this screen open — rendering takes about 9 s."),
     ).toBeInTheDocument();

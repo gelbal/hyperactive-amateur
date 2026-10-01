@@ -52,7 +52,6 @@ import {
   defaultExportFilename,
   downloadBlob,
   exportSong,
-  getRecordedHoldSec,
 } from "./export";
 import {
   abortActiveExport,
@@ -779,12 +778,5 @@ describe("downloadBlob", () => {
       revokeObjectURL.mockRestore();
       click.mockRestore();
     }
-  });
-});
-
-describe("getRecordedHoldSec", () => {
-  it("is the beat plus Tone's lookahead", () => {
-    expect(getRecordedHoldSec(120)).toBeCloseTo(0.6);
-    expect(getRecordedHoldSec(60)).toBeCloseTo(1.1);
   });
 });
