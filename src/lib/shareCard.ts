@@ -1,6 +1,5 @@
 // ABOUTME: shareCard — loads a cover tile per clip (action frame, poster, or flat) and composes the share card.
-// ABOUTME: Loading is the only async step; composing is synchronous, so a label change never decodes.
-import roundelUrl from "../assets/ha-roundel.png";
+// ABOUTME: Loading is the only async step; composing is synchronous, so a redraw never decodes.
 import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 import {
@@ -17,7 +16,6 @@ import {
   paintPlates,
   platesFor,
   tileOrigin,
-  type CoverLabel,
 } from "./coverArt";
 import { LOG_EVENTS, logger } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
@@ -31,14 +29,6 @@ const LABEL_FONT = 'ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", A
 const NAME_FONT_PX = 30;
 const NAME_LINE_PX = 32;
 const NAME_PADDING_PX = 10;
-const SIGNED_FONT_PX = 15;
-const SIGNED_STROKE_PX = 3;
-const SIGNED_INSET_PX = 24;
-const ROUNDEL_RADIUS_PX = 52;
-const ROUNDEL_RING_PX = 6;
-// The roundel art's own cream ring sits inside its square; drawn this much
-// larger than the clip, the ring meets the clip edge.
-const ROUNDEL_DRAW_SCALE = 1.12;
 
 // Keyed on the clip's blob: the store replaces Clip objects around the same
 // blob (a poster attach, an audio repair), so an object key would miss right
@@ -48,7 +38,6 @@ let tileCache = new WeakMap<Blob, { sec: number; tile: HTMLCanvasElement }>();
 // One video decode at a time across overlapping loads (a reopen mid-load, a
 // poster attach re-running the panel's load); iOS caps concurrent decoders.
 let frameQueue: Promise<unknown> = Promise.resolve();
-let roundel: Promise<ImageBitmap | null> | null = null;
 
 // Action frames decode only while nothing plays or records: an export's
 // claim leaves this open through its cover wait, and starting the transport
@@ -124,24 +113,6 @@ export async function loadCoverTiles(clips: readonly Clip[]): Promise<CoverTiles
   return tiles;
 }
 
-// The "ha" roundel, bundled so the service worker precaches it. A failed
-// load resolves null and is retried next time.
-export function loadRoundel(): Promise<ImageBitmap | null> {
-  if (roundel) return roundel;
-  if (typeof createImageBitmap !== "function" || typeof fetch !== "function") {
-    return Promise.resolve(null);
-  }
-  const loading = fetch(roundelUrl)
-    .then((response) => (response.ok ? response.blob() : Promise.reject(new Error("roundel"))))
-    .then((blob) => createImageBitmap(blob))
-    .catch(() => {
-      roundel = null;
-      return null;
-    });
-  roundel = loading;
-  return loading;
-}
-
 function printTile(card: CanvasRenderingContext2D, tile: HTMLCanvasElement | null, slot: number): void {
   const { x, y } = tileOrigin(slot);
   const palette = COVER_PALETTES[slot];
@@ -171,64 +142,21 @@ function drawName(card: CanvasRenderingContext2D): void {
   });
 }
 
-function drawSigned(card: CanvasRenderingContext2D): void {
-  const corner = CARD_SIZE - SIGNED_INSET_PX;
-  card.font = `900 ${SIGNED_FONT_PX}px ${LABEL_FONT}`;
-  card.textAlign = "right";
-  card.textBaseline = "alphabetic";
-  card.lineJoin = "round";
-  card.lineWidth = SIGNED_STROKE_PX;
-  card.strokeStyle = INK;
-  card.strokeText("hyperactive amateur", corner, corner);
-  card.fillStyle = PAPER;
-  card.fillText("hyperactive amateur", corner, corner);
-}
-
-// The roundel's source has black corners, so it is clipped to its circle,
-// on a cream disc that rings it.
-function drawRoundel(card: CanvasRenderingContext2D, art: CanvasImageSource): void {
-  const centre = CARD_SIZE / 2;
-  const size = ROUNDEL_RADIUS_PX * 2 * ROUNDEL_DRAW_SCALE;
-  card.fillStyle = PAPER;
-  card.beginPath();
-  card.arc(centre, centre, ROUNDEL_RADIUS_PX + ROUNDEL_RING_PX, 0, Math.PI * 2);
-  card.fill();
-  card.save();
-  card.beginPath();
-  card.arc(centre, centre, ROUNDEL_RADIUS_PX, 0, Math.PI * 2);
-  card.clip();
-  card.drawImage(art, centre - size / 2, centre - size / 2, size, size);
-  card.restore();
-}
-
 // The 480 px share card: paper, four printed tiles (clips repeat AAAA,
-// AB/BA, AB/CA), then the label. Throws only on a bug.
-export function composeShareCard(
-  tiles: CoverTiles,
-  label: Exclude<CoverLabel, "off">,
-  roundelArt: CanvasImageSource | null,
-): HTMLCanvasElement {
+// AB/BA, AB/CA), then the name across the gutter crossing. Throws only on a
+// bug.
+export function composeShareCard(tiles: CoverTiles): HTMLCanvasElement {
   const card = makeCanvas(CARD_SIZE);
   const ctx = card.getContext("2d");
   if (!ctx) return card;
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, CARD_SIZE, CARD_SIZE);
   coverSlots(tiles.length).forEach((tileIndex, slot) => printTile(ctx, tiles[tileIndex] ?? null, slot));
-  if (label === "name") drawName(ctx);
-  if (label === "signed") drawSigned(ctx);
-  if (label === "logo") {
-    if (roundelArt) {
-      drawRoundel(ctx, roundelArt);
-    } else {
-      logger.warn(LOG_EVENTS.COVER_FAILED, { stage: "roundel" });
-      drawName(ctx);
-    }
-  }
+  drawName(ctx);
   return card;
 }
 
 export function __resetShareCardForTesting(): void {
   tileCache = new WeakMap();
   frameQueue = Promise.resolve();
-  roundel = null;
 }

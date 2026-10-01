@@ -42,7 +42,6 @@ import { useAppStore } from "../store/useAppStore";
 import { setActiveCanvas } from "../lib/videoEngine";
 import { captureFirstFrame } from "../lib/posterFrame";
 import { __resetShareCardForTesting } from "../lib/shareCard";
-import { LOG_EVENTS, logger } from "../lib/logger";
 import { fakeBitmap, installRecordingCanvas, type CanvasCall } from "../test-utils/canvasRecorder";
 import type { Clip } from "../types";
 
@@ -626,10 +625,6 @@ describe("ExportButton cover", () => {
       "createImageBitmap",
       vi.fn(async () => fakeBitmap(faceRgba())),
     );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array([2])]) })),
-    );
   });
 
   afterEach(() => {
@@ -664,9 +659,8 @@ describe("ExportButton cover", () => {
     expect(capture).toHaveBeenCalledTimes(2);
   });
 
-  it("composes the fallback as flat fields, with Name standing in for Logo", async () => {
+  it("composes the fallback from flat fields under the name", async () => {
     seedClips(1);
-    window.localStorage.setItem("ha:exportCover", "logo");
     render(<ExportButton />);
     openPanel();
 
@@ -682,52 +676,14 @@ describe("ExportButton cover", () => {
     await waitFor(() => expect(previewDraws()).toBe(1));
   });
 
-  it("recomposes the preview on a label change without decoding, even after a timed-out frame", async () => {
-    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-    capture.mockResolvedValue(null);
+  it("shows the cover without offering label or on/off choices", async () => {
     seedClips(1);
     render(<ExportButton />);
     openPanel();
+
+    expect(screen.getByRole("img", { name: /cover preview/i })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /name|logo|signed|plain|off/i })).not.toBeInTheDocument();
     await waitFor(() => expect(previewDraws()).toBe(1));
-    expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "frame", sec: 0.42 });
-    const decodes = vi.mocked(createImageBitmap).mock.calls.length;
-
-    fireEvent.click(screen.getByLabelText(/^logo$/i));
-
-    expect(previewDraws()).toBe(2);
-    expect(capture).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(createImageBitmap).mock.calls.length).toBe(decodes);
-  });
-
-  it("defaults to Name and keeps the choice in ha:exportCover", async () => {
-    seedClips(1);
-    const { unmount } = render(<ExportButton />);
-    openPanel();
-    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).checked).toBe(true);
-
-    fireEvent.click(screen.getByLabelText(/^signed$/i));
-    expect(window.localStorage.getItem("ha:exportCover")).toBe("signed");
-    await waitFor(() => expect(previewDraws()).toBeGreaterThan(0));
-    unmount();
-
-    render(<ExportButton />);
-    openPanel();
-    expect((screen.getByLabelText(/^signed$/i) as HTMLInputElement).checked).toBe(true);
-    await waitFor(() => expect(previewDraws()).toBeGreaterThan(0));
-  });
-
-  it("Off hides the preview and renders without a cover", async () => {
-    seedClips(1);
-    render(<ExportButton />);
-    openPanel();
-    await waitFor(() => expect(previewDraws()).toBe(1));
-
-    fireEvent.click(screen.getByLabelText(/^off$/i));
-    expect(screen.queryByRole("img", { name: /cover preview/i })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
-
-    expect(exportOptions().cover).toBeUndefined();
-    expect(exportOptions().coverFallback).toBeUndefined();
   });
 
   it("hides Cover and renders without a cover when there are no clips", () => {
@@ -746,7 +702,9 @@ describe("ExportButton cover", () => {
     render(<ExportButton />);
     openPanel();
 
-    expect(screen.getByText("Opens on the cover for one beat (0.6 s).")).toBeInTheDocument();
+    expect(
+      screen.getByText("Opens on this cover for one beat (0.6 s), so it's the thumbnail when you share."),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Keep this screen open — rendering takes about 9 s."),
     ).toBeInTheDocument();

@@ -664,7 +664,7 @@ describe("exportSong", () => {
         posterUrl: null,
       });
       const clips = [clip(1), clip(2)];
-      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles, "plain", null));
+      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles));
       const canvas = makeCanvasWithContext();
 
       const exporting = exportSong(canvas, makeAudioContext(), {

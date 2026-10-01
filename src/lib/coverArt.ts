@@ -29,13 +29,6 @@ export const COVER_PALETTES: readonly CoverPalette[] = [
 
 export const PLATE = { ink: 0, field: 1, face: 2 } as const;
 
-// Label styles the owner compares: the stacked wordmark, the "ha" roundel,
-// a corner signature, none, or no card at all.
-export const COVER_LABELS = ["name", "logo", "signed", "plain", "off"] as const;
-export type CoverLabel = (typeof COVER_LABELS)[number];
-// The words tell a stranger what made the video, and read at 80 px.
-export const DEFAULT_COVER_LABEL: CoverLabel = "name";
-
 // A decoded frame whose most common plate covers more than this share has
 // no picture in it (a black warm-up frame, a covered lens).
 export const FLAT_PLATE_SHARE = 0.95;

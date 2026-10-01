@@ -10,7 +10,6 @@ import {
   __resetShareCardForTesting,
   composeShareCard,
   loadCoverTiles,
-  loadRoundel,
 } from "./shareCard";
 import { COVER_PALETTES, PAPER, TILE_SIZE, tileOrigin } from "./coverArt";
 import { LOG_EVENTS, logger } from "./logger";
@@ -269,7 +268,7 @@ describe("composeShareCard", () => {
   }
 
   it("lays paper first, then four tiles at their origins in their slot colours", () => {
-    const card = composeShareCard([tileOf(faceRgba())], "plain", null);
+    const card = composeShareCard([tileOf(faceRgba())]);
     const calls = callsOf(card);
 
     expect(card.width).toBe(480);
@@ -286,7 +285,7 @@ describe("composeShareCard", () => {
   });
 
   it("repeats two clips as AB/BA and prints a missing tile as its flat field", () => {
-    const card = composeShareCard([tileOf(faceRgba()), null], "plain", null);
+    const card = composeShareCard([tileOf(faceRgba()), null]);
     const calls = callsOf(card);
 
     const printed = calls.filter((call) => call.op === "putImageData").map((call) => call.args.slice(1));
@@ -294,79 +293,20 @@ describe("composeShareCard", () => {
       [tileOrigin(0).x, tileOrigin(0).y],
       [tileOrigin(3).x, tileOrigin(3).y],
     ]);
-    const flat = calls.filter((call) => call.op === "fillRect").slice(1);
+    const flat = calls.filter((call) => call.op === "fillRect" && call.args[2] === TILE_SIZE);
     expect(flat.map((call) => call.args)).toEqual([
       [tileOrigin(1).x, tileOrigin(1).y, TILE_SIZE, TILE_SIZE],
       [tileOrigin(2).x, tileOrigin(2).y, TILE_SIZE, TILE_SIZE],
     ]);
   });
 
-  it("Name stacks HYPERACTIVE over AMATEUR, cream on a centred zinc-950 block", () => {
-    const calls = callsOf(composeShareCard([null], "name", null));
+  it("labels the card HYPERACTIVE over AMATEUR, cream on a centred zinc-950 block", () => {
+    const calls = callsOf(composeShareCard([null]));
 
     const texts = calls.filter((call) => call.op === "fillText").map((call) => call.args[0]);
     expect(texts).toEqual(["HYPERACTIVE", "AMATEUR"]);
     const block = calls.filter((call) => call.op === "fillRect").at(-1)?.args as number[];
     expect(block[0] + block[2] / 2).toBe(240);
     expect(block[1] + block[3] / 2).toBe(240);
-  });
-
-  it("Signed strokes the name, then fills it, at the bottom-right corner", () => {
-    const calls = callsOf(composeShareCard([null], "signed", null));
-
-    const text = calls.filter((call) => call.op === "strokeText" || call.op === "fillText");
-    expect(text.map((call) => call.op)).toEqual(["strokeText", "fillText"]);
-    expect(text[0].args).toEqual(["hyperactive amateur", 456, 456]);
-  });
-
-  it("Logo clips the roundel inside a cream disc at the gutter crossing", () => {
-    const roundel = fakeBitmap(flatRgba(240), 208) as unknown as ImageBitmap;
-    const ops = callsOf(composeShareCard([null], "logo", roundel));
-
-    const drawn = ops.findIndex((call) => call.op === "drawImage" && call.args[0] === roundel);
-    const clip = ops.findIndex((call) => call.op === "clip");
-    expect(clip).toBeGreaterThan(-1);
-    expect(drawn).toBeGreaterThan(clip);
-    expect(ops.some((call) => call.op === "arc" && call.args[0] === 240 && call.args[1] === 240)).toBe(
-      true,
-    );
-  });
-
-  it("Logo without a roundel prints Name and warns", () => {
-    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-
-    const calls = callsOf(composeShareCard([null], "logo", null));
-
-    expect(calls.filter((call) => call.op === "fillText").map((call) => call.args[0])).toEqual([
-      "HYPERACTIVE",
-      "AMATEUR",
-    ]);
-    expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "roundel" });
-  });
-});
-
-describe("loadRoundel", () => {
-  beforeEach(() => {
-    __resetShareCardForTesting();
-    vi.stubGlobal("createImageBitmap", vi.fn(async () => fakeBitmap(flatRgba(240), 208)));
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it("decodes the roundel once, and retries after a failure", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValue({ ok: true, blob: async () => new Blob([new Uint8Array([1])]) });
-    vi.stubGlobal("fetch", fetchMock);
-
-    expect(await loadRoundel()).toBeNull();
-    const roundel = await loadRoundel();
-    expect(roundel).not.toBeNull();
-    expect(await loadRoundel()).toBe(roundel);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

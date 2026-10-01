@@ -505,7 +505,7 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
   await waitForApp(page);
   await seedOneClipProject(page, 1, { faceClip: true });
   await waitForServiceWorkerControl(page);
-  // Offline to the end: the roundel must come from the precache.
+  // Offline to the end: the export needs nothing from the network.
   await page.context().setOffline(true);
   await page.reload({ waitUntil: "domcontentloaded" });
   await waitForApp(page);
@@ -513,7 +513,6 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
 
   await page.getByRole("button", { name: "Export" }).click();
   await expect(page.getByRole("img", { name: "Cover preview" })).toBeVisible();
-  await page.getByText("Logo", { exact: true }).click();
   await page.getByRole("button", { name: "Render" }).click();
   await expect(page.getByText("Ready")).toBeVisible({ timeout: 30_000 });
 
@@ -550,7 +549,7 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
     ctx.drawImage(video, 0, 0, 480, 480);
     const paper = sample(8, 8);
     // Tile 0 (origin 16, 16): its ground, the hair band above the face, and
-    // the face centre, each well inside one plate and clear of the roundel.
+    // the face centre, each well inside one plate and clear of the name.
     const tile = { ground: sample(36, 36), hair: sample(124, 72), face: sample(124, 124) };
 
     const isPaper = ([r, g, b]: number[]) =>
