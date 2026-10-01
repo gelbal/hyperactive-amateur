@@ -35,15 +35,24 @@ vi.mock("tone", () => ({
     disconnect: toneMocks.destinationDisconnect,
   })),
   getTransport: vi.fn(() => toneMocks.transport),
-  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext })),
+  getContext: vi.fn(() => ({ rawContext: toneMocks.rawContext, lookAhead: 0.1 })),
+  now: vi.fn(() => 10),
 }));
+
+vi.mock("./posterFrame", () => ({ captureFirstFrame: vi.fn() }));
 
 vi.mock("./audioLifecycle", () => ({
   ensureAudioRunning: audioLifecycleMocks.ensureAudioRunning,
   AudioUnavailableError: audioLifecycleMocks.AudioUnavailableError,
 }));
 
-import { buildExportStream, defaultExportFilename, downloadBlob, exportSong } from "./export";
+import {
+  COVER_WAIT_MS,
+  buildExportStream,
+  defaultExportFilename,
+  downloadBlob,
+  exportSong,
+} from "./export";
 import {
   abortActiveExport,
   getActiveExportSession,
@@ -51,6 +60,12 @@ import {
 } from "./exportSession";
 import { useAppStore } from "../store/useAppStore";
 import { AudioUnavailableError } from "./audioLifecycle";
+import { LOG_EVENTS, logger } from "./logger";
+import { drawCurrentFrame, hasLiveFrame } from "./videoEngine";
+import { captureFirstFrame } from "./posterFrame";
+import { __resetShareCardForTesting, composeShareCard, loadCoverTiles } from "./shareCard";
+import { fakeBitmap, installRecordingCanvas } from "../test-utils/canvasRecorder";
+import type { Clip } from "../types";
 
 function makeCanvas(): HTMLCanvasElement {
   const videoTrack = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
@@ -61,6 +76,26 @@ function makeCanvas(): HTMLCanvasElement {
     })),
   } as unknown as HTMLCanvasElement;
 }
+// A 480 px render canvas whose 2D context records draws.
+function makeCanvasWithContext(): HTMLCanvasElement & { drawImage: ReturnType<typeof vi.fn> } {
+  const canvas = makeCanvas() as HTMLCanvasElement & { drawImage: ReturnType<typeof vi.fn> };
+  const drawImage = vi.fn();
+  Object.assign(canvas, {
+    width: 480,
+    height: 480,
+    drawImage,
+    getContext: vi.fn(() => ({ drawImage })),
+  });
+  return canvas;
+}
+
+function makeCard(): HTMLCanvasElement {
+  const card = document.createElement("canvas");
+  card.width = 480;
+  card.height = 480;
+  return card;
+}
+
 function makeAudioContext() {
   const audioTrack = { kind: "audio", stop: vi.fn() } as unknown as MediaStreamTrack;
   return {
@@ -177,6 +212,8 @@ describe("exportSong", () => {
     }
     __resetExportSessionForTesting();
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("defaultExportFilename: default extension is .webm; .mp4 is honored when passed", () => {
@@ -419,7 +456,8 @@ describe("exportSong", () => {
     });
     const rejection = expect(promise).rejects.toThrow(/did not finish export/);
 
-    await vi.advanceTimersByTimeAsync(10);
+    // The render: one 10 ms bar plus the 0.1 s lookahead tail.
+    await vi.advanceTimersByTimeAsync(110);
     await vi.advanceTimersByTimeAsync(5000);
 
     await rejection;
@@ -467,6 +505,256 @@ describe("exportSong", () => {
     expect(abortActiveExport("page hidden")).toBe(true);
     await expect(first).rejects.toThrow(/page hidden/);
     expect(useAppStore.getState().playback.isExporting).toBe(false);
+  });
+
+  describe("share card", () => {
+    afterEach(() => {
+      toneMocks.transport.stop.mockReset();
+      toneMocks.transport.start.mockReset();
+      vi.restoreAllMocks();
+    });
+
+    it("holds the card before recording and starts the transport one beat later", async () => {
+      const order: string[] = [];
+      const card = makeCard();
+      const canvas = makeCanvasWithContext();
+      toneMocks.transport.stop.mockImplementation(() => order.push("stop"));
+      canvas.drawImage.mockImplementation((source: unknown) => {
+        if (source === card) order.push(hasLiveFrame() ? "paint held card" : "paint");
+      });
+      FakeMediaRecorder.startSpy.mockImplementation(() => order.push("record"));
+      toneMocks.transport.start.mockImplementation(() => order.push("transport"));
+
+      await exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.resolve(card),
+      });
+
+      expect(order.slice(0, 4)).toEqual(["stop", "paint held card", "record", "transport"]);
+      expect(canvas.drawImage).toHaveBeenCalledWith(card, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("rejects on an abort while the cover is pending, before any stream, recorder or hold", async () => {
+      const canvas = makeCanvasWithContext();
+      const promise = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+      });
+      const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+      await vi.waitFor(() => expect(audioLifecycleMocks.ensureAudioRunning).toHaveBeenCalled());
+      expect(abortActiveExport("page hidden")).toBe(true);
+
+      await rejection;
+      expect(canvas.captureStream).not.toHaveBeenCalled();
+      expect(FakeMediaRecorder.startSpy).not.toHaveBeenCalled();
+      expect(toneMocks.transport.start).not.toHaveBeenCalled();
+      expect(hasLiveFrame()).toBe(false);
+    });
+
+    it("releases the card when the export is aborted during the hold", async () => {
+      vi.useFakeTimers();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+        cover: Promise.resolve(makeCard()),
+      });
+      const rejection = expect(promise).rejects.toThrow(/page hidden/);
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(hasLiveFrame()).toBe(true);
+      expect(abortActiveExport("page hidden")).toBe(true);
+      await rejection;
+
+      expect(hasLiveFrame()).toBe(false);
+      const ctx = {
+        canvas: { width: 480, height: 480 },
+        fillStyle: "",
+        fillRect: vi.fn(),
+        drawImage: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+      drawCurrentFrame(ctx, 0);
+      expect(ctx.fillStyle).toBe("#0a0a0a");
+      expect(ctx.drawImage).not.toHaveBeenCalled();
+    });
+
+    it("renders the bars plus the hold and reports progress over both", async () => {
+      vi.useFakeTimers();
+      const onProgress = vi.fn();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+        onProgress,
+        cover: Promise.resolve(makeCard()),
+      });
+
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(onProgress.mock.calls.at(-1)?.[0]).toBeCloseTo(0.5, 1);
+      // One bar plus the beat is 5 s; the lookahead (0.1 s) is still recorded.
+      await vi.advanceTimersByTimeAsync(2550);
+      expect(useAppStore.getState().playback.isExporting).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+      expect(onProgress.mock.calls.at(-1)?.[0]).toBe(1);
+    });
+
+    it("a late cover renders the flat fallback card with the hold", async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const fallback = makeCard();
+      const canvas = makeCanvasWithContext();
+      const promise = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+        coverFallback: fallback,
+      });
+
+      await vi.advanceTimersByTimeAsync(COVER_WAIT_MS);
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+      expect(canvas.drawImage).toHaveBeenCalledWith(fallback, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10.5);
+
+      await vi.advanceTimersByTimeAsync(2600);
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
+
+    it("a cover still loading at Render finishes with action frames, and the export records it", async () => {
+      installRecordingCanvas();
+      // A light face under dark hair on a mid-grey ground.
+      const face = new Uint8ClampedArray(216 * 216 * 4);
+      for (let i = 0; i < face.length; i += 4) {
+        const dx = ((i / 4) % 216) + 0.5 - 108;
+        const dy = Math.floor(i / 4 / 216) + 0.5 - 108;
+        const inFace = (dx / 38) ** 2 + ((dy - 8) / 48) ** 2 <= 1;
+        const inHair = (dx / 48) ** 2 + (dy / 62) ** 2 <= 1;
+        const value = inFace ? 200 : inHair ? 30 : 120;
+        face.set([value, value, value, 255], i);
+      }
+      const decodes: Blob[] = [];
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(async (image: Blob) => {
+          decodes.push(image);
+          return fakeBitmap(face);
+        }),
+      );
+      const frames: Array<(jpeg: Blob) => void> = [];
+      vi.mocked(captureFirstFrame).mockImplementation(
+        () => new Promise<Blob | null>((resolve) => frames.push(resolve)),
+      );
+      __resetShareCardForTesting();
+      const clip = (id: number): Clip => ({
+        blob: new Blob([new Uint8Array([id])], { type: "video/webm" }),
+        url: `blob:test/${id}`,
+        audioBuffer: null,
+        audioStatus: "ok",
+        trimStartMs: 300,
+        trimEndMs: 1400,
+        durationMs: 1500,
+        posterBlob: new Blob([new Uint8Array([100 + id])], { type: "image/jpeg" }),
+        posterUrl: null,
+      });
+      const clips = [clip(1), clip(2)];
+      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles));
+      const canvas = makeCanvasWithContext();
+
+      const exporting = exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover,
+      });
+      for (let turn = 0; turn < 2; turn += 1) {
+        await vi.waitFor(() => expect(frames).toHaveLength(turn + 1));
+        expect(useAppStore.getState().playback.isExporting).toBe(true);
+        frames[turn](new Blob([new Uint8Array([turn])], { type: "image/jpeg" }));
+      }
+      await exporting;
+
+      const card = await cover;
+      expect(captureFirstFrame).toHaveBeenCalledTimes(2);
+      expect(decodes.some((image) => clips.some((c) => c.posterBlob === image))).toBe(false);
+      expect(canvas.drawImage).toHaveBeenCalledWith(card, 0, 0, 480, 480);
+      expect(canvas.drawImage.mock.invocationCallOrder[0]).toBeLessThan(
+        FakeMediaRecorder.startSpy.mock.invocationCallOrder[0],
+      );
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("a cover that fails to compose renders the flat fallback and warns", async () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const fallback = makeCard();
+      const canvas = makeCanvasWithContext();
+
+      await exportSong(canvas, makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.reject(new Error("compose bug")),
+        coverFallback: fallback,
+      });
+
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "compose" });
+      expect(canvas.drawImage).toHaveBeenCalledWith(fallback, 0, 0, 480, 480);
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
+    });
+
+    it("stops the music on the audio clock at the last bar line, so the tail never catches the next downbeat", async () => {
+      await exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.resolve(makeCard()),
+      });
+
+      // Started one beat (2.5 ms) after now (10), stopped one bar (10 ms) later.
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 0.0025);
+      expect(toneMocks.transport.stop).toHaveBeenCalledWith(10 + 0.0025 + 0.01);
+    });
+
+    it("records the lookahead after the last bar, so its final step is not cut", async () => {
+      vi.useFakeTimers();
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 60,
+        mimeType: "video/webm",
+      });
+
+      await vi.advanceTimersByTimeAsync(4050);
+      expect(useAppStore.getState().playback.isExporting).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
+
+    it("a late cover without a fallback renders as before", async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 120,
+        mimeType: "video/webm",
+        cover: new Promise<HTMLCanvasElement>(() => undefined),
+      });
+
+      await vi.advanceTimersByTimeAsync(COVER_WAIT_MS);
+      expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10);
+      expect(hasLiveFrame()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await expect(promise).resolves.toBeInstanceOf(Blob);
+    });
   });
 });
 

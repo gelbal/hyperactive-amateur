@@ -192,3 +192,36 @@ describe("captureFirstFrame", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("captureFirstFrame cancellation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("resolves null and releases the video when aborted mid-decode", async () => {
+    vi.useFakeTimers();
+    const { video, revokeObjectURL } = installFrameHarness();
+    const controller = new AbortController();
+    const blob = new Blob([new Uint8Array([1])], { type: "video/webm" });
+
+    const promise = captureFirstFrame(blob, 0.05, 1000, controller.signal);
+    video.dispatchEvent(new Event("loadedmetadata"));
+    controller.abort();
+
+    await expect(promise).resolves.toBeNull();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/source");
+    expect(video.getAttribute("src")).toBeNull();
+  });
+
+  it("decodes nothing for a signal that is already aborted", async () => {
+    const createElement = vi.spyOn(document, "createElement");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      captureFirstFrame(new Blob([new Uint8Array([1])], { type: "video/webm" }), 0.05, 1000, controller.signal),
+    ).resolves.toBeNull();
+    expect(createElement).not.toHaveBeenCalledWith("video");
+  });
+});

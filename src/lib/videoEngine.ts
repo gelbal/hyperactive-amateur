@@ -4,18 +4,7 @@ import * as Tone from "tone";
 import type { Clip, CutSubdivision, Tag } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { LOG_EVENTS, logger } from "./logger";
-
-type TagOrUntagged = Tag | "untagged";
-
-// Higher number wins. Vocal/fx are loud-statement clips; hats are filler.
-const TAG_PRIORITY: Record<TagOrUntagged, number> = {
-  vocal: 5,
-  fx: 4,
-  snare: 3,
-  kick: 2,
-  hat: 1,
-  untagged: 0,
-};
+import { tagTier } from "./tagPriority";
 
 export interface TrackContext {
   tag: Tag | null;
@@ -66,6 +55,9 @@ let lastDrawn: TriggerEvent | null = null;
 // The expired frame whose element has already been paused once for the hold,
 // so the hold never pauses an element that is about to play the next cut.
 let heldFrame: TriggerEvent | null = null;
+// The export's share card: painted over every paint that draws no video
+// frame, until the first video frame after it is drawn.
+let shareCard: CanvasImageSource | null = null;
 let drawErrorLogged = false;
 let storeUnsubscribe: (() => void) | null = null;
 let cutSubdivisionUnsubscribe: (() => void) | null = null;
@@ -270,8 +262,7 @@ export function trigger(trackId: number, when: number, displayStartTime = when):
 }
 
 function tagScore(trackId: number, contexts?: Map<number, TrackContext>): number {
-  const tag = contexts?.get(trackId)?.tag ?? null;
-  return TAG_PRIORITY[(tag ?? "untagged") as TagOrUntagged];
+  return tagTier(contexts?.get(trackId)?.tag ?? null);
 }
 
 // Pure: pick the visually-winning event by tag priority, ties broken by
@@ -478,13 +469,35 @@ function holdFrame(frame: TriggerEvent): void {
 // True while the render canvas holds a drawn frame: `lastDrawn` is set only
 // when a frame is drawn and nulled on every clear, so the viewport can show
 // its poster exactly when the canvas is empty (including a seeking video,
-// which keeps its last frame up without repainting).
+// which keeps its last frame up without repainting). A held share card is a
+// frame too, so the viewport mirrors it.
 export function hasLiveFrame(): boolean {
-  return lastDrawn !== null;
+  return lastDrawn !== null || shareCard !== null;
+}
+
+// Holds the export's share card on the render canvas: the canvas holds no
+// video frame yet, and every paint that draws none shows the card instead.
+export function holdShareCard(card: CanvasImageSource): void {
+  shareCard = card;
+  lastDrawn = null;
+}
+
+// Also run by resetPlaybackState; exported for drives that never rewind.
+export function releaseShareCard(): void {
+  shareCard = null;
 }
 
 export function drawCurrentFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   commitDueBoundary(audioTime);
+  drawDisplayedFrame(ctx, audioTime);
+  if (!shareCard) return;
+  // lastDrawn stays null from holdShareCard until a video frame is drawn,
+  // which commits only once the audible clock reaches the downbeat.
+  if (lastDrawn) releaseShareCard();
+  else ctx.drawImage(shareCard, 0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+function drawDisplayedFrame(ctx: CanvasRenderingContext2D, audioTime: number): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const displayed = currentlyDisplayed;
@@ -584,6 +597,7 @@ export function resetPlaybackState(): void {
   currentlyDisplayed = null;
   lastDrawn = null;
   heldFrame = null;
+  releaseShareCard();
   clearPreparedState();
 }
 
@@ -661,6 +675,7 @@ export function __resetVideoEngineForTesting(): void {
   currentlyDisplayed = null;
   lastDrawn = null;
   heldFrame = null;
+  shareCard = null;
   clearPreparedState();
   drawErrorLogged = false;
   if (host) {

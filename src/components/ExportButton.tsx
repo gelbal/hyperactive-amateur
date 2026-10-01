@@ -1,26 +1,31 @@
-// ABOUTME: ExportButton — top-bar button + popover with bars slider, format picker, progress, and review.
+// ABOUTME: ExportButton — top-bar button + popover with cover, bars slider, format picker, progress, review.
 // ABOUTME: Mirrors the FeelDisclosure pattern: anchored popover, click-outside + Escape close, no modal scrim.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Share2, Trash2 } from "lucide-react";
+import { Download, Share2, Trash2, X } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import {
   exportSong,
   downloadBlob,
   defaultExportFilename,
   getExportDurationMs,
+  getShareCardHoldMs,
   shareBlob,
 } from "../lib/export";
+import { PAPER, pickCoverClips } from "../lib/coverArt";
+import { composeShareCard, loadCoverTiles, type CoverTiles } from "../lib/shareCard";
 import { detectSupportedFormats, extensionForMimeType } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
+import { hasCoarsePointer } from "../lib/install";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
+const STEPS_PER_BAR = 16;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
-const SHARE_FALLBACK_MESSAGE = "Sharing failed — saved as a download instead.";
+const SHARE_FAILED_MESSAGE = "Sharing failed — use Save to download the video.";
 
 type ExportReview = {
   blob: Blob;
@@ -57,6 +62,8 @@ function readStoredFormat(): string | null {
 
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
+  const tracks = useAppStore((s) => s.project.tracks);
+  const stepCount = useAppStore((s) => s.project.stepCount);
   const canStart = useAppStore(canStartAudibleAction);
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
@@ -69,9 +76,26 @@ export function ExportButton() {
   const reviewObjectUrlRef = useRef<string | null>(null);
   const reviewRef = useRef<ExportReview | null>(null);
   const mountedRef = useRef(true);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const tilesRef = useRef<Promise<CoverTiles> | null>(null);
+  // The tiles with the load that made them: the preview shows them only
+  // while that load is the current one.
+  const [loaded, setLoaded] = useState<{ from: Promise<CoverTiles>; tiles: CoverTiles } | null>(
+    null,
+  );
+  // Bars beyond the pattern's length replay it, so a short pattern's cover
+  // does not change (or reload) as the length slider moves.
+  const renderedSteps = Math.min(bars * STEPS_PER_BAR, stepCount);
+  const coverClips = useMemo(
+    () => pickCoverClips(tracks, renderedSteps),
+    [tracks, renderedSteps],
+  );
+  // Any clip gets a cover; with none on screen it is the flat card.
+  const coverOn = tracks.some((track) => track.clip);
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
-  const exportDurationMs = getExportDurationMs(bars, bpm);
+  const exportDurationMs =
+    getExportDurationMs(bars, bpm) + (coverOn ? getShareCardHoldMs(bpm) : 0);
   const exportDurationSeconds = Math.round(exportDurationMs / 1000);
   const close = useCallback(() => setOpen(false), []);
   usePopoverDismiss(rootRef, open, close, { whileBusy: rendering });
@@ -92,6 +116,34 @@ export function ExportButton() {
       // persist this session.
     }
   }, [mimeType]);
+
+  // Loads the cover tiles once per open and per project change, while the
+  // app could start audio. A load in flight when Render claims the session
+  // is the one the export waits for.
+  useEffect(() => {
+    if (!open || !canStart || !coverOn) return;
+    const loading = loadCoverTiles(coverClips);
+    tilesRef.current = loading;
+    void loading.then((tiles) => {
+      if (tilesRef.current === loading && mountedRef.current) setLoaded({ from: loading, tiles });
+    });
+  }, [open, canStart, coverOn, coverClips]);
+
+  // Draws the preview when the current load's tiles land, and clears it
+  // while a newer load runs (the old tiles may show a clip that is gone).
+  // Runs after the load effect above, so a reopened panel never draws the
+  // previous load first. Never while a render, playback or recording runs:
+  // composing is main-thread work beside the paint loop.
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!preview || rendering || !canStart) return;
+    const ctx = preview.getContext("2d");
+    if (!loaded || loaded.from !== tilesRef.current) {
+      ctx?.clearRect(0, 0, preview.width, preview.height);
+      return;
+    }
+    ctx?.drawImage(composeShareCard(loaded.tiles), 0, 0, preview.width, preview.height);
+  }, [loaded, open, rendering, canStart, coverClips]);
 
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {
@@ -153,9 +205,9 @@ export function ExportButton() {
     } catch (err) {
       if (isAbortError(err)) return;
       if (!mountedRef.current || reviewRef.current !== currentReview) return;
-      if (saveReview(currentReview) && mountedRef.current) {
-        setShareFallback(SHARE_FALLBACK_MESSAGE);
-      }
+      // The render already saved the video once; another automatic download
+      // would duplicate it, so point to Save instead.
+      setShareFallback(SHARE_FAILED_MESSAGE);
     } finally {
       if (mountedRef.current) setSharePending(false);
     }
@@ -176,6 +228,23 @@ export function ExportButton() {
       setError("This browser does not support video export.");
       return;
     }
+    // The cover is a promise the export waits for inside its session; the
+    // flat fallback is composed now, so frame 0 is a card even when the
+    // tiles are late.
+    let cover: Promise<HTMLCanvasElement | null> | undefined;
+    let coverFallback: HTMLCanvasElement | undefined;
+    const loading = tilesRef.current;
+    if (coverOn && loading) {
+      // Tiles landing after the export stopped waiting (its transport has
+      // started) would only cost main-thread time during the recording.
+      cover = loading.then((loaded) =>
+        useAppStore.getState().playback.isPlaying ? null : composeShareCard(loaded),
+      );
+      // Observed here so a render that fails before awaiting it cannot
+      // leave an unhandled rejection; the export still sees it.
+      cover.catch(() => undefined);
+      coverFallback = composeShareCard(coverClips.map(() => null));
+    }
     dismissReview();
     setError(null);
     setProgress(0);
@@ -185,14 +254,24 @@ export function ExportButton() {
         bpm,
         mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
+        cover,
+        coverFallback,
       });
-      setCurrentReview({
+      const finished: ExportReview = {
         blob,
         filename: defaultExportFilename(
           extensionForMimeType(blob.type, chosen.extension),
         ),
-      });
+      };
+      setCurrentReview(finished);
       setOpen(true);
+      // Act on the finished render at once. On a touch device that can
+      // share files, Share is the primary action (it opens the sheet with
+      // Save Video, and needs the fresh tap a render outlasts); everywhere
+      // else the video saves itself.
+      if (mountedRef.current && !(hasCoarsePointer() && canShareReview(finished))) {
+        saveReview(finished);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -232,6 +311,17 @@ export function ExportButton() {
           aria-label="Export song"
           className="absolute inset-x-3 top-full mt-2 z-30 w-auto max-w-[24rem] mx-auto max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 lg:inset-x-auto lg:right-0 lg:min-w-[18rem] lg:max-w-none lg:mx-0 lg:max-h-none lg:overflow-visible"
         >
+          {coverOn && (
+            <canvas
+              ref={previewRef}
+              width={192}
+              height={192}
+              role="img"
+              aria-label="Cover preview"
+              className="w-24 h-24 shrink-0 rounded"
+              style={{ backgroundColor: PAPER }}
+            />
+          )}
           {formats.length > 1 && (
             <fieldset className="flex flex-col gap-2">
               <legend className="text-[11px] uppercase tracking-wide text-zinc-400">
@@ -323,7 +413,7 @@ export function ExportButton() {
                     type="button"
                     disabled={sharePending}
                     onClick={() => void handleShare()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-orange-500 bg-orange-500 text-xs font-medium text-zinc-950 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Share2 size={14} />
                     Share
@@ -342,8 +432,9 @@ export function ExportButton() {
                   onClick={dismissReview}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-700 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-800"
                 >
-                  <Trash2 size={14} />
-                  Discard
+                  {/* Once saved, closing the review throws nothing away. */}
+                  {review.objectUrl ? <X size={14} /> : <Trash2 size={14} />}
+                  {review.objectUrl ? "Done" : "Discard"}
                 </button>
               </div>
             </div>
