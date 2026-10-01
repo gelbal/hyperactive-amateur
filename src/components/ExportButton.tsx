@@ -79,7 +79,11 @@ export function ExportButton() {
   const mountedRef = useRef(true);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const tilesRef = useRef<Promise<CoverTiles> | null>(null);
-  const [tiles, setTiles] = useState<CoverTiles | null>(null);
+  // The tiles with the load that made them: the preview shows them only
+  // while that load is the current one.
+  const [loaded, setLoaded] = useState<{ from: Promise<CoverTiles>; tiles: CoverTiles } | null>(
+    null,
+  );
   // Bars beyond the pattern's length replay it, so a short pattern's cover
   // does not change (or reload) as the length slider moves.
   const renderedSteps = Math.min(bars * STEPS_PER_BAR, stepCount);
@@ -121,26 +125,26 @@ export function ExportButton() {
     if (!open || !canStart || !coverOn) return;
     const loading = loadCoverTiles(coverClips);
     tilesRef.current = loading;
-    // The old tiles may show a clip that is gone; the preview waits instead.
-    setTiles(null);
-    void loading.then((loaded) => {
-      if (tilesRef.current === loading && mountedRef.current) setTiles(loaded);
+    void loading.then((tiles) => {
+      if (tilesRef.current === loading && mountedRef.current) setLoaded({ from: loading, tiles });
     });
   }, [open, canStart, coverOn, coverClips]);
 
-  // Draws the preview when the tiles land or the panel reopens with a fresh
-  // preview canvas, and clears it while new tiles load. Never while a render
-  // runs: composing is main-thread work beside the recorded paint loop.
+  // Draws the preview when the current load's tiles land, and clears it
+  // while a newer load runs (the old tiles may show a clip that is gone).
+  // Runs after the load effect above, so a reopened panel never draws the
+  // previous load first. Never while a render, playback or recording runs:
+  // composing is main-thread work beside the paint loop.
   useEffect(() => {
     const preview = previewRef.current;
-    if (!preview || rendering) return;
+    if (!preview || rendering || !canStart) return;
     const ctx = preview.getContext("2d");
-    if (!tiles) {
+    if (!loaded || loaded.from !== tilesRef.current) {
       ctx?.clearRect(0, 0, preview.width, preview.height);
       return;
     }
-    ctx?.drawImage(composeShareCard(tiles), 0, 0, preview.width, preview.height);
-  }, [tiles, open, rendering]);
+    ctx?.drawImage(composeShareCard(loaded.tiles), 0, 0, preview.width, preview.height);
+  }, [loaded, open, rendering, canStart, coverClips]);
 
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {

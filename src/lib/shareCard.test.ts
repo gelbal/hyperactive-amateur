@@ -181,6 +181,36 @@ describe("loadCoverTiles", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it("stops a decode in flight when a pad or key plays a clip", async () => {
+    const { pending } = deferCaptures();
+    const loading = loadCoverTiles([makeClip(1, jpegOf(faceRgba()))]);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const signal = capture.mock.calls[0][3] as AbortSignal;
+
+    useAppStore.getState().actions.markTriggered(2);
+    expect(signal.aborted).toBe(true);
+    pending[0].resolve(null);
+
+    await expect(loading).resolves.toHaveLength(1);
+  });
+
+  it("prints a tile that fails to draw as flat, warning, without rejecting the load", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    capture.mockResolvedValue(jpegOf(faceRgba()));
+    vi.mocked(createImageBitmap).mockImplementation((async () => {
+      const broken = fakeBitmap(faceRgba());
+      Object.defineProperty(broken, "rgba", {
+        get: () => {
+          throw new DOMException("detached", "InvalidStateError");
+        },
+      });
+      return broken;
+    }) as unknown as typeof createImageBitmap);
+
+    await expect(loadCoverTiles([makeClip(1, jpegOf(faceRgba()))])).resolves.toEqual([null]);
+    expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "frame", sec: 0.42 });
+  });
+
   it("falls back from the action frame to the poster, then to a flat tile, warning each miss", async () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     capture.mockResolvedValue(null);

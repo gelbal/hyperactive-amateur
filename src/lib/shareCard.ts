@@ -71,6 +71,10 @@ async function decodeTile(image: Blob | null): Promise<HTMLCanvasElement | null>
     const { sx, sy, side } = cropSquare(bitmap.width, bitmap.height);
     ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, TILE_SIZE, TILE_SIZE);
     return tile;
+  } catch {
+    // A bitmap that cannot be drawn (detached, or too large for the
+    // device) is a failed decode: the caller falls back.
+    return null;
   } finally {
     bitmap.close();
   }
@@ -100,12 +104,13 @@ function isFlatTile(tile: HTMLCanvasElement): boolean {
 }
 
 // Decodes a clip's action frame, and stops the decode the moment playback,
-// recording or an export's transport starts (the decode gate closes), so the
-// off-screen video never overlaps them.
+// recording, an export's transport or a pad or key hit starts (a hit plays
+// its clip's video too), so the off-screen video never overlaps them.
 async function decodeActionFrame(blob: Blob, sec: number): Promise<{ frame: Blob | null; stopped: boolean }> {
   const controller = new AbortController();
-  const unsubscribe = useAppStore.subscribe(() => {
-    if (!canDecodeCoverFrames()) controller.abort();
+  const hitsAtStart = useAppStore.getState().playback.triggerSeq;
+  const unsubscribe = useAppStore.subscribe((state) => {
+    if (!canDecodeCoverFrames() || state.playback.triggerSeq !== hitsAtStart) controller.abort();
   });
   try {
     const frame = await captureFirstFrame(blob, sec, COVER_FRAME_TIMEOUT_MS, controller.signal);

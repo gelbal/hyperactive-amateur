@@ -785,6 +785,26 @@ describe("ExportButton cover", () => {
     await waitFor(() => expect(previewDraws()).toBe(2));
   });
 
+  it("never shows the previous clips' card on a reopened panel", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+
+    const frames: Array<(jpeg: Blob) => void> = [];
+    capture.mockImplementation(() => new Promise<Blob | null>((resolve) => frames.push(resolve)));
+    act(() => useAppStore.getState().actions.setTrackClip(0, makeClip(5)));
+    openPanel();
+
+    expect(previewDraws()).toBe(0);
+    await waitFor(() => expect(frames).toHaveLength(1));
+    await act(async () => {
+      frames[0](new Blob([new Uint8Array([5])], { type: "image/jpeg" }));
+    });
+    await waitFor(() => expect(previewDraws()).toBe(1));
+  });
+
   it("draws no preview while a render runs", async () => {
     const frames: Array<(jpeg: Blob) => void> = [];
     capture.mockImplementation(() => new Promise<Blob | null>((resolve) => frames.push(resolve)));
