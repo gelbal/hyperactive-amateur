@@ -26,6 +26,13 @@ export default defineConfig({
     headless: true,
     serviceWorkers: "allow",
     trace: "retain-on-failure",
+    launchOptions: {
+      // AudioContext.currentTime freezes when the host's default output
+      // device sleeps (e.g. Studio Display speakers powering down), which
+      // stalls every audio-clock countdown in the app. A fake audio sink
+      // keeps the clock advancing regardless of host audio-device state.
+      args: ["--disable-audio-output"],
+    },
   },
   webServer: {
     command: `npm run preview -- --host ${HOST} --port ${PORT}`,

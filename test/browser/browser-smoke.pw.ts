@@ -2,8 +2,12 @@
 // ABOUTME: Uses mocked camera/recorder surfaces so the command needs no real device permission.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
-async function installBrowserMocks(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+// `realRecorder` keeps the browser's own MediaRecorder for a real export.
+async function installBrowserMocks(
+  page: Page,
+  { realRecorder = false }: { realRecorder?: boolean } = {},
+): Promise<void> {
+  await page.addInitScript(({ realRecorder }) => {
     function makeStream(): MediaStream {
       const canvas = document.createElement("canvas");
       canvas.width = 16;
@@ -109,11 +113,13 @@ async function installBrowserMocks(page: Page): Promise<void> {
       }
     }
 
-    Object.defineProperty(window, "MediaRecorder", {
-      configurable: true,
-      value: SmokeMediaRecorder,
-    });
-  });
+    if (!realRecorder) {
+      Object.defineProperty(window, "MediaRecorder", {
+        configurable: true,
+        value: SmokeMediaRecorder,
+      });
+    }
+  }, { realRecorder });
 }
 
 async function waitForApp(page: Page): Promise<void> {
@@ -148,12 +154,20 @@ async function waitForServiceWorkerControl(page: Page): Promise<void> {
 }
 
 // Seeds a saved project with clips on the first clipCount tracks (track 0
-// tagged kick), then reloads so the app hydrates it.
-async function seedOneClipProject(page: Page, clipCount = 1): Promise<void> {
-  await page.evaluate(async (clipCount) => {
-    const silentWavBlob = () => {
+// tagged kick), then reloads so the app hydrates it. `faceClip` makes track 0
+// a real 1.5 s WebM, recorded here with the browser's MediaRecorder: flat
+// grey for its first 0.3 s, then a face, trimmed to 300–1400 ms, so its
+// action frame (0.42 s) shows the face while the poster rehydrate makes at
+// 0.1 s is blank; at 180 BPM on steps 1/5/9/13.
+async function seedOneClipProject(
+  page: Page,
+  clipCount = 1,
+  { faceClip = false }: { faceClip?: boolean } = {},
+): Promise<void> {
+  await page.evaluate(async ({ clipCount, faceClip }) => {
+    const silentWavBlob = (seconds = 0.2) => {
       const sampleRate = 8_000;
-      const sampleCount = 1_600;
+      const sampleCount = Math.round(sampleRate * seconds);
       const buffer = new ArrayBuffer(44 + sampleCount * 2);
       const view = new DataView(buffer);
       const writeString = (offset: number, value: string) => {
@@ -177,12 +191,68 @@ async function seedOneClipProject(page: Page, clipCount = 1): Promise<void> {
       return new Blob([buffer], { type: "audio/wav" });
     };
 
-    const audioBlob = silentWavBlob();
-    const clipBlob = new Blob(["smoke video"], { type: "video/webm" });
-    const steps = Array.from({ length: 16 }, (_, index) => index === 0);
+    const recordFaceClip = async (): Promise<Blob> => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 240;
+      const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+      const ellipse = (cx: number, cy: number, rx: number, ry: number, grey: number) => {
+        ctx.fillStyle = `rgb(${grey}, ${grey}, ${grey})`;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      const paint = (showFace: boolean) => {
+        ctx.fillStyle = "rgb(128, 128, 128)";
+        ctx.fillRect(0, 0, 320, 240);
+        if (!showFace) return;
+        ellipse(160, 120, 44, 56, 30);
+        // A face is shaded, brightest at its centre.
+        const shading = ctx.createRadialGradient(160, 127, 0, 160, 127, 44);
+        shading.addColorStop(0, "rgb(235, 235, 235)");
+        shading.addColorStop(1, "rgb(200, 200, 200)");
+        ctx.fillStyle = shading;
+        ctx.beginPath();
+        ctx.ellipse(160, 127, 34, 44, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ellipse(148, 114, 4, 4, 40);
+        ellipse(172, 114, 4, 4, 40);
+      };
+      paint(false);
+      const recorder = new MediaRecorder(canvas.captureStream(30), {
+        mimeType: "video/webm; codecs=vp8",
+        videoBitsPerSecond: 4_000_000,
+      });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (event) => chunks.push(event.data);
+      const stopped = new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+      });
+      await new Promise<void>((resolve) => {
+        recorder.onstart = () => resolve();
+        recorder.start();
+      });
+      const startedAt = performance.now();
+      const timer = window.setInterval(() => {
+        const elapsed = performance.now() - startedAt;
+        paint(elapsed >= 300);
+        if (elapsed >= 1_550 && recorder.state === "recording") recorder.stop();
+      }, 33);
+      await stopped;
+      window.clearInterval(timer);
+      return new Blob(chunks, { type: "video/webm" });
+    };
+
+    const audioBlob = silentWavBlob(faceClip ? 1.5 : 0.2);
+    const clipBlob = faceClip
+      ? await recordFaceClip()
+      : new Blob(["smoke video"], { type: "video/webm" });
+    const steps = Array.from({ length: 16 }, (_, index) =>
+      faceClip ? index % 4 === 0 : index === 0,
+    );
     const project = {
       schemaVersion: 1,
-      bpm: 90,
+      bpm: faceClip ? 180 : 90,
       swing: 0,
       cutSubdivision: "8n",
       sameTierHoldMs: 400,
@@ -196,9 +266,9 @@ async function seedOneClipProject(page: Page, clipCount = 1): Promise<void> {
         clipBlob: id < clipCount ? clipBlob : null,
         audioBlob: id < clipCount ? audioBlob : null,
         posterBlob: null,
-        trimStartMs: id === 0 ? 0 : 0,
-        trimEndMs: id < clipCount ? 200 : 0,
-        durationMs: id < clipCount ? 200 : 0,
+        trimStartMs: faceClip && id === 0 ? 300 : 0,
+        trimEndMs: faceClip && id === 0 ? 1_400 : id < clipCount ? 200 : 0,
+        durationMs: faceClip && id === 0 ? 1_500 : id < clipCount ? 200 : 0,
         tag: id === 0 ? "kick" : null,
         steps: id === 0 ? steps : Array.from({ length: 16 }, () => false),
         volume: 1,
@@ -224,7 +294,7 @@ async function seedOneClipProject(page: Page, clipCount = 1): Promise<void> {
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
       };
     });
-  }, clipCount);
+  }, { clipCount, faceClip });
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByLabel("trigger pads")).toBeVisible();
@@ -426,4 +496,94 @@ test("deletes a clip to free its track for a drum, and changes an empty track's 
   await expect(page.getByRole("button", { name: "Change sound for track 5, now snare" })).toBeVisible();
   await expect(page.getByRole("button", { name: "pad 5, snare" })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("a real offline export opens on the cover and cuts on the downbeat", async ({ page }) => {
+  test.setTimeout(60_000);
+  await installBrowserMocks(page, { realRecorder: true });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await seedOneClipProject(page, 1, { faceClip: true });
+  await waitForServiceWorkerControl(page);
+  // Offline to the end: the roundel must come from the precache.
+  await page.context().setOffline(true);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await expect(page.getByLabel("trigger pads")).toBeVisible();
+
+  await page.getByRole("button", { name: "Export" }).click();
+  await expect(page.getByRole("img", { name: "Cover preview" })).toBeVisible();
+  await page.getByText("Logo", { exact: true }).click();
+  await page.getByRole("button", { name: "Render" }).click();
+  await expect(page.getByText("Ready")).toBeVisible({ timeout: 30_000 });
+
+  const events = await page.evaluate(() =>
+    (window as unknown as { __haLogs: () => { event: string }[] }).__haLogs().map((e) => e.event),
+  );
+  expect(events).not.toContain("cover.failed");
+  expect(events).not.toContain("cover.late");
+
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save" }).click();
+  const download = await downloading;
+  await download.saveAs("test-results/cover-export.webm");
+
+  const exported = await page.evaluate(async (url) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+    document.body.appendChild(video);
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("the export did not decode"));
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 480;
+    canvas.height = 480;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+    const sample = (x: number, y: number) => Array.from(ctx.getImageData(x, y, 1, 1).data.slice(0, 3));
+
+    // Frame 0 is drawable only after a seek (at loadeddata it reads black).
+    video.currentTime = 0;
+    await new Promise((resolve) => video.addEventListener("seeked", resolve, { once: true }));
+    ctx.drawImage(video, 0, 0, 480, 480);
+    const paper = sample(8, 8);
+    // Tile 0 (origin 16, 16): its ground, the hair band above the face, and
+    // the face centre, each well inside one plate and clear of the roundel.
+    const tile = { ground: sample(36, 36), hair: sample(124, 72), face: sample(124, 124) };
+
+    const isPaper = ([r, g, b]: number[]) =>
+      Math.abs(r - 0xf8) <= 12 && Math.abs(g - 0xf6) <= 12 && Math.abs(b - 0xf3) <= 12;
+    const firstCut = await new Promise<number>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("the export never cut")), 8_000);
+      const onFrame = (_now: number, frame: { mediaTime: number }) => {
+        ctx.drawImage(video, 0, 0, 480, 480);
+        if (!isPaper(sample(8, 8))) {
+          window.clearTimeout(timeout);
+          resolve(frame.mediaTime);
+          return;
+        }
+        video.requestVideoFrameCallback(onFrame);
+      };
+      video.requestVideoFrameCallback(onFrame);
+      void video.play();
+    });
+    return { paper, tile, firstCut };
+  }, download.url());
+
+  const near = (actual: number[], hex: string, tolerance: number) =>
+    [1, 3, 5].every(
+      (at, channel) => Math.abs(actual[channel] - parseInt(hex.slice(at, at + 2), 16)) <= tolerance,
+    );
+  // Frame 0 is the card: paper in the margin, and tile 0 printed in slot 0's
+  // cyan field, black ink and pink face. Only the action frame has a face:
+  // the poster rehydrate makes at 0.1 s is blank and would print all field.
+  expect(near(exported.paper, "#f8f6f3", 12)).toBe(true);
+  expect(near(exported.tile.ground, "#22d3ee", 24)).toBe(true);
+  expect(near(exported.tile.hair, "#09090b", 24)).toBe(true);
+  expect(near(exported.tile.face, "#f9a8d4", 24)).toBe(true);
+  // One silent beat at 180 BPM (0.33 s) plus the audio lookahead.
+  expect(exported.firstCut).toBeGreaterThanOrEqual(0.25);
+  expect(exported.firstCut).toBeLessThanOrEqual(0.9);
 });
