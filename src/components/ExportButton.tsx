@@ -1,4 +1,4 @@
-// ABOUTME: ExportButton — top-bar button + popover with bars slider, format picker, progress, and review.
+// ABOUTME: ExportButton — top-bar button + popover with cover, bars slider, format picker, progress, review.
 // ABOUTME: Mirrors the FeelDisclosure pattern: anchored popover, click-outside + Escape close, no modal scrim.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Share2, Trash2 } from "lucide-react";
@@ -8,8 +8,23 @@ import {
   downloadBlob,
   defaultExportFilename,
   getExportDurationMs,
+  getRecordedHoldSec,
+  getShareCardHoldMs,
   shareBlob,
 } from "../lib/export";
+import {
+  COVER_LABELS,
+  DEFAULT_COVER_LABEL,
+  PAPER,
+  pickCoverClips,
+  type CoverLabel,
+} from "../lib/coverArt";
+import {
+  composeShareCard,
+  loadCoverTiles,
+  loadRoundel,
+  type CoverTiles,
+} from "../lib/shareCard";
 import { detectSupportedFormats, extensionForMimeType } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
@@ -20,7 +35,18 @@ const MIN_BARS = 1;
 const MAX_BARS = 8;
 const DEFAULT_BARS = 4;
 const FORMAT_STORAGE_KEY = "ha:exportMimeType";
+const COVER_STORAGE_KEY = "ha:exportCover";
+const COVER_CHIP_NAMES: Record<CoverLabel, string> = {
+  name: "Name",
+  logo: "Logo",
+  signed: "Signed",
+  plain: "Plain",
+  off: "Off",
+};
 const SHARE_FALLBACK_MESSAGE = "Sharing failed — saved as a download instead.";
+
+// The loaded tiles and the roundel the share card is composed from.
+type CoverArt = [CoverTiles, ImageBitmap | null];
 
 type ExportReview = {
   blob: Blob;
@@ -55,8 +81,19 @@ function readStoredFormat(): string | null {
   }
 }
 
+function readStoredCoverLabel(): CoverLabel {
+  if (typeof window === "undefined") return DEFAULT_COVER_LABEL;
+  try {
+    const saved = window.localStorage.getItem(COVER_STORAGE_KEY);
+    return COVER_LABELS.find((label) => label === saved) ?? DEFAULT_COVER_LABEL;
+  } catch {
+    return DEFAULT_COVER_LABEL;
+  }
+}
+
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
+  const tracks = useAppStore((s) => s.project.tracks);
   const canStart = useAppStore(canStartAudibleAction);
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
@@ -69,9 +106,16 @@ export function ExportButton() {
   const reviewObjectUrlRef = useRef<string | null>(null);
   const reviewRef = useRef<ExportReview | null>(null);
   const mountedRef = useRef(true);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const artRef = useRef<Promise<CoverArt> | null>(null);
+  const [art, setArt] = useState<CoverArt | null>(null);
+  const [coverLabel, setCoverLabel] = useState<CoverLabel>(readStoredCoverLabel);
+  const coverClips = useMemo(() => pickCoverClips(tracks), [tracks]);
+  const coverOn = coverClips.length > 0 && coverLabel !== "off";
   const rendering = progress !== null;
   const shareAvailable = useMemo(() => canShareReview(review), [review]);
-  const exportDurationMs = getExportDurationMs(bars, bpm);
+  const exportDurationMs =
+    getExportDurationMs(bars, bpm) + (coverOn ? getShareCardHoldMs(bpm) : 0);
   const exportDurationSeconds = Math.round(exportDurationMs / 1000);
   const close = useCallback(() => setOpen(false), []);
   usePopoverDismiss(rootRef, open, close, { whileBusy: rendering });
@@ -92,6 +136,36 @@ export function ExportButton() {
       // persist this session.
     }
   }, [mimeType]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COVER_STORAGE_KEY, coverLabel);
+    } catch {
+      // localStorage may be unavailable (private mode); choice just doesn't
+      // persist this session.
+    }
+  }, [coverLabel]);
+
+  // Loads the cover tiles once per open and per project change, while the
+  // app could start audio; a label change never reloads. A load in flight
+  // when Render claims the session is the one the export waits for.
+  useEffect(() => {
+    if (!open || !canStart || !coverOn) return;
+    const loading = Promise.all([loadCoverTiles(coverClips), loadRoundel()]);
+    artRef.current = loading;
+    void loading.then((loaded) => {
+      if (artRef.current === loading && mountedRef.current) setArt(loaded);
+    });
+  }, [open, canStart, coverOn, coverClips]);
+
+  // Recomposes the preview when the tiles land, the label changes, or the
+  // panel reopens with a fresh preview canvas.
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!art || !preview || coverLabel === "off") return;
+    const card = composeShareCard(art[0], coverLabel, art[1]);
+    preview.getContext("2d")?.drawImage(card, 0, 0, preview.width, preview.height);
+  }, [art, coverLabel, open]);
 
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {
@@ -176,6 +250,24 @@ export function ExportButton() {
       setError("This browser does not support video export.");
       return;
     }
+    // The cover is a promise the export waits for inside its session; the
+    // flat fallback is composed now, so frame 0 is a card even when the
+    // tiles are late. Logo falls back to Name: the fallback has no roundel.
+    let cover: Promise<HTMLCanvasElement> | undefined;
+    let coverFallback: HTMLCanvasElement | undefined;
+    const loading = artRef.current;
+    if (coverOn && loading) {
+      const label = coverLabel;
+      cover = loading.then(([tiles, roundel]) => composeShareCard(tiles, label, roundel));
+      // Observed here so a render that fails before awaiting it cannot
+      // leave an unhandled rejection; the export still sees it.
+      cover.catch(() => undefined);
+      coverFallback = composeShareCard(
+        coverClips.map(() => null),
+        label === "logo" ? "name" : label,
+        null,
+      );
+    }
     dismissReview();
     setError(null);
     setProgress(0);
@@ -185,6 +277,8 @@ export function ExportButton() {
         bpm,
         mimeType: chosen.mimeType,
         onProgress: (p) => setProgress(p),
+        cover,
+        coverFallback,
       });
       setCurrentReview({
         blob,
@@ -232,6 +326,55 @@ export function ExportButton() {
           aria-label="Export song"
           className="absolute inset-x-3 top-full mt-2 z-30 w-auto max-w-[24rem] mx-auto max-h-[calc(100dvh_-_100%_-_1rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-4 flex flex-col gap-3 lg:inset-x-auto lg:right-0 lg:min-w-[18rem] lg:max-w-none lg:mx-0 lg:max-h-none lg:overflow-visible"
         >
+          {coverClips.length > 0 && (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-[11px] uppercase tracking-wide text-zinc-400">
+                Cover
+              </legend>
+              <div className="flex items-start gap-3">
+                {coverLabel !== "off" && (
+                  <canvas
+                    ref={previewRef}
+                    width={192}
+                    height={192}
+                    role="img"
+                    aria-label="Cover preview"
+                    className="w-24 h-24 shrink-0 rounded"
+                    style={{ backgroundColor: PAPER }}
+                  />
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {COVER_LABELS.map((label) => (
+                    <label
+                      key={label}
+                      className={
+                        "inline-flex items-center px-3 py-1.5 pointer-coarse:min-h-11 rounded-full text-xs cursor-pointer border " +
+                        (coverLabel === label
+                          ? "bg-orange-500 text-zinc-950 border-orange-500"
+                          : "bg-zinc-900 text-zinc-300 border-zinc-700 hover:bg-zinc-800")
+                      }
+                    >
+                      <input
+                        type="radio"
+                        name="export-cover"
+                        value={label}
+                        checked={coverLabel === label}
+                        disabled={rendering}
+                        onChange={() => setCoverLabel(label)}
+                        className="sr-only"
+                      />
+                      {COVER_CHIP_NAMES[label]}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {coverLabel !== "off" && (
+                <p className="text-xs text-zinc-400">
+                  Opens on the cover for one beat ({getRecordedHoldSec(bpm).toFixed(1)} s).
+                </p>
+              )}
+            </fieldset>
+          )}
           {formats.length > 1 && (
             <fieldset className="flex flex-col gap-2">
               <legend className="text-[11px] uppercase tracking-wide text-zinc-400">

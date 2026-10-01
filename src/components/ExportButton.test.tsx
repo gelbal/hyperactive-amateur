@@ -23,8 +23,10 @@ vi.mock("tone", () => ({
     bpm: { value: 90 },
   })),
   getDestination: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
-  getContext: vi.fn(() => ({ rawContext: {} })),
+  getContext: vi.fn(() => ({ rawContext: {}, lookAhead: 0.1 })),
 }));
+
+vi.mock("../lib/posterFrame", () => ({ captureFirstFrame: vi.fn() }));
 
 vi.mock("../lib/export", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/export")>();
@@ -38,6 +40,11 @@ import { ExportButton } from "./ExportButton";
 import { exportSong } from "../lib/export";
 import { useAppStore } from "../store/useAppStore";
 import { setActiveCanvas } from "../lib/videoEngine";
+import { captureFirstFrame } from "../lib/posterFrame";
+import { __resetShareCardForTesting } from "../lib/shareCard";
+import { LOG_EVENTS, logger } from "../lib/logger";
+import { fakeBitmap, installRecordingCanvas, type CanvasCall } from "../test-utils/canvasRecorder";
+import type { Clip } from "../types";
 
 const STORAGE_KEY = "ha:exportMimeType";
 const WEBM_MIME = "video/webm; codecs=vp9,opus";
@@ -545,5 +552,221 @@ describe("ExportButton format picker", () => {
 
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test/unmount");
+  });
+});
+
+describe("ExportButton cover", () => {
+  let originalRecorder: typeof MediaRecorder | undefined;
+  let callsOf: (canvas: HTMLCanvasElement) => CanvasCall[];
+  const capture = vi.mocked(captureFirstFrame);
+
+  // A light face under dark hair on a mid-grey ground: a printable tile.
+  function faceRgba(): Uint8ClampedArray {
+    const rgba = new Uint8ClampedArray(216 * 216 * 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      const dx = ((i / 4) % 216) + 0.5 - 108;
+      const dy = Math.floor(i / 4 / 216) + 0.5 - 108;
+      const inFace = (dx / 38) ** 2 + ((dy - 8) / 48) ** 2 <= 1;
+      const inHair = (dx / 48) ** 2 + (dy / 62) ** 2 <= 1;
+      const value = inFace ? 200 : inHair ? 30 : 120;
+      rgba.set([value, value, value, 255], i);
+    }
+    return rgba;
+  }
+
+  function makeClip(id: number): Clip {
+    return {
+      blob: new Blob([new Uint8Array([id])], { type: "video/webm" }),
+      url: `blob:test/${id}`,
+      audioBuffer: null,
+      audioStatus: "ok",
+      trimStartMs: 300,
+      trimEndMs: 1400,
+      durationMs: 1500,
+      posterBlob: new Blob([new Uint8Array([100 + id])], { type: "image/jpeg" }),
+      posterUrl: `blob:test/poster-${id}`,
+    };
+  }
+
+  function seedClips(count: number): void {
+    const actions = useAppStore.getState().actions;
+    for (let id = 0; id < count; id += 1) {
+      actions.setTrackClip(id, makeClip(id));
+      actions.toggleStep(id, id * 4);
+    }
+  }
+
+  function openPanel(): void {
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+  }
+
+  function previewDraws(): number {
+    const preview = screen.getByRole("img", { name: /cover preview/i }) as HTMLCanvasElement;
+    return callsOf(preview).filter((call) => call.op === "drawImage").length;
+  }
+
+  function exportOptions(): Parameters<typeof exportSong>[2] {
+    return vi.mocked(exportSong).mock.calls.at(-1)?.[2] as Parameters<typeof exportSong>[2];
+  }
+
+  beforeEach(() => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    window.localStorage.clear();
+    useAppStore.getState().actions.setIsExporting(false);
+    useAppStore.getState().actions.reset();
+    useAppStore.getState().actions.setBpm(120);
+    setActiveCanvas(document.createElement("canvas"));
+    vi.mocked(exportSong).mockReset();
+    vi.mocked(exportSong).mockImplementation(() => new Promise<Blob>(() => undefined));
+    capture.mockReset();
+    capture.mockImplementation(async () => new Blob([new Uint8Array([1])], { type: "image/jpeg" }));
+    __resetShareCardForTesting();
+    ({ callsOf } = installRecordingCanvas());
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => fakeBitmap(faceRgba())),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array([2])]) })),
+    );
+  });
+
+  afterEach(() => {
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalRecorder;
+    setActiveCanvas(null);
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("passes the loading cover and a flat fallback to exportSong without awaiting either", async () => {
+    const frames: Array<(jpeg: Blob) => void> = [];
+    capture.mockImplementation(() => new Promise<Blob | null>((resolve) => frames.push(resolve)));
+    seedClips(2);
+    render(<ExportButton />);
+    openPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    const options = exportOptions();
+    expect(options.cover).toBeInstanceOf(Promise);
+    expect(options.coverFallback?.width).toBe(480);
+
+    for (let turn = 0; turn < 2; turn += 1) {
+      await waitFor(() => expect(frames).toHaveLength(turn + 1));
+      await act(async () => {
+        frames[turn](new Blob([new Uint8Array([turn])], { type: "image/jpeg" }));
+      });
+    }
+    const card = await act(async () => options.cover);
+    expect(card?.width).toBe(480);
+    expect(capture).toHaveBeenCalledTimes(2);
+  });
+
+  it("composes the fallback as flat fields, with Name standing in for Logo", async () => {
+    seedClips(1);
+    window.localStorage.setItem("ha:exportCover", "logo");
+    render(<ExportButton />);
+    openPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    const fallback = exportOptions().coverFallback as HTMLCanvasElement;
+    const calls = callsOf(fallback);
+    expect(calls.some((call) => call.op === "putImageData")).toBe(false);
+    expect(calls.filter((call) => call.op === "fillText").map((call) => call.args[0])).toEqual([
+      "HYPERACTIVE",
+      "AMATEUR",
+    ]);
+    await waitFor(() => expect(previewDraws()).toBe(1));
+  });
+
+  it("recomposes the preview on a label change without decoding, even after a timed-out frame", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    capture.mockResolvedValue(null);
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_FAILED, { stage: "frame", sec: 0.42 });
+    const decodes = vi.mocked(createImageBitmap).mock.calls.length;
+
+    fireEvent.click(screen.getByLabelText(/^logo$/i));
+
+    expect(previewDraws()).toBe(2);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createImageBitmap).mock.calls.length).toBe(decodes);
+  });
+
+  it("defaults to Name and keeps the choice in ha:exportCover", async () => {
+    seedClips(1);
+    const { unmount } = render(<ExportButton />);
+    openPanel();
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByLabelText(/^signed$/i));
+    expect(window.localStorage.getItem("ha:exportCover")).toBe("signed");
+    await waitFor(() => expect(previewDraws()).toBeGreaterThan(0));
+    unmount();
+
+    render(<ExportButton />);
+    openPanel();
+    expect((screen.getByLabelText(/^signed$/i) as HTMLInputElement).checked).toBe(true);
+    await waitFor(() => expect(previewDraws()).toBeGreaterThan(0));
+  });
+
+  it("Off hides the preview and renders without a cover", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+
+    fireEvent.click(screen.getByLabelText(/^off$/i));
+    expect(screen.queryByRole("img", { name: /cover preview/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    expect(exportOptions().cover).toBeUndefined();
+    expect(exportOptions().coverFallback).toBeUndefined();
+  });
+
+  it("hides Cover and renders without a cover when there are no clips", () => {
+    render(<ExportButton />);
+    openPanel();
+
+    expect(screen.queryByText(/^cover$/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+
+    expect(exportOptions().cover).toBeUndefined();
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("states the recorded hold and adds it to the render estimate", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+
+    expect(screen.getByText("Opens on the cover for one beat (0.6 s).")).toBeInTheDocument();
+    expect(
+      screen.getByText("Keep this screen open — rendering takes about 9 s."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+  });
+
+  it("starts no load while the app cannot start audio, and loads once it can", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    expect(capture).toHaveBeenCalledTimes(1);
+
+    act(() => useAppStore.getState().actions.setIsPlaying(true));
+    act(() => useAppStore.getState().actions.setTrackClip(1, makeClip(1)));
+    act(() => useAppStore.getState().actions.toggleStep(1, 2));
+    expect(capture).toHaveBeenCalledTimes(1);
+
+    act(() => useAppStore.getState().actions.setIsPlaying(false));
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(previewDraws()).toBe(2));
   });
 });
