@@ -710,6 +710,19 @@ describe("exportSong", () => {
       expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 60 / 24000);
     });
 
+    it("stops the music on the audio clock at the last bar line, so the tail never catches the next downbeat", async () => {
+      await exportSong(makeCanvasWithContext(), makeAudioContext(), {
+        bars: 1,
+        bpm: 24000,
+        mimeType: "video/webm",
+        cover: Promise.resolve(makeCard()),
+      });
+
+      // Started one beat (2.5 ms) after now (10), stopped one bar (10 ms) later.
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10 + 0.0025);
+      expect(toneMocks.transport.stop).toHaveBeenCalledWith(10 + 0.0025 + 0.01);
+    });
+
     it("records the lookahead after the last bar, so its final step is not cut", async () => {
       vi.useFakeTimers();
       const promise = exportSong(makeCanvasWithContext(), makeAudioContext(), {
@@ -737,7 +750,7 @@ describe("exportSong", () => {
 
       await vi.advanceTimersByTimeAsync(COVER_WAIT_MS);
       expect(warn).toHaveBeenCalledWith(LOG_EVENTS.COVER_LATE, { waitedMs: COVER_WAIT_MS });
-      expect(toneMocks.transport.start).toHaveBeenCalledWith();
+      expect(toneMocks.transport.start).toHaveBeenCalledWith(10);
       expect(hasLiveFrame()).toBe(false);
 
       await vi.advanceTimersByTimeAsync(2100);

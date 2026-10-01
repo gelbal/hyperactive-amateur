@@ -1,5 +1,5 @@
-// ABOUTME: ExportButton tests — format picker rendering rules plus export review handoff.
-// ABOUTME: Render completion holds the blob for Share, Save, or Discard instead of auto-downloading.
+// ABOUTME: ExportButton tests — format picker, the cover preview, and the export review handoff.
+// ABOUTME: A finished render saves itself, or on a touch device that can share files, offers Share.
 import {
   render,
   screen,
@@ -277,6 +277,28 @@ describe("ExportButton format picker", () => {
     expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
     // The video is already saved, so closing the review discards nothing.
     expect(screen.getByRole("button", { name: /^done$/i })).toBeInTheDocument();
+  });
+
+  it("on a touch device that can share files, offers Share instead of downloading", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    stubNavigatorShare({ canShare: true });
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+    })) as unknown as typeof window.matchMedia;
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+
+    try {
+      await renderCompletedExport();
+
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /^share$/i })).toHaveClass("bg-orange-500");
+      expect(screen.getByRole("button", { name: /^discard$/i })).toBeInTheDocument();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 
   it("saves nothing when the render fails", async () => {
@@ -797,6 +819,21 @@ describe("ExportButton cover", () => {
     });
 
     await expect(cover).resolves.toBeNull();
+  });
+
+  it("moving the length slider does not reload a one-bar pattern's cover", async () => {
+    seedClips(1);
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    const preview = screen.getByRole("img", { name: /cover preview/i }) as HTMLCanvasElement;
+    const before = callsOf(preview).length;
+
+    fireEvent.change(screen.getByLabelText("bars"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("bars"), { target: { value: "8" } });
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(callsOf(preview).slice(before).map((call) => call.op)).not.toContain("clearRect");
   });
 
   it("puts only clips the render plays on the cover", async () => {

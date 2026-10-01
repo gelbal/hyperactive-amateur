@@ -96,11 +96,14 @@ function prepareTransport(canvas: HTMLCanvasElement, card: HTMLCanvasElement | n
   canvas.getContext("2d")?.drawImage(card, 0, 0, canvas.width, canvas.height);
 }
 
-// With a hold, step 0 lands one beat after now on the audio clock.
-function startTransport(holdMs: number): void {
+// Step 0 lands one hold after now on the audio clock, and the music stops at
+// the last bar line on that clock, so the recording's lookahead tail catches
+// only ringing sound, never the next loop's downbeat.
+function startTransport(holdMs: number, durationMs: number): void {
   const transport = Tone.getTransport();
-  if (holdMs > 0) transport.start(Tone.now() + holdMs / 1000);
-  else transport.start();
+  const startAt = Tone.now() + holdMs / 1000;
+  transport.start(startAt);
+  transport.stop(startAt + durationMs / 1000);
 }
 
 // Real-time render: starts the Transport at step 0 plus a MediaRecorder on the
@@ -204,7 +207,7 @@ export async function exportSong(
 
     prepareTransport(canvas, card);
     recorder.start(1000);
-    startTransport(holdMs);
+    startTransport(holdMs, durationMs);
 
     const startedAt = Date.now();
     if (onProgress) {

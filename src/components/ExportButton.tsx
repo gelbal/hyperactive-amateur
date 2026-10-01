@@ -18,6 +18,7 @@ import { detectSupportedFormats, extensionForMimeType } from "../lib/exportForma
 import { getAudioContext } from "../lib/audio";
 import { getActiveCanvas } from "../lib/videoEngine";
 import { usePopoverDismiss } from "../lib/usePopoverDismiss";
+import { hasCoarsePointer } from "../lib/install";
 import { canStartAudibleAction } from "../lib/audibleActionGate";
 
 const MIN_BARS = 1;
@@ -63,6 +64,7 @@ function readStoredFormat(): string | null {
 export function ExportButton() {
   const bpm = useAppStore((s) => s.project.bpm);
   const tracks = useAppStore((s) => s.project.tracks);
+  const stepCount = useAppStore((s) => s.project.stepCount);
   const canStart = useAppStore(canStartAudibleAction);
   const [open, setOpen] = useState(false);
   const [bars, setBars] = useState(DEFAULT_BARS);
@@ -78,9 +80,12 @@ export function ExportButton() {
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const tilesRef = useRef<Promise<CoverTiles> | null>(null);
   const [tiles, setTiles] = useState<CoverTiles | null>(null);
+  // Bars beyond the pattern's length replay it, so a short pattern's cover
+  // does not change (or reload) as the length slider moves.
+  const renderedSteps = Math.min(bars * STEPS_PER_BAR, stepCount);
   const coverClips = useMemo(
-    () => pickCoverClips(tracks, bars * STEPS_PER_BAR),
-    [tracks, bars],
+    () => pickCoverClips(tracks, renderedSteps),
+    [tracks, renderedSteps],
   );
   // Any clip gets a cover; with none on screen it is the flat card.
   const coverOn = tracks.some((track) => track.clip);
@@ -257,10 +262,13 @@ export function ExportButton() {
       };
       setCurrentReview(finished);
       setOpen(true);
-      // Act on the finished render at once: save it. Sharing needs a tap
-      // from the last few seconds, which a render outlasts, so Share stays
-      // one tap away in the review row.
-      if (mountedRef.current) saveReview(finished);
+      // Act on the finished render at once. On a touch device that can
+      // share files, Share is the primary action (it opens the sheet with
+      // Save Video, and needs the fresh tap a render outlasts); everywhere
+      // else the video saves itself.
+      if (mountedRef.current && !(hasCoarsePointer() && canShareReview(finished))) {
+        saveReview(finished);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -407,7 +415,7 @@ export function ExportButton() {
                     type="button"
                     disabled={sharePending}
                     onClick={() => void handleShare()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-600 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-orange-500 bg-orange-500 text-xs font-medium text-zinc-950 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Share2 size={14} />
                     Share
