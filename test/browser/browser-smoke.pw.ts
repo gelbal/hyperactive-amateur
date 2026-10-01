@@ -498,7 +498,7 @@ test("deletes a clip to free its track for a drum, and changes an empty track's 
   expect(errors).toEqual([]);
 });
 
-test("a real offline export opens on the cover and cuts on the downbeat", async ({ page }) => {
+test("a real offline export opens on the cover, cuts on the downbeat, and saves itself", async ({ page }) => {
   test.setTimeout(60_000);
   await installBrowserMocks(page, { realRecorder: true });
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -513,6 +513,8 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
 
   await page.getByRole("button", { name: "Export" }).click();
   await expect(page.getByRole("img", { name: "Cover preview" })).toBeVisible();
+  // A finished render saves itself, with no further tap.
+  const downloading = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByRole("button", { name: "Render" }).click();
   await expect(page.getByText("Ready")).toBeVisible({ timeout: 30_000 });
 
@@ -522,8 +524,6 @@ test("a real offline export opens on the cover and cuts on the downbeat", async 
   expect(events).not.toContain("cover.failed");
   expect(events).not.toContain("cover.late");
 
-  const downloading = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Save" }).click();
   const download = await downloading;
   await download.saveAs("test-results/cover-export.webm");
 

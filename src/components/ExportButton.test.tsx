@@ -105,6 +105,8 @@ describe("ExportButton format picker", () => {
     useAppStore.getState().actions.reset();
     setActiveCanvas(document.createElement("canvas"));
     vi.mocked(exportSong).mockReset();
+    // A finished render saves itself; jsdom cannot follow a download link.
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -259,6 +261,37 @@ describe("ExportButton format picker", () => {
     expect(screen.queryByText(filename)).not.toBeInTheDocument();
   });
 
+  it("saves the render as soon as it finishes, keeping Share, Save and Discard", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    stubNavigatorShare({ canShare: true });
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    const click = vi.mocked(HTMLAnchorElement.prototype.click);
+
+    const { blob, filename } = await renderCompletedExport();
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(filename)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^share$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^discard$/i })).toBeInTheDocument();
+  });
+
+  it("saves nothing when the render fails", async () => {
+    originalRecorder = stubMediaRecorder([WEBM_MIME]);
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    vi.mocked(exportSong).mockRejectedValueOnce(new Error("encoder failed"));
+    render(<ExportButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    await screen.findByText("encoder failed");
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+  });
+
   it("renders Share only when navigator.canShare accepts the export file", async () => {
     originalRecorder = stubMediaRecorder([WEBM_MIME]);
     const { canShare } = stubNavigatorShare({ canShare: true });
@@ -340,6 +373,7 @@ describe("ExportButton format picker", () => {
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
     await screen.findByText(FILENAME_RE);
+    click.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
 
@@ -361,6 +395,7 @@ describe("ExportButton format picker", () => {
     stubNavigatorShare({ canShare: true, share });
     const createObjectURL = vi.spyOn(URL, "createObjectURL");
     const { filename } = await renderCompletedExport();
+    createObjectURL.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
 
@@ -383,6 +418,8 @@ describe("ExportButton format picker", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
     const { blob } = await renderCompletedExport();
+    createObjectURL.mockClear();
+    click.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
 
@@ -416,6 +453,9 @@ describe("ExportButton format picker", () => {
     expect(screen.getByRole("button", { name: /^share$/i })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
     expect(screen.queryByText(filename)).not.toBeInTheDocument();
+    createObjectURL.mockClear();
+    revokeObjectURL.mockClear();
+    click.mockClear();
 
     await act(async () => {
       rejectShare(new Error("late share failed"));
@@ -445,6 +485,8 @@ describe("ExportButton format picker", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
     const { unmount } = await renderCompletedExport();
+    createObjectURL.mockClear();
+    click.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
     unmount();
@@ -481,6 +523,9 @@ describe("ExportButton format picker", () => {
     fireEvent.click(screen.getByRole("button", { name: /^share$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^render again$/i }));
     await screen.findByText(FILENAME_RE);
+    createObjectURL.mockClear();
+    revokeObjectURL.mockClear();
+    click.mockClear();
 
     await act(async () => {
       rejectShare(new Error("late share failed"));
@@ -507,7 +552,6 @@ describe("ExportButton format picker", () => {
       .mockImplementation(() => undefined);
     await renderCompletedExport();
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
@@ -525,7 +569,6 @@ describe("ExportButton format picker", () => {
     await renderCompletedExport();
     vi.mocked(exportSong).mockResolvedValueOnce(new Blob(["next"], { type: "video/webm" }));
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^render again$/i }));
 
     await screen.findByText(FILENAME_RE);
@@ -546,7 +589,6 @@ describe("ExportButton format picker", () => {
     fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
     await screen.findByText(FILENAME_RE);
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     unmount();
 
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);

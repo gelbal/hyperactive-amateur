@@ -233,13 +233,18 @@ export function ExportButton() {
         cover,
         coverFallback,
       });
-      setCurrentReview({
+      const finished: ExportReview = {
         blob,
         filename: defaultExportFilename(
           extensionForMimeType(blob.type, chosen.extension),
         ),
-      });
+      };
+      setCurrentReview(finished);
       setOpen(true);
+      // Act on the finished render at once: save it. Sharing needs a tap
+      // from the last few seconds, which a render outlasts, so Share stays
+      // one tap away in the review row.
+      if (mountedRef.current) saveReview(finished);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
