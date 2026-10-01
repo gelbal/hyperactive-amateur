@@ -2,10 +2,17 @@
 // ABOUTME: Pure functions on plain tracks and typed arrays; real pixels are proven in the browser smoke.
 import { describe, it, expect } from "vitest";
 import {
+  COVER_PALETTES,
+  INK,
+  PLATE,
+  TILE_SIZE,
   actionFrameSec,
   coverSlots,
   cropSquare,
+  dominantPlateShare,
+  paintPlates,
   pickCoverClips,
+  platesFor,
   tileOrigin,
 } from "./coverArt";
 import type { Clip, Tag, Track } from "../types";
@@ -131,5 +138,118 @@ describe("cropSquare", () => {
   it("zooms the centre square 1.25×", () => {
     expect(cropSquare(1280, 720)).toEqual({ sx: 352, sy: 72, side: 576 });
     expect(cropSquare(480, 640)).toEqual({ sx: 48, sy: 128, side: 384 });
+  });
+});
+
+// A grey tile: `lumAt(dx, dy)` gets the offset from the tile centre.
+function greyTile(lumAt: (dx: number, dy: number) => number, size = TILE_SIZE): Uint8ClampedArray {
+  const rgba = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const value = lumAt(x + 0.5 - size / 2, y + 0.5 - size / 2);
+      const i = (y * size + x) * 4;
+      rgba[i] = value;
+      rgba[i + 1] = value;
+      rgba[i + 2] = value;
+      rgba[i + 3] = 255;
+    }
+  }
+  return rgba;
+}
+
+function inEllipse(dx: number, dy: number, cx: number, cy: number, rx: number, ry: number): boolean {
+  return ((dx - cx) / rx) ** 2 + ((dy - cy) / ry) ** 2 <= 1;
+}
+
+// A face under a dark hair cap, with darker eyes and mouth, on `ground`.
+function faceTile(ground: (dx: number, dy: number) => number, face = 200): Uint8ClampedArray {
+  return greyTile((dx, dy) => {
+    if (inEllipse(dx, dy, 0, 22, 12, 5)) return face - 60;
+    if (inEllipse(dx, dy, -14, -8, 5, 5) || inEllipse(dx, dy, 14, -8, 5, 5)) return face - 60;
+    if (inEllipse(dx, dy, 0, 8, 38, 48)) return face;
+    if (inEllipse(dx, dy, 0, 0, 48, 62)) return 30;
+    return ground(dx, dy);
+  });
+}
+
+function plateAt(plates: Uint8Array, dx: number, dy: number, size = TILE_SIZE): number {
+  return plates[(size / 2 + dy) * size + size / 2 + dx];
+}
+
+function edgeRingInkShare(plates: Uint8Array, size = TILE_SIZE): number {
+  let ring = 0;
+  let ink = 0;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (x >= 8 && y >= 8 && x < size - 8 && y < size - 8) continue;
+      ring += 1;
+      if (plates[y * size + x] === PLATE.ink) ink += 1;
+    }
+  }
+  return ink / ring;
+}
+
+describe("platesFor", () => {
+  it("keeps a dim face's dark eyes as ink and does not print it as one plate", () => {
+    const dimFace = greyTile((dx, dy) => {
+      if (inEllipse(dx, dy, -14, -8, 5, 5) || inEllipse(dx, dy, 14, -8, 5, 5)) return 60;
+      if (inEllipse(dx, dy, 0, 22, 12, 5)) return 55;
+      if (inEllipse(dx, dy, 0, 8, 38, 48)) return 95;
+      return 45;
+    });
+    const plates = platesFor(dimFace, TILE_SIZE);
+
+    expect(plateAt(plates, -14, -8)).toBe(PLATE.ink);
+    expect(plateAt(plates, 14, -8)).toBe(PLATE.ink);
+    expect(plateAt(plates, -24, 20)).toBe(PLATE.face);
+    expect(plateAt(plates, -100, -100)).toBe(PLATE.field);
+    expect(dominantPlateShare(plates)).toBeLessThan(0.95);
+  });
+
+  it("inks only the darkest shadows away from the face: a textured ground keeps its edge ring ≤ 20 % ink", () => {
+    // Mid-grey 128 ± 48 in an 8 px checker: local contrast everywhere would
+    // ink the core of every dark square (about a quarter of the ground).
+    const checker = (dx: number, dy: number) =>
+      (Math.floor((dx + 108) / 8) + Math.floor((dy + 108) / 8)) % 2 === 0 ? 80 : 176;
+    const plates = platesFor(faceTile(checker), TILE_SIZE);
+
+    expect(edgeRingInkShare(plates)).toBeLessThanOrEqual(0.2);
+  });
+
+  it("prints the face colour only around the face: a light ground away from it prints field", () => {
+    const plates = platesFor(faceTile(() => 230, 150), TILE_SIZE);
+
+    expect(plateAt(plates, -20, 20)).toBe(PLATE.face);
+    expect(plateAt(plates, -100, -100)).toBe(PLATE.field);
+    expect(plateAt(plates, 100, 100)).toBe(PLATE.field);
+  });
+
+  it("prints a flat tile as one flat plate", () => {
+    for (const value of [0, 128, 255]) {
+      const plates = platesFor(greyTile(() => value), TILE_SIZE);
+      expect(dominantPlateShare(plates)).toBe(1);
+    }
+  });
+});
+
+describe("paintPlates", () => {
+  it("prints the field and face plates, then the ink plate offset by (+3, +2)", () => {
+    const size = 16;
+    const plates = new Uint8Array(size * size).fill(PLATE.field);
+    plates[2 * size + 2] = PLATE.ink;
+    plates[10 * size + 10] = PLATE.face;
+    const out = new Uint8ClampedArray(size * size * 4);
+
+    paintPlates(plates, size, COVER_PALETTES[0], out);
+
+    const rgbAt = (x: number, y: number) => {
+      const i = (y * size + x) * 4;
+      return `#${[out[i], out[i + 1], out[i + 2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+    };
+    expect(rgbAt(5, 4)).toBe(INK);
+    expect(rgbAt(2, 2)).toBe(COVER_PALETTES[0].field);
+    expect(rgbAt(10, 10)).toBe(COVER_PALETTES[0].face);
+    expect(rgbAt(0, 0)).toBe(COVER_PALETTES[0].field);
+    expect(out[3]).toBe(255);
   });
 });
