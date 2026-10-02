@@ -11,7 +11,7 @@ import {
   getShareCardHoldMs,
   shareBlob,
 } from "../lib/export";
-import { PAPER, pickCoverClips } from "../lib/coverArt";
+import { PAPER, pickCoverClips, pickCoverPalettes } from "../lib/coverArt";
 import { composeShareCard, loadCoverTiles, type CoverTiles } from "../lib/shareCard";
 import { detectSupportedFormats, extensionForMimeType } from "../lib/exportFormats";
 import { getAudioContext } from "../lib/audio";
@@ -90,6 +90,9 @@ export function ExportButton() {
     () => pickCoverClips(tracks, renderedSteps),
     [tracks, renderedSteps],
   );
+  // Drawn from the whole pattern and its takes, so the length slider never
+  // recolours the cover.
+  const coverPalettes = useMemo(() => pickCoverPalettes(tracks), [tracks]);
   // Any clip gets a cover; with none on screen it is the flat card.
   const coverOn = tracks.some((track) => track.clip);
   const rendering = progress !== null;
@@ -142,8 +145,8 @@ export function ExportButton() {
       ctx?.clearRect(0, 0, preview.width, preview.height);
       return;
     }
-    ctx?.drawImage(composeShareCard(loaded.tiles), 0, 0, preview.width, preview.height);
-  }, [loaded, open, rendering, canStart, coverClips]);
+    ctx?.drawImage(composeShareCard(loaded.tiles, coverPalettes), 0, 0, preview.width, preview.height);
+  }, [loaded, open, rendering, canStart, coverClips, coverPalettes]);
 
   // Clear stale errors when the popover closes so a reopen starts fresh.
   useEffect(() => {
@@ -238,12 +241,12 @@ export function ExportButton() {
       // Tiles landing after the export stopped waiting (its transport has
       // started) would only cost main-thread time during the recording.
       cover = loading.then((loaded) =>
-        useAppStore.getState().playback.isPlaying ? null : composeShareCard(loaded),
+        useAppStore.getState().playback.isPlaying ? null : composeShareCard(loaded, coverPalettes),
       );
       // Observed here so a render that fails before awaiting it cannot
       // leave an unhandled rejection; the export still sees it.
       cover.catch(() => undefined);
-      coverFallback = composeShareCard(coverClips.map(() => null));
+      coverFallback = composeShareCard(coverClips.map(() => null), coverPalettes);
     }
     dismissReview();
     setError(null);

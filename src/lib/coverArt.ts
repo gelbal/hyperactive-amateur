@@ -18,13 +18,21 @@ export interface CoverPalette {
   face: string;
 }
 
-// One silkscreen colourway per tile, Tailwind swatches: cyan-400/pink-300,
-// orange-500 (brand)/yellow-200, red-500/sky-300, lime-400/rose-400.
+// The silkscreen colourways a cover draws its four tiles from, Tailwind
+// swatches. The fields step around the colour wheel, so any four drawn
+// together stay distinct at thumbnail size; each face is a lighter colour
+// that stands apart from its own field.
 export const COVER_PALETTES: readonly CoverPalette[] = [
-  { field: "#22d3ee", face: "#f9a8d4" },
-  { field: "#f97316", face: "#fef08a" },
-  { field: "#ef4444", face: "#7dd3fc" },
-  { field: "#a3e635", face: "#fb7185" },
+  { field: "#ef4444", face: "#7dd3fc" }, // red-500 / sky-300
+  { field: "#f97316", face: "#fef08a" }, // orange-500 (brand) / yellow-200
+  { field: "#fbbf24", face: "#c4b5fd" }, // amber-400 / violet-300
+  { field: "#a3e635", face: "#fb7185" }, // lime-400 / rose-400
+  { field: "#10b981", face: "#f0abfc" }, // emerald-500 / fuchsia-300
+  { field: "#22d3ee", face: "#f9a8d4" }, // cyan-400 / pink-300
+  { field: "#3b82f6", face: "#fdba74" }, // blue-500 / orange-300
+  { field: "#a78bfa", face: "#d9f99d" }, // violet-400 / lime-200
+  { field: "#d946ef", face: "#a7f3d0" }, // fuchsia-500 / emerald-200
+  { field: "#f472b6", face: "#a5f3fc" }, // pink-400 / cyan-200
 ];
 
 export const PLATE = { ink: 0, field: 1, face: 2 } as const;
@@ -108,6 +116,50 @@ export function coverSlots(clipCount: number): number[] {
     default:
       return [0, 1, 2, 3];
   }
+}
+
+// What the user built, as text: every track's steps and the byte size of its
+// clip, which differs from take to take. Mix settings (volume, mute, tag,
+// video on/off) are left out, so they never recolour the cover.
+function projectKey(tracks: readonly Track[]): string {
+  return tracks
+    .map((track) => `${track.steps.map((on) => (on ? "x" : ".")).join("")}:${track.clip?.blob.size ?? "-"}`)
+    .join("|");
+}
+
+// FNV-1a: a stable 32-bit hash of a string's UTF-16 code units.
+function hashString(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+// mulberry32: a small seeded generator of floats in [0, 1).
+function seededRandom(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Four different colourways for the four tiles, drawn from the ten by a
+// generator seeded with the project: the same beat and takes always print
+// the same cover, so the preview shows what the export prints, and a changed
+// step or a new take draws other colours.
+export function pickCoverPalettes(tracks: readonly Track[]): CoverPalette[] {
+  const random = seededRandom(hashString(projectKey(tracks)));
+  const pool = [...COVER_PALETTES];
+  // The first steps of a Fisher-Yates shuffle.
+  for (let i = 0; i < COVER_TILE_COUNT; i += 1) {
+    const j = i + Math.floor(random() * (pool.length - i));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, COVER_TILE_COUNT);
 }
 
 export function tileOrigin(slot: number): { x: number; y: number } {

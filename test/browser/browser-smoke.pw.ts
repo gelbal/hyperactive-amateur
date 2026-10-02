@@ -1,6 +1,7 @@
 // ABOUTME: Production-preview smoke tests for real browser APIs that jsdom cannot cover.
 // ABOUTME: Uses mocked camera/recorder surfaces so the command needs no real device permission.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { COVER_PALETTES } from "../../src/lib/coverArt";
 
 // `realRecorder` keeps the browser's own MediaRecorder for a real export.
 async function installBrowserMocks(
@@ -576,14 +577,24 @@ test("a real offline export opens on the cover, cuts on the downbeat, and saves 
   const rgb = (hex: string) => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
   // The print is laid 70 % over the photo's grey.
   const overGrey = (hex: string, grey: number) => rgb(hex).map((value) => 0.7 * value + 0.3 * grey);
-  // Frame 0 is the card: paper in the margin, and tile 0 printed in slot 0's
-  // cyan field (over the 128 ground), black ink (over the 30 hair) and pink
-  // face (over the face, about 229 there). Only the action frame has a face:
-  // the poster rehydrate makes at 0.1 s is blank and would print all field.
+  // Frame 0 is the card: paper in the margin, and tile 0 printed in one of
+  // the colourways (the recorded take's size seeds which one): its field over
+  // the 128 ground, black ink over the 30 hair, and the same colourway's face
+  // over the face (about 229 there). Only the action frame has a face: the
+  // poster rehydrate makes at 0.1 s is blank and would print all field.
   expect(near(exported.paper, rgb("#f8f6f3"), 12)).toBe(true);
-  expect(near(exported.tile.ground, overGrey("#22d3ee", 128), 24)).toBe(true);
+  const gap = (actual: number[], expected: number[]) =>
+    Math.max(...expected.map((value, channel) => Math.abs(actual[channel] - value)));
+  const colourwayGap = (palette: { field: string; face: string }) =>
+    Math.max(
+      gap(exported.tile.ground, overGrey(palette.field, 128)),
+      gap(exported.tile.face, overGrey(palette.face, 229)),
+    );
+  const printedIn = COVER_PALETTES.reduce((best, palette) =>
+    colourwayGap(palette) < colourwayGap(best) ? palette : best,
+  );
+  expect(colourwayGap(printedIn)).toBeLessThanOrEqual(24);
   expect(near(exported.tile.hair, overGrey("#09090b", 30), 24)).toBe(true);
-  expect(near(exported.tile.face, overGrey("#f9a8d4", 229), 24)).toBe(true);
   // One silent beat at 180 BPM (0.33 s) plus the audio lookahead: 0.43 s
   // nominal, measured 0.44 s (0.88 s on a machine busy with another test
   // run). A slow first seek holds the card a little longer by design; more

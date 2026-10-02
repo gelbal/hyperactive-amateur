@@ -4,7 +4,6 @@ import { useAppStore } from "../store/useAppStore";
 import type { Clip } from "../types";
 import {
   CARD_SIZE,
-  COVER_PALETTES,
   FLAT_PLATE_SHARE,
   INK,
   PAPER,
@@ -17,6 +16,7 @@ import {
   platesFor,
   showPhotoThrough,
   tileOrigin,
+  type CoverPalette,
 } from "./coverArt";
 import { LOG_EVENTS, logger } from "./logger";
 import { captureFirstFrame } from "./posterFrame";
@@ -151,9 +151,13 @@ export async function loadCoverTiles(clips: readonly Clip[]): Promise<CoverTiles
   return tiles;
 }
 
-function printTile(card: CanvasRenderingContext2D, tile: HTMLCanvasElement | null, slot: number): void {
+function printTile(
+  card: CanvasRenderingContext2D,
+  tile: HTMLCanvasElement | null,
+  palette: CoverPalette,
+  slot: number,
+): void {
   const { x, y } = tileOrigin(slot);
-  const palette = COVER_PALETTES[slot];
   const pixels = tile ? tilePixels(tile) : null;
   if (!tile || !pixels) {
     card.fillStyle = palette.field;
@@ -183,15 +187,17 @@ function drawName(card: CanvasRenderingContext2D): void {
 }
 
 // The 480 px share card: paper, four printed tiles (clips repeat AAAA,
-// AB/BA, AB/CA), then the name across the gutter crossing. Throws only on a
-// bug.
-export function composeShareCard(tiles: CoverTiles): HTMLCanvasElement {
+// AB/BA, AB/CA), each slot in its own colourway from `palettes`, then the
+// name across the gutter crossing. Throws only on a bug.
+export function composeShareCard(tiles: CoverTiles, palettes: readonly CoverPalette[]): HTMLCanvasElement {
   const card = makeCanvas(CARD_SIZE);
   const ctx = card.getContext("2d");
   if (!ctx) return card;
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, CARD_SIZE, CARD_SIZE);
-  coverSlots(tiles.length).forEach((tileIndex, slot) => printTile(ctx, tiles[tileIndex] ?? null, slot));
+  coverSlots(tiles.length).forEach((tileIndex, slot) =>
+    printTile(ctx, tiles[tileIndex] ?? null, palettes[slot], slot),
+  );
   drawName(ctx);
   return card;
 }

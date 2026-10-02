@@ -12,6 +12,7 @@ import {
   dominantPlateShare,
   paintPlates,
   pickCoverClips,
+  pickCoverPalettes,
   showPhotoThrough,
   platesFor,
   tileOrigin,
@@ -113,6 +114,59 @@ describe("pickCoverClips", () => {
       { tag: "kick", steps: [2] },
     ]);
     expect(pickedTrackIds(tracks)).toEqual([1, 2, 0]);
+  });
+});
+
+const BEAT: TrackSpec[] = [
+  { tag: "kick", steps: [0, 8] },
+  { tag: "snare", steps: [4, 12] },
+  { tag: "hat", steps: [0, 2, 4, 6, 8, 10, 12, 14] },
+  { tag: "vocal", steps: [6] },
+];
+
+describe("pickCoverPalettes", () => {
+  it("keeps a project's colourways through mix changes and draws new ones for a new take", () => {
+    const first = pickCoverPalettes(makeTracks(BEAT));
+    const remixed = makeTracks(BEAT).map((track) => ({
+      ...track,
+      volume: 0.3,
+      muted: track.id === 1,
+      showVideo: track.id !== 2,
+      tag: null,
+    }));
+    const newTake = makeTracks(BEAT).map((track) =>
+      track.id === 3 && track.clip
+        ? { ...track, clip: { ...track.clip, blob: new Blob([new Uint8Array(2048)], { type: "video/webm" }) } }
+        : track,
+    );
+
+    expect(pickCoverPalettes(makeTracks(BEAT))).toEqual(first);
+    expect(pickCoverPalettes(remixed)).toEqual(first);
+    expect(pickCoverPalettes(newTake)).not.toEqual(first);
+  });
+
+  it("draws four different colourways, each of the ten evenly often in every slot as the steps change", () => {
+    // A thousand beats that differ only in track 0's sixteen steps.
+    const counts = Array.from({ length: 4 }, () => new Map<string, number>());
+    let repeats = 0;
+    for (let beat = 0; beat < 1000; beat += 1) {
+      const steps = Array.from({ length: 16 }, (_, step) => step).filter((step) => (beat >> step) & 1);
+      const palettes = pickCoverPalettes(makeTracks([{ tag: "kick", steps }, ...BEAT.slice(1)]));
+      if (new Set(palettes).size !== 4) repeats += 1;
+      palettes.forEach((palette, slot) => {
+        counts[slot].set(palette.field, (counts[slot].get(palette.field) ?? 0) + 1);
+      });
+    }
+
+    expect(repeats).toBe(0);
+    // 100 expected per colourway per slot; the bounds are four deviations.
+    for (const slot of counts) {
+      expect(slot.size).toBe(10);
+      for (const count of slot.values()) {
+        expect(count).toBeGreaterThanOrEqual(60);
+        expect(count).toBeLessThanOrEqual(140);
+      }
+    }
   });
 });
 
