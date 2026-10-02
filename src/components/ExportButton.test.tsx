@@ -42,6 +42,7 @@ import { useAppStore } from "../store/useAppStore";
 import { setActiveCanvas } from "../lib/videoEngine";
 import { captureFirstFrame } from "../lib/posterFrame";
 import { __resetShareCardForTesting } from "../lib/shareCard";
+import { COVER_PALETTES, pickCoverPalettes } from "../lib/coverArt";
 import { fakeBitmap, installRecordingCanvas, type CanvasCall } from "../test-utils/canvasRecorder";
 import type { Clip } from "../types";
 
@@ -727,7 +728,7 @@ describe("ExportButton cover", () => {
     expect(capture).toHaveBeenCalledTimes(2);
   });
 
-  it("composes the fallback from flat fields under the name", async () => {
+  it("composes the fallback from flat fields in the project's colourways under the name", async () => {
     seedClips(1);
     render(<ExportButton />);
     openPanel();
@@ -737,6 +738,12 @@ describe("ExportButton cover", () => {
     const fallback = exportOptions().coverFallback as HTMLCanvasElement;
     const calls = callsOf(fallback);
     expect(calls.some((call) => call.op === "putImageData")).toBe(false);
+    const flatFills = calls
+      .filter((call) => call.op === "fillRect" && call.args[2] === 216)
+      .map((call) => calls[calls.indexOf(call) - 1].args[0]);
+    expect(flatFills).toEqual(
+      pickCoverPalettes(useAppStore.getState().project.tracks).map((palette) => palette.field),
+    );
     expect(calls.filter((call) => call.op === "fillText").map((call) => call.args[0])).toEqual([
       "HYPERACTIVE",
       "AMATEUR",
@@ -744,6 +751,44 @@ describe("ExportButton cover", () => {
     await act(async () => {
       await exportOptions().cover;
     });
+  });
+
+  // A colour printed 70 % over a grey photo, rounded like a pixel buffer.
+  function overGrey(hex: string, grey: number): string {
+    const mixed = new Uint8ClampedArray(
+      [1, 3, 5].map((at) => 0.7 * parseInt(hex.slice(at, at + 2), 16) + 0.3 * grey),
+    );
+    return `#${Array.from(mixed, (v) => v.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  // The top-left pixel of each printed tile on a composed card.
+  function tileCorners(card: HTMLCanvasElement): string[] {
+    return callsOf(card)
+      .filter((call) => call.op === "putImageData")
+      .map((call) => {
+        const data = call.args[0] as Uint8ClampedArray;
+        return `#${[data[0], data[1], data[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+      });
+  }
+
+  it("prints the preview and the exported cover in the project's drawn colourways", async () => {
+    seedClips(1);
+    const drawn = pickCoverPalettes(useAppStore.getState().project.tracks);
+    // The draw is not the catalogue's first four, so the test tells them apart.
+    expect(drawn).not.toEqual(COVER_PALETTES.slice(0, 4));
+    render(<ExportButton />);
+    openPanel();
+    await waitFor(() => expect(previewDraws()).toBe(1));
+    const preview = screen.getByRole("img", { name: /cover preview/i }) as HTMLCanvasElement;
+    const previewCard = callsOf(preview).find((call) => call.op === "drawImage")?.args[0] as HTMLCanvasElement;
+
+    fireEvent.click(screen.getByRole("button", { name: /^render$/i }));
+    const cover = (await act(async () => exportOptions().cover)) as HTMLCanvasElement;
+
+    // Every tile's corner is the face tile's mid-grey (120) ground.
+    const fields = drawn.map((palette) => overGrey(palette.field, 120));
+    expect(tileCorners(previewCard)).toEqual(fields);
+    expect(tileCorners(cover)).toEqual(fields);
   });
 
   it("shows the cover without offering label or on/off choices", async () => {

@@ -1,6 +1,8 @@
 // ABOUTME: Production-preview smoke tests for real browser APIs that jsdom cannot cover.
 // ABOUTME: Uses mocked camera/recorder surfaces so the command needs no real device permission.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { pickCoverPalettes } from "../../src/lib/coverArt";
+import type { Track } from "../../src/types";
 
 // `realRecorder` keeps the browser's own MediaRecorder for a real export.
 async function installBrowserMocks(
@@ -158,13 +160,13 @@ async function waitForServiceWorkerControl(page: Page): Promise<void> {
 // a real 1.5 s WebM, recorded here with the browser's MediaRecorder: flat
 // grey for its first 0.3 s, then a face, trimmed to 300–1400 ms, so its
 // action frame (0.42 s) shows the face while the poster rehydrate makes at
-// 0.1 s is blank; at 180 BPM on steps 1/5/9/13.
+// 0.1 s is blank; at 180 BPM on steps 1/5/9/13. Returns the clip's byte size.
 async function seedOneClipProject(
   page: Page,
   clipCount = 1,
   { faceClip = false }: { faceClip?: boolean } = {},
-): Promise<void> {
-  await page.evaluate(async ({ clipCount, faceClip }) => {
+): Promise<number> {
+  const clipBytes = await page.evaluate(async ({ clipCount, faceClip }) => {
     const silentWavBlob = (seconds = 0.2) => {
       const sampleRate = 8_000;
       const sampleCount = Math.round(sampleRate * seconds);
@@ -294,10 +296,12 @@ async function seedOneClipProject(
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
       };
     });
+    return clipBlob.size;
   }, { clipCount, faceClip });
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByLabel("trigger pads")).toBeVisible();
+  return clipBytes;
 }
 
 async function expectSeededProjectMigrated(page: Page): Promise<void> {
@@ -503,7 +507,7 @@ test("a real offline export opens on the cover, cuts on the downbeat, and saves 
   await installBrowserMocks(page, { realRecorder: true });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await waitForApp(page);
-  await seedOneClipProject(page, 1, { faceClip: true });
+  const clipBytes = await seedOneClipProject(page, 1, { faceClip: true });
   await waitForServiceWorkerControl(page);
   // Offline to the end: the export needs nothing from the network.
   await page.context().setOffline(true);
@@ -576,14 +580,25 @@ test("a real offline export opens on the cover, cuts on the downbeat, and saves 
   const rgb = (hex: string) => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
   // The print is laid 70 % over the photo's grey.
   const overGrey = (hex: string, grey: number) => rgb(hex).map((value) => 0.7 * value + 0.3 * grey);
-  // Frame 0 is the card: paper in the margin, and tile 0 printed in slot 0's
-  // cyan field (over the 128 ground), black ink (over the 30 hair) and pink
-  // face (over the face, about 229 there). Only the action frame has a face:
-  // the poster rehydrate makes at 0.1 s is blank and would print all field.
+  // The project's draw survives the migration and the offline reload: it
+  // seeds from track 0's steps and its take's size, with seven empty tracks.
+  const [drawn] = pickCoverPalettes(
+    Array.from({ length: 8 }, (_, id) => ({
+      id,
+      steps: Array.from({ length: 16 }, (_, step) => id === 0 && step % 4 === 0),
+      clip: id === 0 ? { blob: { size: clipBytes } } : null,
+    })) as unknown as Track[],
+  );
+  // Frame 0 is the card: paper in the margin, and tile 0 printed in the drawn
+  // colourway: its field over the 128 ground, black ink over the 30 hair, and
+  // its face over the face (about 229 there). Only the action frame has a
+  // face: the poster rehydrate makes at 0.1 s is blank and would print all
+  // field.
   expect(near(exported.paper, rgb("#f8f6f3"), 12)).toBe(true);
-  expect(near(exported.tile.ground, overGrey("#22d3ee", 128), 24)).toBe(true);
+  const printed = `tile 0 ${exported.tile.ground}/${exported.tile.face}, drawn ${drawn.field}/${drawn.face} for a ${clipBytes}-byte take`;
+  expect(near(exported.tile.ground, overGrey(drawn.field, 128), 24), printed).toBe(true);
+  expect(near(exported.tile.face, overGrey(drawn.face, 229), 24), printed).toBe(true);
   expect(near(exported.tile.hair, overGrey("#09090b", 30), 24)).toBe(true);
-  expect(near(exported.tile.face, overGrey("#f9a8d4", 229), 24)).toBe(true);
   // One silent beat at 180 BPM (0.33 s) plus the audio lookahead: 0.43 s
   // nominal, measured 0.44 s (0.88 s on a machine busy with another test
   // run). A slow first seek holds the card a little longer by design; more

@@ -323,8 +323,11 @@ describe("composeShareCard", () => {
     return `#${Array.from(mixed, (v) => v.toString(16).padStart(2, "0")).join("")}`;
   }
 
-  it("lays paper first, then four tiles at their origins in their slot colours", () => {
-    const card = composeShareCard([tileOf(faceRgba())]);
+  // Four colourways out of catalogue order, as the project's draw gives them.
+  const DRAWN = [7, 2, 9, 4].map((index) => COVER_PALETTES[index]);
+
+  it("lays paper first, then four tiles at their origins in their drawn colourways", () => {
+    const card = composeShareCard([tileOf(faceRgba())], DRAWN);
     const calls = callsOf(card);
 
     expect(card.width).toBe(480);
@@ -337,12 +340,12 @@ describe("composeShareCard", () => {
     );
     // The tile's corner is its mid-grey (120) ground: field colour over it.
     expect(tiles.map((call) => cornerHex(call.args[0] as Uint8ClampedArray))).toEqual(
-      COVER_PALETTES.map((palette) => overGrey(palette.field, 120)),
+      DRAWN.map((palette) => overGrey(palette.field, 120)),
     );
   });
 
   it("repeats two clips as AB/BA and prints a missing tile as its flat field", () => {
-    const card = composeShareCard([tileOf(faceRgba()), null]);
+    const card = composeShareCard([tileOf(faceRgba()), null], DRAWN);
     const calls = callsOf(card);
 
     const printed = calls.filter((call) => call.op === "putImageData").map((call) => call.args.slice(1));
@@ -358,7 +361,7 @@ describe("composeShareCard", () => {
   });
 
   it("labels the card HYPERACTIVE over AMATEUR, cream on a centred zinc-950 block", () => {
-    const calls = callsOf(composeShareCard([null]));
+    const calls = callsOf(composeShareCard([null], DRAWN));
 
     const texts = calls.filter((call) => call.op === "fillText").map((call) => call.args[0]);
     expect(texts).toEqual(["HYPERACTIVE", "AMATEUR"]);

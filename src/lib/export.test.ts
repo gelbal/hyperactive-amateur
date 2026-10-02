@@ -64,6 +64,7 @@ import { LOG_EVENTS, logger } from "./logger";
 import { drawCurrentFrame, hasLiveFrame } from "./videoEngine";
 import { captureFirstFrame } from "./posterFrame";
 import { __resetShareCardForTesting, composeShareCard, loadCoverTiles } from "./shareCard";
+import { COVER_PALETTES } from "./coverArt";
 import { fakeBitmap, installRecordingCanvas } from "../test-utils/canvasRecorder";
 import type { Clip } from "../types";
 
@@ -665,7 +666,7 @@ describe("exportSong", () => {
         posterUrl: null,
       });
       const clips = [clip(1), clip(2)];
-      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles));
+      const cover = loadCoverTiles(clips).then((tiles) => composeShareCard(tiles, COVER_PALETTES.slice(0, 4)));
       const canvas = makeCanvasWithContext();
 
       const exporting = exportSong(canvas, makeAudioContext(), {
