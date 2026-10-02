@@ -20,12 +20,12 @@ export interface CoverPalette {
 
 // The silkscreen colourways a cover draws its four tiles from, Tailwind
 // swatches. The fields step around the colour wheel, so any four drawn
-// together stay distinct at thumbnail size; each face is a lighter colour
-// that stands apart from its own field.
+// together stay distinct at thumbnail size, and no two merge into one colour
+// under red-green colour blindness; each face contrasts with its own field.
 export const COVER_PALETTES: readonly CoverPalette[] = [
   { field: "#ef4444", face: "#7dd3fc" }, // red-500 / sky-300
   { field: "#f97316", face: "#fef08a" }, // orange-500 (brand) / yellow-200
-  { field: "#fbbf24", face: "#c4b5fd" }, // amber-400 / violet-300
+  { field: "#eab308", face: "#c4b5fd" }, // yellow-500 / violet-300
   { field: "#a3e635", face: "#fb7185" }, // lime-400 / rose-400
   { field: "#10b981", face: "#f0abfc" }, // emerald-500 / fuchsia-300
   { field: "#22d3ee", face: "#f9a8d4" }, // cyan-400 / pink-300
@@ -119,8 +119,8 @@ export function coverSlots(clipCount: number): number[] {
 }
 
 // What the user built, as text: every track's steps and the byte size of its
-// clip, which differs from take to take. Mix settings (volume, mute, tag,
-// video on/off) are left out, so they never recolour the cover.
+// clip, which almost always differs from take to take. Mix settings (volume,
+// mute, tag, video on/off) are left out, so they never recolour the cover.
 function projectKey(tracks: readonly Track[]): string {
   return tracks
     .map((track) => `${track.steps.map((on) => (on ? "x" : ".")).join("")}:${track.clip?.blob.size ?? "-"}`)
@@ -150,7 +150,8 @@ function seededRandom(seed: number): () => number {
 // Four different colourways for the four tiles, drawn from the ten by a
 // generator seeded with the project: the same beat and takes always print
 // the same cover, so the preview shows what the export prints, and a changed
-// step or a new take draws other colours.
+// step or a new take almost always draws other colours (about one edit in
+// 5,040 lands on the same ordered four).
 export function pickCoverPalettes(tracks: readonly Track[]): CoverPalette[] {
   const random = seededRandom(hashString(projectKey(tracks)));
   const pool = [...COVER_PALETTES];

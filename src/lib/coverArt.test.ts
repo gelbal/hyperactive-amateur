@@ -146,7 +146,7 @@ describe("pickCoverPalettes", () => {
   });
 
   it("draws four different colourways, each of the ten evenly often in every slot as the steps change", () => {
-    // A thousand beats that differ only in track 0's sixteen steps.
+    // A thousand beats that differ only in track 0's first ten steps.
     const counts = Array.from({ length: 4 }, () => new Map<string, number>());
     let repeats = 0;
     for (let beat = 0; beat < 1000; beat += 1) {
