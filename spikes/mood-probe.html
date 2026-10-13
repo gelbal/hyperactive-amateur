@@ -1,0 +1,1175 @@
+<!-- ABOUTME: Dev-only Mood spike probe for S1-S6 real-device measurements. -->
+<!-- ABOUTME: Operator instructions and results live in .claude/mood/spikes.md. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mood spike probe</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #09090b;
+        color: #f4f4f5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 15% 10%, rgba(244, 63, 94, 0.24), transparent 26rem),
+          radial-gradient(circle at 85% 0%, rgba(20, 184, 166, 0.2), transparent 24rem),
+          #09090b;
+      }
+
+      main {
+        width: min(1160px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 24px 0 32px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 5vw, 4.8rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: 1rem;
+        line-height: 1.2;
+      }
+
+      p {
+        color: #c4c4c7;
+        line-height: 1.5;
+      }
+
+      button,
+      select,
+      input {
+        min-height: 42px;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: #18181b;
+        color: #fafafa;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+        padding: 0 14px;
+        font-weight: 700;
+      }
+
+      button:hover {
+        background: #27272a;
+      }
+
+      button.primary {
+        border-color: #f97316;
+        background: #f97316;
+        color: #111;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: #d4d4d8;
+        font-size: 0.9rem;
+      }
+
+      input,
+      select {
+        padding: 0 10px;
+      }
+
+      input[type="file"] {
+        width: 100%;
+        padding: 9px;
+      }
+
+      input[type="checkbox"] {
+        width: 18px;
+        min-height: 18px;
+        padding: 0;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: end;
+        padding: 24px 0;
+      }
+
+      .status {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        min-width: min(520px, 100%);
+      }
+
+      .metric {
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: rgba(24, 24, 27, 0.72);
+        padding: 10px;
+      }
+
+      .metric strong {
+        display: block;
+        font-variant-numeric: tabular-nums;
+        font-size: 1.25rem;
+      }
+
+      .panel {
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: rgba(9, 9, 11, 0.76);
+        padding: 16px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .controls,
+      .runs,
+      .row,
+      .checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .controls {
+        margin-bottom: 12px;
+      }
+
+      .runs {
+        align-items: stretch;
+      }
+
+      .run {
+        display: grid;
+        gap: 10px;
+      }
+
+      .checks label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .stage {
+        display: grid;
+        gap: 10px;
+      }
+
+      canvas {
+        width: 100%;
+        max-height: 70vh;
+        border: 1px solid #52525b;
+        border-radius: 8px;
+        background: #030303;
+        object-fit: contain;
+      }
+
+      video {
+        width: 100%;
+        max-height: 180px;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: #050505;
+      }
+
+      output,
+      pre {
+        display: block;
+        width: 100%;
+        min-height: 220px;
+        max-height: 360px;
+        overflow: auto;
+        margin: 0;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        background: #050505;
+        color: #e4e4e7;
+        padding: 12px;
+        font:
+          12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        white-space: pre-wrap;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 880px) {
+        .hero,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .status {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div>
+          <h1>Mood spike probe</h1>
+          <p>
+            Disposable dev page for Mood S1-S6. It is served only by Vite dev
+            middleware and must stay out of the app bundle and service worker precache.
+          </p>
+        </div>
+        <div class="status" aria-label="live probe metrics">
+          <div class="metric"><span>FPS</span><strong id="fps">0.0</strong></div>
+          <div class="metric"><span>Dropped</span><strong id="dropped">0</strong></div>
+          <div class="metric"><span>Elapsed</span><strong id="elapsed">0s</strong></div>
+          <div class="metric"><span>Chunks</span><strong id="chunks">0</strong></div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="stage panel">
+          <div class="controls">
+            <label>
+              Local clips
+              <input id="clipFiles" type="file" accept="video/*" multiple />
+            </label>
+            <label>
+              Canvas
+              <select id="canvasSize">
+                <option value="960x960">960x960 Corners</option>
+                <option value="1280x720">1280x720 Row</option>
+                <option value="720x1280">720x1280 Stack</option>
+                <option value="854x480">854x480 Row fallback</option>
+                <option value="480x854">480x854 Stack fallback</option>
+                <option value="480x480">480x480 Corners fallback</option>
+              </select>
+            </label>
+            <label>
+              Videos
+              <input id="videoCount" type="number" min="1" max="8" value="5" />
+            </label>
+            <button id="stopAll" type="button">Stop all</button>
+          </div>
+          <canvas id="stage" width="960" height="960"></canvas>
+          <video id="preview" class="hidden" muted playsinline autoplay></video>
+        </div>
+
+        <div class="panel run">
+          <h2>Spike modes</h2>
+          <div class="runs">
+            <button id="runS1" class="primary" type="button">S1 decode + preview</button>
+            <button id="runS2Square" type="button">S2 960x960 30s</button>
+            <button id="runS2Row" type="button">S2 1280x720 30s</button>
+            <button id="runS2Stack" type="button">S2 720x1280 30s</button>
+            <button id="runS3" type="button">S3 play-and-record</button>
+            <button id="runS4Square" type="button">S4 1:1 constraints</button>
+            <button id="runS4Portrait" type="button">S4 9:16 constraints</button>
+            <button id="runS4Landscape" type="button">S4 16:9 constraints</button>
+            <button id="runS5" type="button">S5 vibe budget</button>
+            <button id="runS6" class="primary" type="button">S6 3 min combined</button>
+          </div>
+          <div class="row">
+            <button id="sessionPlayback" type="button">audioSession playback</button>
+            <button id="sessionPlayRecord" type="button">audioSession play-and-record</button>
+            <button id="toggleOsc" type="button">Toggle oscillator gain</button>
+            <button id="playS3" type="button">Play S3 recording</button>
+          </div>
+          <div class="checks" aria-label="S3 audio constraints">
+            <label>
+              <input id="s3EchoCancellation" type="checkbox" checked />
+              echoCancellation
+            </label>
+            <label>
+              <input id="s3AutoGainControl" type="checkbox" checked />
+              autoGainControl
+            </label>
+            <label>
+              <input id="s3NoiseSuppression" type="checkbox" checked />
+              noiseSuppression
+            </label>
+          </div>
+          <output id="log" aria-live="polite"></output>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const canvas = document.getElementById("stage");
+        const ctx = canvas.getContext("2d", { alpha: false });
+        const clipFiles = document.getElementById("clipFiles");
+        const canvasSize = document.getElementById("canvasSize");
+        const videoCount = document.getElementById("videoCount");
+        const preview = document.getElementById("preview");
+        const logNode = document.getElementById("log");
+        const fpsNode = document.getElementById("fps");
+        const droppedNode = document.getElementById("dropped");
+        const elapsedNode = document.getElementById("elapsed");
+        const chunksNode = document.getElementById("chunks");
+        const s3EchoCancellation = document.getElementById("s3EchoCancellation");
+        const s3AutoGainControl = document.getElementById("s3AutoGainControl");
+        const s3NoiseSuppression = document.getElementById("s3NoiseSuppression");
+
+        const S5_PHASE_MS = 10000;
+        const S6_DURATION_MS = 180000;
+        const S6_LOOP_PERIOD_SECONDS = 2;
+
+        const state = {
+          urls: [],
+          videos: [],
+          cameraStream: null,
+          audioStream: null,
+          rafId: 0,
+          runStartMs: 0,
+          lastFrameMs: 0,
+          frameCount: 0,
+          droppedFrames: 0,
+          fpsWindowStartMs: 0,
+          fpsWindowFrames: 0,
+          compositeWindowMs: 0,
+          compositeAverageMs: 0,
+          lastCompositeMs: 0,
+          recorder: null,
+          chunks: [],
+          s3BlobUrl: "",
+          audioContext: null,
+          oscillator: null,
+          oscillatorGain: null,
+          s6AudioNodes: [],
+          s6Sync: null,
+          s6DriftLog: [],
+          vibeProbe: null,
+          timerId: 0,
+          fpsLog: [],
+        };
+
+        function log(message) {
+          const stamp = new Date().toLocaleTimeString();
+          logNode.textContent += `[${stamp}] ${message}\n`;
+          logNode.scrollTop = logNode.scrollHeight;
+        }
+
+        function setCanvasSize(sizeValue) {
+          const [width, height] = sizeValue.split("x").map(Number);
+          canvas.width = width;
+          canvas.height = height;
+          log(`Canvas set to ${width}x${height}`);
+        }
+
+        function setMetrics({ fps, compositeMs, dropped, elapsed, chunks } = {}) {
+          if (fps !== undefined) {
+            fpsNode.textContent =
+              compositeMs === undefined
+                ? fps.toFixed(1)
+                : `${fps.toFixed(1)} fps · ${compositeMs.toFixed(1)} ms/frame composite`;
+          }
+          if (dropped !== undefined) droppedNode.textContent = String(dropped);
+          if (elapsed !== undefined) elapsedNode.textContent = `${Math.floor(elapsed)}s`;
+          if (chunks !== undefined) chunksNode.textContent = String(chunks);
+        }
+
+        function resetFrameStats(startMs = 0) {
+          state.runStartMs = startMs;
+          state.lastFrameMs = 0;
+          state.frameCount = 0;
+          state.droppedFrames = 0;
+          state.fpsWindowStartMs = startMs;
+          state.fpsWindowFrames = 0;
+          state.compositeWindowMs = 0;
+          state.compositeAverageMs = 0;
+          state.lastCompositeMs = 0;
+          state.fpsLog = [];
+        }
+
+        function stopStreams() {
+          for (const stream of [state.cameraStream, state.audioStream]) {
+            if (!stream) continue;
+            for (const track of stream.getTracks()) track.stop();
+          }
+          state.cameraStream = null;
+          state.audioStream = null;
+          preview.srcObject = null;
+        }
+
+        function stopVideos() {
+          for (const video of state.videos) {
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
+          }
+          for (const url of state.urls) URL.revokeObjectURL(url);
+          state.videos = [];
+          state.urls = [];
+        }
+
+        function stopRecorder() {
+          if (state.recorder && state.recorder.state !== "inactive") {
+            state.recorder.stop();
+          }
+          state.recorder = null;
+        }
+
+        function stopAnimation() {
+          if (state.rafId) cancelAnimationFrame(state.rafId);
+          if (state.timerId) clearTimeout(state.timerId);
+          state.rafId = 0;
+          state.timerId = 0;
+        }
+
+        function stopAudio() {
+          if (state.oscillator) {
+            try {
+              state.oscillator.stop();
+            } catch {
+              // Already stopped.
+            }
+          }
+          state.oscillator = null;
+          for (const node of state.s6AudioNodes) {
+            try {
+              node.stop();
+            } catch {
+              // Already stopped.
+            }
+          }
+          state.s6AudioNodes = [];
+          state.s6Sync = null;
+          state.s6DriftLog = [];
+          if (state.audioContext) {
+            void state.audioContext.close();
+          }
+          state.audioContext = null;
+          state.oscillatorGain = null;
+        }
+
+        function stopAll() {
+          stopAnimation();
+          stopRecorder();
+          stopStreams();
+          stopVideos();
+          stopAudio();
+          state.vibeProbe = null;
+          resetFrameStats();
+          setMetrics({ fps: 0, dropped: 0, elapsed: 0, chunks: 0 });
+          log("Stopped active probe work.");
+        }
+
+        function runSafe(fn) {
+          return async () => {
+            try {
+              await fn();
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              log(`Stopped with error: ${message}`);
+            }
+          };
+        }
+
+        async function getCameraPreview(audio = false, { required = true } = {}) {
+          if (!navigator.mediaDevices?.getUserMedia) {
+            if (required) throw new Error("getUserMedia is not available in this browser.");
+            log("Camera preview unavailable; continuing without preview.");
+            return null;
+          }
+          if (state.cameraStream) return state.cameraStream;
+          try {
+            state.cameraStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio,
+            });
+          } catch (err) {
+            if (required) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            log(`Camera preview not granted; continuing without preview (${message}).`);
+            return null;
+          }
+          preview.srcObject = state.cameraStream;
+          preview.classList.remove("hidden");
+          await preview.play();
+          return state.cameraStream;
+        }
+
+        async function buildVideos(emptyMessage) {
+          stopVideos();
+          const files = Array.from(clipFiles.files || []);
+          const count = Math.max(1, Math.min(8, Number(videoCount.value) || 1));
+          if (files.length === 0) {
+            log(emptyMessage || "No local clips selected; compositing camera preview only.");
+            return;
+          }
+          for (let index = 0; index < count; index += 1) {
+            const file = files[index % files.length];
+            const url = URL.createObjectURL(file);
+            const video = document.createElement("video");
+            video.muted = true;
+            video.loop = true;
+            video.playsInline = true;
+            video.src = url;
+            state.urls.push(url);
+            state.videos.push(video);
+            await video.play();
+          }
+          log(`Spawned ${state.videos.length} muted looping video elements.`);
+        }
+
+        function drawCover(source, x, y, width, height) {
+          const sourceWidth = source.videoWidth || source.width || 1;
+          const sourceHeight = source.videoHeight || source.height || 1;
+          const scale = Math.max(width / sourceWidth, height / sourceHeight);
+          const cropWidth = width / scale;
+          const cropHeight = height / scale;
+          const cropX = Math.max(0, (sourceWidth - cropWidth) / 2);
+          const cropY = Math.max(0, (sourceHeight - cropHeight) / 2);
+          ctx.drawImage(
+            source,
+            cropX,
+            cropY,
+            cropWidth,
+            cropHeight,
+            x,
+            y,
+            width,
+            height,
+          );
+        }
+
+        function drawS6SyncMarker() {
+          const sync = state.s6Sync;
+          if (!sync) return;
+          const audioElapsed = sync.audioContext.currentTime - sync.loopStart;
+          if (audioElapsed < -0.1) return;
+
+          const boundary = Math.max(0, Math.round(audioElapsed / sync.loopPeriod));
+          const distance = Math.abs(audioElapsed - boundary * sync.loopPeriod);
+          if (distance > 0.09) return;
+
+          const strength = 1 - distance / 0.09;
+          const markerSize = Math.max(28, Math.min(canvas.width, canvas.height) * 0.09);
+          ctx.save();
+          ctx.globalAlpha = 0.45 + strength * 0.55;
+          ctx.fillStyle = "#fafafa";
+          ctx.fillRect(0, 0, canvas.width, Math.max(10, canvas.height * 0.025));
+          ctx.strokeStyle = "#f97316";
+          ctx.lineWidth = Math.max(6, markerSize * 0.16);
+          ctx.beginPath();
+          ctx.arc(canvas.width - markerSize * 1.3, markerSize * 1.3, markerSize, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function maybeLogS6Drift(nowMs) {
+          const sync = state.s6Sync;
+          if (!sync) return;
+          const audioProgress = sync.audioContext.currentTime - sync.loopStart;
+          if (audioProgress < 0) return;
+          if (nowMs - sync.lastDriftLogMs < 10000) return;
+
+          const videoProgress = (nowMs - sync.wallStartMs) / 1000;
+          const driftMs = (audioProgress - videoProgress) * 1000;
+          const signedDrift = `${driftMs >= 0 ? "+" : ""}${driftMs.toFixed(1)}ms`;
+          const line =
+            `${audioProgress.toFixed(1)}s audio vs ${videoProgress.toFixed(1)}s video: ` +
+            `${signedDrift} drift`;
+          state.s6DriftLog.push(line);
+          log(`S6 drift ${line}`);
+          sync.lastDriftLogMs = nowMs;
+        }
+
+        function createVibeProbe() {
+          const small = document.createElement("canvas");
+          small.width = Math.max(1, Math.round(canvas.width / 12));
+          small.height = Math.max(1, Math.round(canvas.height / 12));
+          const smallCtx = small.getContext("2d", { willReadFrequently: true });
+          const sample = document.createElement("canvas");
+          sample.width = 48;
+          sample.height = 48;
+          const sampleCtx = sample.getContext("2d", { willReadFrequently: true });
+          return {
+            phase: "baseline",
+            phaseStartMs: performance.now(),
+            frames: 0,
+            compositeMs: 0,
+            passMs: 0,
+            totalMs: 0,
+            results: [],
+            small,
+            smallCtx,
+            sampleCtx,
+          };
+        }
+
+        function resetVibePhase(probe, phase, nowMs) {
+          probe.phase = phase;
+          probe.phaseStartMs = nowMs;
+          probe.frames = 0;
+          probe.compositeMs = 0;
+          probe.passMs = 0;
+          probe.totalMs = 0;
+        }
+
+        function applyPixelatePass(probe) {
+          probe.smallCtx.imageSmoothingEnabled = true;
+          probe.smallCtx.drawImage(canvas, 0, 0, probe.small.width, probe.small.height);
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(probe.small, 0, 0, canvas.width, canvas.height);
+          ctx.imageSmoothingEnabled = true;
+        }
+
+        function applyLatticePass(probe) {
+          probe.sampleCtx.drawImage(canvas, 0, 0, 48, 48);
+          const data = probe.sampleCtx.getImageData(0, 0, 48, 48).data;
+          ctx.fillStyle = "#050505";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          for (let y = 0; y < 48; y += 3) {
+            for (let x = 0; x < 48; x += 3) {
+              const index = (y * 48 + x) * 4;
+              const luma =
+                data[index] * 0.2126 + data[index + 1] * 0.7152 + data[index + 2] * 0.0722;
+              ctx.fillStyle = `rgba(${luma}, ${255 - luma * 0.4}, ${80 + luma * 0.5}, 0.85)`;
+              ctx.beginPath();
+              ctx.arc(
+                ((x + 0.5) / 48) * canvas.width,
+                ((y + 0.5) / 48) * canvas.height,
+                Math.max(1, luma / 28),
+                0,
+                Math.PI * 2,
+              );
+              ctx.fill();
+            }
+          }
+        }
+
+        function applyVibePass(probe) {
+          if (probe.phase === "baseline") return 0;
+          const start = performance.now();
+          if (probe.phase === "pixelate") applyPixelatePass(probe);
+          else if (probe.phase === "lattice") applyLatticePass(probe);
+          return performance.now() - start;
+        }
+
+        function summarizeVibeProbe(probe) {
+          const baseline = probe.results.find((result) => result.phase === "baseline");
+          const pixelate = probe.results.find((result) => result.phase === "pixelate");
+          const lattice = probe.results.find((result) => result.phase === "lattice");
+          const signed = (value) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+          log(`S5 baseline composite: ${baseline.totalMs.toFixed(2)} ms/frame.`);
+          log(
+            `S5 pixelate stacked: ${pixelate.totalMs.toFixed(2)} ms/frame ` +
+              `(${signed(pixelate.totalMs - baseline.totalMs)} delta, ` +
+              `${pixelate.passMs.toFixed(2)} ms pass).`,
+          );
+          log(
+            `S5 48x48 lattice stacked: ${lattice.totalMs.toFixed(2)} ms/frame ` +
+              `(${signed(lattice.totalMs - baseline.totalMs)} delta, ` +
+              `${lattice.passMs.toFixed(2)} ms pass).`,
+          );
+          log("S5 complete; compositing loop remains active for visual inspection.");
+        }
+
+        function recordVibeProbeFrame(nowMs, compositeMs, passMs) {
+          const probe = state.vibeProbe;
+          if (!probe) return;
+
+          probe.frames += 1;
+          probe.compositeMs += compositeMs;
+          probe.passMs += passMs;
+          probe.totalMs += compositeMs + passMs;
+          if (nowMs - probe.phaseStartMs < S5_PHASE_MS) return;
+
+          probe.results.push({
+            phase: probe.phase,
+            frames: probe.frames,
+            compositeMs: probe.compositeMs / probe.frames,
+            passMs: probe.passMs / probe.frames,
+            totalMs: probe.totalMs / probe.frames,
+          });
+
+          if (probe.phase === "baseline") {
+            resetVibePhase(probe, "pixelate", nowMs);
+            log("S5 measuring pixelate stacked on live compositing for ~10s.");
+            return;
+          }
+          if (probe.phase === "pixelate") {
+            resetVibePhase(probe, "lattice", nowMs);
+            log("S5 measuring 48x48 readback lattice stacked on live compositing for ~10s.");
+            return;
+          }
+
+          summarizeVibeProbe(probe);
+          state.vibeProbe = null;
+        }
+
+        function drawMetricsOverlay(delta) {
+          const fpsNow = delta > 0 ? 1000 / delta : 0;
+          const compositeMs = state.compositeAverageMs || state.lastCompositeMs;
+          ctx.fillStyle = "rgba(0, 0, 0, 0.62)";
+          ctx.fillRect(12, 12, 430, 100);
+          ctx.fillStyle = "#fafafa";
+          ctx.font = "28px ui-monospace, monospace";
+          ctx.fillText(`${fpsNow.toFixed(1)} fps`, 24, 44);
+          ctx.font = "16px ui-monospace, monospace";
+          ctx.fillText(`${compositeMs.toFixed(1)} ms/frame composite`, 24, 72);
+          ctx.fillText(`dropped ${state.droppedFrames}`, 24, 98);
+        }
+
+        function drawGridFrame(nowMs, collectFpsLog = false) {
+          const elapsed = (nowMs - state.runStartMs) / 1000;
+          const delta = state.lastFrameMs ? nowMs - state.lastFrameMs : 16.7;
+          state.lastFrameMs = nowMs;
+          state.frameCount += 1;
+          state.fpsWindowFrames += 1;
+          if (delta > 50) state.droppedFrames += Math.max(1, Math.round(delta / 33.3) - 1);
+
+          const frameStart = performance.now();
+          ctx.fillStyle = "#050505";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          const sources = [...state.videos];
+          if (preview.srcObject) sources.push(preview);
+          const total = Math.max(1, sources.length);
+          const cols = Math.ceil(Math.sqrt(total));
+          const rows = Math.ceil(total / cols);
+          const cellWidth = canvas.width / cols;
+          const cellHeight = canvas.height / rows;
+          sources.forEach((source, index) => {
+            const x = (index % cols) * cellWidth;
+            const y = Math.floor(index / cols) * cellHeight;
+            if (source.readyState >= 2) {
+              drawCover(source, x, y, cellWidth, cellHeight);
+            } else {
+              ctx.fillStyle = `hsl(${(index * 71) % 360} 80% 34%)`;
+              ctx.fillRect(x, y, cellWidth, cellHeight);
+            }
+          });
+
+          const passMs = state.vibeProbe ? applyVibePass(state.vibeProbe) : 0;
+          drawS6SyncMarker();
+          drawMetricsOverlay(delta);
+          const compositeMs = Math.max(0, performance.now() - frameStart - passMs);
+          state.lastCompositeMs = compositeMs;
+          state.compositeWindowMs += compositeMs;
+
+          recordVibeProbeFrame(nowMs, compositeMs, passMs);
+          maybeLogS6Drift(nowMs);
+
+          if (nowMs - state.fpsWindowStartMs >= 1000) {
+            const seconds = (nowMs - state.fpsWindowStartMs) / 1000;
+            const fps = state.fpsWindowFrames / seconds;
+            const compositeAverageMs = state.compositeWindowMs / state.fpsWindowFrames;
+            state.compositeAverageMs = compositeAverageMs;
+            setMetrics({ fps, compositeMs: compositeAverageMs, dropped: state.droppedFrames, elapsed });
+            if (collectFpsLog) {
+              state.fpsLog.push(
+                `${elapsed.toFixed(0)}s ${fps.toFixed(1)}fps · ` +
+                  `${compositeAverageMs.toFixed(1)}ms/frame composite`,
+              );
+            }
+            state.fpsWindowStartMs = nowMs;
+            state.fpsWindowFrames = 0;
+            state.compositeWindowMs = 0;
+          }
+
+          state.rafId = requestAnimationFrame((nextMs) =>
+            drawGridFrame(nextMs, collectFpsLog),
+          );
+        }
+
+        async function startGridComposite({
+          size = canvasSize.value,
+          collectFpsLog = false,
+          requireCamera = true,
+          emptyClipMessage,
+          beforeStart,
+          modeLog,
+        } = {}) {
+          setCanvasSize(size);
+          await getCameraPreview(false, { required: requireCamera });
+          await buildVideos(emptyClipMessage);
+          if (beforeStart) await beforeStart();
+
+          const startMs = performance.now();
+          resetFrameStats(startMs);
+          if (state.vibeProbe) state.vibeProbe.phaseStartMs = startMs;
+          if (state.s6Sync) {
+            const audioLeadMs = Math.max(
+              0,
+              (state.s6Sync.loopStart - state.s6Sync.audioContext.currentTime) * 1000,
+            );
+            state.s6Sync.wallStartMs = startMs + audioLeadMs;
+            state.s6Sync.lastDriftLogMs = state.s6Sync.wallStartMs;
+          }
+          drawGridFrame(startMs, collectFpsLog);
+          if (modeLog) log(modeLog);
+        }
+
+        async function startS1({ collectFpsLog = false } = {}) {
+          stopAll();
+          await startGridComposite({
+            collectFpsLog,
+            requireCamera: true,
+            emptyClipMessage: "No local clips selected; S1/S6 will composite camera preview only.",
+            modeLog: "S1 running: video decodes + camera preview + rAF compositing.",
+          });
+        }
+
+        function pickRecorderOptions(stream) {
+          if (!window.MediaRecorder) throw new Error("MediaRecorder is unavailable.");
+          const candidates = [
+            "video/webm;codecs=vp9,opus",
+            "video/webm;codecs=vp8,opus",
+            "video/webm",
+            "video/mp4",
+          ];
+          for (const mimeType of candidates) {
+            if (MediaRecorder.isTypeSupported?.(mimeType)) return { mimeType };
+          }
+          return {};
+        }
+
+        async function runCanvasRecorder(durationMs, label, { audioStream = null } = {}) {
+          if (!canvas.captureStream) throw new Error("canvas.captureStream is unavailable.");
+          if (!state.rafId) throw new Error(`${label} needs an active compositing loop.`);
+          const stream = canvas.captureStream(30);
+          if (audioStream) {
+            for (const track of audioStream.getAudioTracks()) stream.addTrack(track);
+          }
+          state.chunks = [];
+          const recorder = new MediaRecorder(stream, pickRecorderOptions(stream));
+          state.recorder = recorder;
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) state.chunks.push(event.data);
+            setMetrics({ chunks: state.chunks.length });
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(state.chunks, { type: recorder.mimeType || "video/webm" });
+            const sizeMb = blob.size / (1024 * 1024);
+            log(`${label} stopped: ${state.chunks.length} chunks, ${sizeMb.toFixed(2)} MB.`);
+            state.recorder = null;
+          };
+          recorder.start(1000);
+          log(
+            `${label} recording ${canvas.width}x${canvas.height} for ` +
+              `${Math.round(durationMs / 1000)}s.`,
+          );
+          window.setTimeout(() => {
+            if (recorder.state !== "inactive") recorder.stop();
+          }, durationMs);
+        }
+
+        async function runS2(size) {
+          stopAll();
+          await startGridComposite({
+            size,
+            requireCamera: false,
+            emptyClipMessage:
+              "No local clips loaded; S2 encode cost is unrepresentative without real video content.",
+            modeLog: "S2 compositing loaded clips plus camera preview if granted.",
+          });
+          await runCanvasRecorder(30000, `S2 ${size}`);
+        }
+
+        async function getAudioContext() {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) throw new Error("Web Audio is unavailable.");
+          if (!state.audioContext) state.audioContext = new AudioCtx();
+          if (state.audioContext.state === "suspended") await state.audioContext.resume();
+          return state.audioContext;
+        }
+
+        function buildS3AudioConstraints() {
+          return {
+            sampleRate: { ideal: 48000 },
+            channelCount: { ideal: 1 },
+            echoCancellation: s3EchoCancellation.checked,
+            autoGainControl: s3AutoGainControl.checked,
+            noiseSuppression: s3NoiseSuppression.checked,
+          };
+        }
+
+        async function runS3() {
+          stopAll();
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("getUserMedia is not available in this browser.");
+          }
+
+          state.audioContext = await getAudioContext();
+          state.oscillator = state.audioContext.createOscillator();
+          state.oscillatorGain = state.audioContext.createGain();
+          state.oscillator.type = "square";
+          state.oscillator.frequency.value = 220;
+          state.oscillatorGain.gain.value = 0;
+          state.oscillator.connect(state.oscillatorGain);
+          state.oscillatorGain.connect(state.audioContext.destination);
+          state.oscillator.start();
+
+          await setAudioSession("play-and-record");
+          const audioConstraints = buildS3AudioConstraints();
+          state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+          state.chunks = [];
+          const recorder = new MediaRecorder(state.audioStream);
+          state.recorder = recorder;
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) state.chunks.push(event.data);
+            setMetrics({ chunks: state.chunks.length });
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(state.chunks, { type: recorder.mimeType || "audio/webm" });
+            if (state.s3BlobUrl) URL.revokeObjectURL(state.s3BlobUrl);
+            state.s3BlobUrl = URL.createObjectURL(blob);
+            log(`S3 recording ready for ear check: ${(blob.size / 1024).toFixed(1)} KB.`);
+            state.recorder = null;
+          };
+          recorder.start(1000);
+          log(`S3 audio constraints:\n${JSON.stringify(audioConstraints, null, 2)}`);
+          log("S3 recording mic for 8s while oscillator runs through gain 0.");
+          window.setTimeout(() => {
+            if (recorder.state !== "inactive") recorder.stop();
+          }, 8000);
+        }
+
+        async function setAudioSession(type) {
+          const session = navigator.audioSession;
+          if (!session || !("type" in session)) {
+            log(`audioSession.type unsupported; could not set ${type}.`);
+            return;
+          }
+          try {
+            session.type = type;
+            log(`audioSession.type set to ${session.type}.`);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log(`audioSession.type ${type} rejected: ${message}.`);
+          }
+        }
+
+        function toggleOscillatorGain() {
+          if (!state.oscillatorGain) {
+            log("Run S3 first to create the oscillator gain.");
+            return;
+          }
+          const next = state.oscillatorGain.gain.value > 0 ? 0 : 0.12;
+          state.oscillatorGain.gain.setTargetAtTime(next, state.audioContext.currentTime, 0.01);
+          log(`Oscillator gain target set to ${next}.`);
+        }
+
+        function playS3Recording() {
+          if (!state.s3BlobUrl) {
+            log("No S3 recording yet.");
+            return;
+          }
+          const audio = new Audio(state.s3BlobUrl);
+          void audio.play();
+          log("Playing S3 recording for ear check.");
+        }
+
+        async function runS4(label, constraints) {
+          stopAll();
+          if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error("getUserMedia is not available in this browser.");
+          }
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: constraints,
+            audio: false,
+          });
+          const [track] = stream.getVideoTracks();
+          log(`S4 ${label} requested:\n${JSON.stringify(constraints, null, 2)}`);
+          log(`S4 ${label} negotiated:\n${JSON.stringify(track.getSettings(), null, 2)}`);
+          for (const liveTrack of stream.getTracks()) liveTrack.stop();
+        }
+
+        async function runS5() {
+          stopAll();
+          await startGridComposite({
+            requireCamera: false,
+            emptyClipMessage:
+              "No local clips loaded; S5 vibe budget is unrepresentative without stacked video draws.",
+            beforeStart: () => {
+              state.vibeProbe = createVibeProbe();
+            },
+            modeLog:
+              "S5 measuring baseline live compositing for ~10s, then stacked vibe passes.",
+          });
+        }
+
+        function schedulePulse(gain, startAt, duration, level) {
+          gain.gain.setValueAtTime(0, startAt);
+          gain.gain.linearRampToValueAtTime(level, startAt + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+          gain.gain.setValueAtTime(0, startAt + duration + 0.02);
+        }
+
+        async function startS6SyncAudio(durationMs) {
+          const audioContext = await getAudioContext();
+          const destination = audioContext.createMediaStreamDestination();
+          const master = audioContext.createGain();
+          master.gain.value = 0.8;
+          master.connect(audioContext.destination);
+          master.connect(destination);
+
+          const loopStart = audioContext.currentTime + 0.16;
+          const endAt = loopStart + durationMs / 1000 + S6_LOOP_PERIOD_SECONDS;
+          const voices = [
+            { frequency: 196, offset: 0, type: "square", level: 0.05 },
+            { frequency: 247, offset: 0.4, type: "sawtooth", level: 0.045 },
+            { frequency: 294, offset: 0.8, type: "triangle", level: 0.045 },
+            { frequency: 370, offset: 1.2, type: "square", level: 0.04 },
+            { frequency: 440, offset: 1.6, type: "sine", level: 0.04 },
+          ];
+
+          for (const voice of voices) {
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.type = voice.type;
+            oscillator.frequency.value = voice.frequency;
+            gain.gain.value = 0;
+            oscillator.connect(gain);
+            gain.connect(master);
+            for (
+              let eventAt = loopStart + voice.offset;
+              eventAt < endAt;
+              eventAt += S6_LOOP_PERIOD_SECONDS
+            ) {
+              schedulePulse(gain, eventAt, 0.14, voice.level);
+            }
+            oscillator.start(loopStart);
+            oscillator.stop(endAt);
+            state.s6AudioNodes.push(oscillator);
+          }
+
+          const click = audioContext.createOscillator();
+          const clickGain = audioContext.createGain();
+          click.type = "square";
+          click.frequency.value = 1400;
+          clickGain.gain.value = 0;
+          click.connect(clickGain);
+          clickGain.connect(master);
+          for (let eventAt = loopStart; eventAt < endAt; eventAt += S6_LOOP_PERIOD_SECONDS) {
+            schedulePulse(clickGain, eventAt, 0.035, 0.11);
+          }
+          click.start(loopStart);
+          click.stop(endAt);
+          state.s6AudioNodes.push(click);
+
+          state.s6Sync = {
+            audioContext,
+            destination,
+            loopStart,
+            loopPeriod: S6_LOOP_PERIOD_SECONDS,
+            wallStartMs: performance.now() + (loopStart - audioContext.currentTime) * 1000,
+            lastDriftLogMs: 0,
+          };
+          state.s6DriftLog = [];
+          log("S6 sync audio: 5 phase-locked loop voices plus boundary clicks.");
+          return state.s6Sync;
+        }
+
+        async function runS6() {
+          stopAll();
+          await startGridComposite({
+            collectFpsLog: true,
+            requireCamera: true,
+            emptyClipMessage: "No local clips selected; S6 will composite camera preview only.",
+            beforeStart: () => startS6SyncAudio(S6_DURATION_MS),
+            modeLog:
+              "S6 running: S1 compositing + canvas capture + recorded sync audio for 3 min.",
+          });
+          await runCanvasRecorder(S6_DURATION_MS, "S6 combined thermal run", {
+            audioStream: state.s6Sync?.destination.stream,
+          });
+          state.timerId = window.setTimeout(() => {
+            const fpsLines = state.fpsLog.length ? state.fpsLog.join("\n") : "No FPS samples.";
+            const driftLines = state.s6DriftLog.length
+              ? state.s6DriftLog.join("\n")
+              : "No drift samples.";
+            log(`S6 FPS log:\n${fpsLines}\nS6 drift log:\n${driftLines}`);
+          }, S6_DURATION_MS + 1000);
+        }
+
+        document.getElementById("runS1").addEventListener("click", runSafe(() => startS1()));
+        document
+          .getElementById("runS2Square")
+          .addEventListener("click", runSafe(() => runS2("960x960")));
+        document
+          .getElementById("runS2Row")
+          .addEventListener("click", runSafe(() => runS2("1280x720")));
+        document
+          .getElementById("runS2Stack")
+          .addEventListener("click", runSafe(() => runS2("720x1280")));
+        document.getElementById("runS3").addEventListener("click", runSafe(runS3));
+        document.getElementById("runS4Square").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("1:1", {
+              width: { ideal: 960 },
+              height: { ideal: 960 },
+              aspectRatio: { ideal: 1 },
+            }),
+          ),
+        );
+        document.getElementById("runS4Portrait").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("9:16", {
+              width: { ideal: 720 },
+              height: { ideal: 1280 },
+              aspectRatio: { ideal: 9 / 16 },
+            }),
+          ),
+        );
+        document.getElementById("runS4Landscape").addEventListener(
+          "click",
+          runSafe(() =>
+            runS4("16:9", {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              aspectRatio: { ideal: 16 / 9 },
+            }),
+          ),
+        );
+        document.getElementById("runS5").addEventListener("click", runSafe(runS5));
+        document.getElementById("runS6").addEventListener("click", runSafe(runS6));
+        document.getElementById("stopAll").addEventListener("click", stopAll);
+        document
+          .getElementById("sessionPlayback")
+          .addEventListener("click", () => void setAudioSession("playback"));
+        document
+          .getElementById("sessionPlayRecord")
+          .addEventListener("click", () => void setAudioSession("play-and-record"));
+        document.getElementById("toggleOsc").addEventListener("click", toggleOscillatorGain);
+        document.getElementById("playS3").addEventListener("click", playS3Recording);
+        canvasSize.addEventListener("change", () => setCanvasSize(canvasSize.value));
+
+        setCanvasSize(canvasSize.value);
+        log("Ready. Load local clips, then run S1-S6.");
+      })();
+    </script>
+  </body>
+</html>
