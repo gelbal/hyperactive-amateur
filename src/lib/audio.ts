@@ -146,8 +146,12 @@ function syncPlayers(tracks: Track[]): void {
   for (const track of tracks) {
     const previousClip = lastClips.get(track.id) ?? null;
     const existing = players.get(track.id);
-    if (track.clip === previousClip) {
+    // Keyed on the decoded audio, not the Clip object: the poster frame
+    // landing rebuilds the Clip around the same buffer, and disposing the
+    // player then would cut a hit that is sounding or already scheduled.
+    if ((track.clip?.audioBuffer ?? null) === (previousClip?.audioBuffer ?? null)) {
       if (existing) applyPlayerVolume(existing, track.volume);
+      lastClips.set(track.id, track.clip);
       continue;
     }
 

@@ -467,4 +467,33 @@ describe("audio: per-step trigger logic", () => {
     actions.setTrackVolume(0, 0);
     expect(playerInstances[0].volume.value).toBe(-Infinity);
   });
+
+  it("keeps a clip's player when only its metadata changes, and rebuilds it for a new take", () => {
+    initTransport();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, makeClip());
+    expect(playerInstances).toHaveLength(1);
+
+    // The poster frame lands after the take: the Clip object is rebuilt
+    // around the same decoded audio, and a sounding hit must not be cut.
+    actions.setTrackPoster(0, new Blob([new Uint8Array([9])], { type: "image/jpeg" }));
+    expect(playerInstances).toHaveLength(1);
+    expect(playerInstances[0].dispose).not.toHaveBeenCalled();
+
+    actions.setTrackClip(0, makeClip());
+    expect(playerInstances).toHaveLength(2);
+    expect(playerInstances[0].dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds a player when a repair-state clip's audio is restored", () => {
+    initTransport();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, { ...makeClip(), audioBuffer: null, audioStatus: "unavailable" });
+    expect(playerInstances).toHaveLength(0);
+
+    const brokenClip = useAppStore.getState().project.tracks[0].clip ?? undefined;
+    actions.restoreTrackAudio(0, { duration: 1, sampleRate: 48000 } as AudioBuffer, null, brokenClip);
+
+    expect(playerInstances).toHaveLength(1);
+  });
 });
