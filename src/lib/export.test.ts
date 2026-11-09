@@ -290,6 +290,29 @@ describe("exportSong", () => {
     expect(sentinels[0]?.release).toHaveBeenCalledTimes(1);
   });
 
+  it("lifts the export freeze before waiting on a wake-lock release that never settles", async () => {
+    const sentinel = new EventTarget() as WakeLockSentinelStub;
+    sentinel.released = false;
+    sentinel.release = vi.fn(() => new Promise<void>(() => undefined));
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: { request: vi.fn(async () => sentinel) },
+    });
+
+    void exportSong(makeCanvas(), makeAudioContext(), {
+      bars: 1,
+      bpm: 24000,
+      mimeType: "video/webm",
+    });
+
+    await vi.waitFor(() => expect(sentinel.release).toHaveBeenCalled());
+    // A hung browser promise must not keep every edit, Play and Record frozen.
+    const { playback } = useAppStore.getState();
+    expect(playback.isExporting).toBe(false);
+    expect(playback.isPlaying).toBe(false);
+    expect(getActiveExportSession()).toBeNull();
+  });
+
   it("releases the screen wake lock when an active export is aborted", async () => {
     vi.useFakeTimers();
     const { sentinels } = installWakeLockStub();
