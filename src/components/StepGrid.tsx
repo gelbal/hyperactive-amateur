@@ -75,7 +75,13 @@ function BlockHeader({ blockIndex, hovered, canRemove, onHover }: BlockHeaderPro
         aria-label={`Remove steps ${blockStart + 1}-${blockStart + STEP_COUNT_INCREMENT}`}
         title={`Remove steps ${blockStart + 1}-${blockStart + STEP_COUNT_INCREMENT}`}
         disabled={!canRemove}
-        onClick={() => useAppStore.getState().actions.removeStepColumn(blockStart)}
+        onClick={(event) => {
+          // Headers are keyed by index, so after a removal this button stands
+          // for the next block under a still-hovering pointer: the second
+          // click of a double-click would remove that one too, with no undo.
+          if (event.detail > 1) return;
+          useAppStore.getState().actions.removeStepColumn(blockStart);
+        }}
         className={
           "w-5 h-5 pointer-coarse:w-8 pointer-coarse:h-8 rounded-full flex items-center justify-center transition-all " +
           "bg-zinc-800 border border-zinc-700 text-zinc-400 " +

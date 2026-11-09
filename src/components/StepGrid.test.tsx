@@ -126,6 +126,19 @@ describe("StepGrid", () => {
     expect(removeButtons[1].className).toContain("opacity-0");
   });
 
+  it("a double-click on a block's minus removes that one block, not the next as well", () => {
+    render(<StepGrid />);
+    const minus = screen.getByLabelText("Remove steps 1-4");
+    fireEvent.mouseEnter(minus.parentElement as HTMLElement);
+
+    // Headers are keyed by index: after the first click this same button
+    // stands for the next block, still hovered under the pointer.
+    fireEvent.click(minus, { detail: 1 });
+    fireEvent.click(minus, { detail: 2 });
+
+    expect(useAppStore.getState().project.stepCount).toBe(12);
+  });
+
   it("scroll container has min-w-0 so it actually scrolls instead of overflowing the parent", () => {
     const { container } = render(<StepGrid />);
     // The scroll pane is the flex-1 child that wraps all the cells. min-w-0
