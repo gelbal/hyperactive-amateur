@@ -53,14 +53,20 @@ export async function attemptAudioRepair(): Promise<void> {
 }
 
 // Wire the retry to the moment sound becomes available: every transition of
-// playback.audioState into "running" kicks one repair pass. Returns the
-// unsubscribe for App-level cleanup.
+// playback.audioState into "running" kicks one repair pass. A pass skipped
+// because an export held that first unlock runs when the export lets go;
+// audio stays "running" after it, so no later transition would retry.
+// Returns the unsubscribe for App-level cleanup.
 export function initAudioRepair(): () => void {
   return useAppStore.subscribe((state, prev) => {
-    if (
+    const becameRunning =
       state.playback.audioState === "running" &&
-      prev.playback.audioState !== "running"
-    ) {
+      prev.playback.audioState !== "running";
+    const exportReleased =
+      prev.playback.isExporting &&
+      !state.playback.isExporting &&
+      state.playback.audioState === "running";
+    if (becameRunning || exportReleased) {
       void attemptAudioRepair();
     }
   });
