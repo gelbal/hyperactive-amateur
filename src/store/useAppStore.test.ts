@@ -728,6 +728,35 @@ describe("useAppStore", () => {
     expect(get().session.projectRevision).toBeGreaterThan(revision);
   });
 
+  it("system tag writes do not invalidate a pending AI pattern apply (auto-tag racing Suggest)", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    // Auto-tag results from freshly recorded clips land while Suggest is in
+    // flight; they write with source "system" plus a reasoning string.
+    // Neither is a user edit of the beat, so the captured revision must
+    // still be current when the pattern arrives.
+    get().actions.setTrackTag(0, "kick", "system");
+    get().actions.setTrackTagReasoning(0, "low percussive thump");
+    get().actions.setTrackTagReasoning(0, null);
+    expect(get().session.projectRevision).toBe(revision);
+
+    const applied = get().actions.applyPatternIfCurrent(grid, revision, 16);
+
+    expect(applied).toBe(true);
+    expect(get().project.tracks[0].steps.every(Boolean)).toBe(true);
+  });
+
+  it("user tag picks still invalidate a pending AI pattern apply", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    get().actions.setTrackTag(0, "kick", "user");
+
+    expect(get().session.projectRevision).toBeGreaterThan(revision);
+    expect(get().actions.applyPatternIfCurrent(grid, revision, 16)).toBe(false);
+  });
+
   describe("restoreTrackAudio", () => {
     const healedBuffer = { duration: 0.7, sampleRate: 48000 } as AudioBuffer;
 

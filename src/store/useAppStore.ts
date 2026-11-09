@@ -532,9 +532,19 @@ export const useAppStore = create<AppStore>((set) => ({
         if (wouldClearReasoning) {
           project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
         }
-        return { project, session: bumpProjectRevision(session) };
+        // Only user picks invalidate pending AI pattern applies. System
+        // (auto-tag) writes race the Suggest round-trip on a fresh project —
+        // bumping here made the first Suggest after recording reject its own
+        // response ("Beat changed while Gemini was thinking").
+        return {
+          project,
+          session: source === "user" ? bumpProjectRevision(session) : session,
+        };
       }),
 
+    // Reasoning strings are only ever written by the auto-tag pipeline
+    // (applyClassifiedTag), so they never bump projectRevision: a system
+    // write landing mid-flight must not invalidate a pending pattern apply.
     setTrackTagReasoning: (trackId, reasoning) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -543,7 +553,6 @@ export const useAppStore = create<AppStore>((set) => ({
           if (!(trackId in current)) return state;
           return {
             project: { ...state.project, tagReasoning: omitKey(current, trackId) },
-            session: bumpProjectRevision(state.session),
           };
         }
         if (current[trackId] === reasoning) return state;
@@ -552,7 +561,6 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning: { ...current, [trackId]: reasoning },
           },
-          session: bumpProjectRevision(state.session),
         };
       }),
 
