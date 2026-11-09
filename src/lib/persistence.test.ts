@@ -220,6 +220,30 @@ describe("persistence", () => {
     ).toHaveLength(1);
   });
 
+  it("trusts a cached blob reference for the same blob only, not for a matching revision", async () => {
+    useAppStore.getState().actions.setTrackClip(0, clip(3, { withMedia: false }));
+    await saveProject(useAppStore.getState());
+    const firstRef = (await storedMeta()).tracks[0].clipBlobRef;
+
+    // A Scratch racing an in-flight save can leave a stale cache entry whose
+    // revision a later take reaches again; that take's bytes must be written.
+    const revision = useAppStore.getState().project.tracks[0].blobRevision;
+    const nextTake = clip(40, { withMedia: false });
+    useAppStore.setState((state) => ({
+      project: {
+        ...state.project,
+        tracks: state.project.tracks.map((track) =>
+          track.id === 0 ? { ...track, clip: nextTake, blobRevision: revision } : track,
+        ),
+      },
+    }));
+    await saveProject(useAppStore.getState());
+
+    const nextRef = (await storedMeta()).tracks[0].clipBlobRef;
+    expect(nextRef).not.toBe(firstRef);
+    expect(isBlobLike(await get(nextRef))).toBe(true);
+  });
+
   it("garbage-collects orphaned blob records after a successful metadata save", async () => {
     useAppStore.getState().actions.setTrackClip(0, clip(4));
     useAppStore.getState().actions.setTrackClip(1, clip(40));
