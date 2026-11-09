@@ -403,9 +403,13 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    // Re-record and Delete wait for an idle take: each opens or closes the
+    // recording station, whose mount or unmount would stop the stream the
+    // take is capturing from.
     clearTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
+        if (state.recording.state !== "idle") return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
         if (previous && previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
@@ -451,6 +455,7 @@ export const useAppStore = create<AppStore>((set) => ({
     deleteTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
+        if (state.recording.state !== "idle") return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (!previous) return state;
         if (previous.url) URL.revokeObjectURL(previous.url);

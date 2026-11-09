@@ -74,17 +74,21 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
     return () => window.clearTimeout(id);
   }, [clipActionsOpen, clipActionsFocused]);
 
-  // A new or deleted clip, playback starting or an export closes Re-record /
-  // Delete. Focus inside them goes back to the thumbnail instead of the page.
-  // Keyed on the recording, not the clip object: the poster frame landing
-  // replaces the object, and closing then would slide the tag chips under
-  // a finger reaching for Delete.
+  // A new or deleted clip, playback starting, an export or a take on any
+  // track closes Re-record / Delete. Focus inside them goes back to the
+  // thumbnail instead of the page. Keyed on the recording, not the clip
+  // object: the poster frame landing replaces the object, and closing then
+  // would slide the tag chips under a finger reaching for Delete.
   const recording = clip?.blob;
+  // The store refuses Re-record and Delete while a take runs; the thumbnail
+  // that opens them is frozen with it.
+  const takeRunning = recordingState !== "idle";
+  const clipActionsFrozen = isExporting || takeRunning;
   useEffect(() => {
     if (actionsRef.current?.contains(document.activeElement)) thumbRef.current?.focus();
     setClipActionsOpen(false);
     setClipActionsFocused(false);
-  }, [recording, isPlaying, isExporting]);
+  }, [recording, isPlaying, isExporting, takeRunning]);
 
   useEffect(() => {
     if (recording) return;
@@ -192,7 +196,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
             clip={clip}
             trackId={trackId}
             actionsOpen={clipActionsOpen}
-            disabled={isExporting}
+            disabled={clipActionsFrozen}
             onToggleActions={() => setClipActionsOpen((open) => !open)}
           />
         ) : (
@@ -217,7 +221,7 @@ export function TrackInfo({ trackId }: TrackInfoProps) {
           <ClipActions
             ref={actionsRef}
             trackId={trackId}
-            disabled={isExporting}
+            disabled={clipActionsFrozen}
             onFocusChange={setClipActionsFocused}
             onReRecord={() => {
               focusSoundOnEmptyRef.current = true;

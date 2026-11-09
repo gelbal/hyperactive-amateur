@@ -427,6 +427,24 @@ describe("useAppStore", () => {
     revoke.mockRestore();
   });
 
+  it("Re-record and Delete wait for an idle take: they would mount or unmount the station under it", () => {
+    const clip = makeClip();
+    get().actions.setTrackClip(2, clip);
+    get().actions.dismissRecordingStation();
+    get().actions.setRecordingState("recording", 0);
+
+    get().actions.clearTrackClip(2);
+    expect(get().project.tracks[2].clip).toBe(clip);
+    expect(get().session.recordingStationDismissed).toBe(true);
+
+    get().actions.deleteTrackClip(2);
+    expect(get().project.tracks[2].clip).toBe(clip);
+
+    get().actions.setRecordingState("idle", null);
+    get().actions.deleteTrackClip(2);
+    expect(get().project.tracks[2].clip).toBeNull();
+  });
+
   it("setTrackClip revokes the previous clip's poster URL when replaced", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
     const first: Clip = {

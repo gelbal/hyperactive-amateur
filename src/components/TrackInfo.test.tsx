@@ -301,6 +301,21 @@ describe("TrackInfo clip actions", () => {
     expect(document.activeElement).toBe(thumb);
   });
 
+  it("a take on another track closes Re-record / Delete and freezes the thumbnail until it ends", () => {
+    renderWithClip();
+    const thumb = screen.getByRole("button", { name: "clip actions for track 1" });
+    fireEvent.click(thumb);
+    expect(screen.getByRole("button", { name: "re-record track 1" })).toBeInTheDocument();
+
+    act(() => useAppStore.getState().actions.setRecordingState("countdown", 4));
+
+    expect(screen.queryByRole("button", { name: "re-record track 1" })).not.toBeInTheDocument();
+    expect(thumb).toBeDisabled();
+
+    act(() => useAppStore.getState().actions.setRecordingState("idle", null));
+    expect(thumb).toBeEnabled();
+  });
+
   it("the thumbnail is frozen while exporting", () => {
     renderWithClip();
     act(() => useAppStore.getState().actions.setIsExporting(true));
