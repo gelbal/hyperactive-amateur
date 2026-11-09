@@ -32,6 +32,9 @@ interface VariationButtonsProps {
 export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   const tracks = useAppStore((s) => s.project.tracks);
   const clipCount = useAppStore(selectClipCount);
+  // Export freezes the pattern, so a result would be refused; the buttons
+  // must look frozen too.
+  const isExporting = useAppStore((s) => s.playback.isExporting);
   const [pending, setPending] = useState<Variation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [undoSnapshot, setUndoSnapshot] = useState<{
@@ -40,7 +43,8 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   } | null>(null);
 
   const hasPattern = tracks.some((t) => t.steps.some((s) => s));
-  const baseDisabled = pending !== null || clipCount < AI_UNLOCK_CLIPS || !hasPattern;
+  const baseDisabled =
+    pending !== null || clipCount < AI_UNLOCK_CLIPS || !hasPattern || isExporting;
 
   useEffect(() => {
     if (!undoSnapshot) return;
@@ -51,6 +55,10 @@ export function VariationButtons({ onBusyChange }: VariationButtonsProps = {}) {
   useEffect(() => {
     onBusyChange?.(pending !== null);
   }, [pending, onBusyChange]);
+
+  // Unmounting mid-call (the clip count dropping below the unlock) must not
+  // leave the parent pinned busy with no request left to clear it.
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const handleClick = async (variation: Variation) => {
     setError(null);

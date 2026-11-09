@@ -83,7 +83,7 @@ function BlockHeader({ blockIndex, hovered, canRemove, onHover }: BlockHeaderPro
           "active:bg-red-500 active:border-red-500 active:text-white " +
           (showMinus
             ? "opacity-100"
-            : "opacity-0 pointer-events-none any-pointer-coarse:opacity-60 any-pointer-coarse:pointer-events-auto")
+            : "opacity-0 pointer-events-none any-pointer-coarse:opacity-60 any-pointer-coarse:pointer-events-auto any-pointer-coarse:disabled:opacity-30")
         }
       >
         <Minus size={12} />

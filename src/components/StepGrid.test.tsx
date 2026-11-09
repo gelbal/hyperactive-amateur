@@ -148,6 +148,9 @@ describe("StepGrid", () => {
     expect(screen.getByRole("button", { name: /add 4 more steps/i })).toBeDisabled();
     for (const btn of screen.getAllByLabelText(/^Remove steps \d+-\d+$/)) {
       expect(btn).toBeDisabled();
+      // Touch shows the minus at 60% all the time; disabled it must dim
+      // further so it reads as frozen, not live.
+      expect(btn).toHaveClass("any-pointer-coarse:disabled:opacity-30");
     }
   });
 

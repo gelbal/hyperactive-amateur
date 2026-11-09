@@ -33,6 +33,9 @@ describe("tailwind pointer-coarse variants", () => {
     // Subtle always-visible block-remove affordance (StepGrid).
     expect(css).toMatch(/any-pointer-coarse\\:opacity-60/);
     expect(css).toMatch(/any-pointer-coarse\\:pointer-events-auto/);
+    // ...dimmed further while frozen; the :disabled selector outranks the
+    // 60% rule whatever the stylesheet order.
+    expect(css).toMatch(/any-pointer-coarse\\:disabled\\:opacity-30:disabled\s*{\s*opacity: 0\.3;/);
   }, 20_000);
 
   it("emits the Feel panel cap and 16px selects for coarse pointers", async () => {

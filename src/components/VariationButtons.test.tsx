@@ -140,6 +140,32 @@ describe("VariationButtons", () => {
     );
   });
 
+  it("reports not-busy when it unmounts mid-request, so a parent's pin cannot stick", () => {
+    unlockVariation();
+    const grid = deferredGrid();
+    varyPattern.mockReturnValue(grid.promise);
+    const onBusyChange = vi.fn();
+    const { unmount } = render(<VariationButtons onBusyChange={onBusyChange} />);
+
+    fireEvent.click(screen.getByLabelText("Busier"));
+    expect(onBusyChange).toHaveBeenLastCalledWith(true);
+
+    unmount();
+    expect(onBusyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("is frozen while an export renders: a result would be refused anyway", () => {
+    unlockVariation();
+    render(<VariationButtons />);
+    expect(screen.getByLabelText("Busier")).toBeEnabled();
+
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+    for (const label of ["Busier", "Fill", "Half-time", "Strip", "Break"]) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+    act(() => useAppStore.getState().actions.setIsExporting(false));
+  });
+
   it("hints when offline and stays clickable", async () => {
     unlockVariation();
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });

@@ -4,6 +4,11 @@ import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({ stopPlayback: vi.fn() }));
 vi.mock("../lib/audio", () => ({ stopPlayback: audioMocks.stopPlayback }));
+const aiMocks = vi.hoisted(() => ({ varyPattern: vi.fn() }));
+vi.mock("../lib/aiSuggest", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/aiSuggest")>()),
+  varyPattern: aiMocks.varyPattern,
+}));
 
 import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
@@ -155,6 +160,23 @@ describe("FeelDisclosure", () => {
     fireEvent.click(screen.getByLabelText("Confirm scratch"));
 
     expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("the Feel button does not close the panel while a variation is in flight", () => {
+    aiMocks.varyPattern.mockReturnValue(new Promise(() => undefined));
+    act(() => {
+      for (let i = 0; i < 4; i++) useAppStore.getState().actions.setTrackClip(i, makeClip());
+      useAppStore.getState().actions.toggleStep(0, 0);
+    });
+    render(<FeelDisclosure />);
+    const feel = screen.getByLabelText(FEEL_LABEL);
+    fireEvent.click(feel);
+    fireEvent.click(screen.getByLabelText("Busier"));
+
+    // Closing would unmount the variation mid-call: its result would land
+    // with no Undo toast to take it back.
+    fireEvent.click(feel);
+    expect(screen.getByRole("dialog", { name: "Feel controls" })).toBeInTheDocument();
   });
 
   it("Scratch looks and is disabled while a take runs or an export renders", () => {

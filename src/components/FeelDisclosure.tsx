@@ -55,7 +55,12 @@ export function FeelDisclosure() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Feel: tempo, cut rate, swing, hold, style, flow"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // The same pin as outside clicks and Escape: closing would unmount
+          // the busy child and swallow its Undo / result.
+          if (retagBusy || variationBusy) return;
+          setOpen((v) => !v);
+        }}
         className={
           "flex items-center justify-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-2 pointer-coarse:min-h-11 w-full lg:w-auto text-sm rounded border transition-colors " +
           (open
