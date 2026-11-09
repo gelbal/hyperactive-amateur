@@ -582,6 +582,36 @@ describe("rehydrateFromStorage", () => {
     expect((await loadProject())?.tracks[2].clipBlob).not.toBeNull();
   });
 
+  it("a load that drops a clip releases the mute the audio repair set for it", async () => {
+    const monolith = await legacyMonolithWithDroppedClip([7, 8, 9]);
+    const tracks = monolith.tracks as Array<Record<string, unknown>>;
+    tracks[1] = { ...tracks[1], muted: true, mutedByRepair: true };
+    await set(LEGACY_PROJECT_KEY, monolith);
+
+    const result = await rehydrateFromStorage();
+
+    expect(result.ok).toBe(true);
+    const track = useAppStore.getState().project.tracks[1];
+    expect(track.clip).toBeNull();
+    // The empty track plays its kit voice, as after a Re-record or Delete.
+    expect(track.muted).toBe(false);
+    expect(track.mutedByRepair).toBe(false);
+  });
+
+  it("a load that drops a clip keeps a mute the user set", async () => {
+    const monolith = await legacyMonolithWithDroppedClip([7, 8, 9]);
+    const tracks = monolith.tracks as Array<Record<string, unknown>>;
+    tracks[1] = { ...tracks[1], muted: true, mutedByRepair: false };
+    await set(LEGACY_PROJECT_KEY, monolith);
+
+    await rehydrateFromStorage();
+
+    const track = useAppStore.getState().project.tracks[1];
+    expect(track.clip).toBeNull();
+    expect(track.muted).toBe(true);
+    expect(track.mutedByRepair).toBe(false);
+  });
+
   it("migration GC keeps blob records that only the pre-repair backup references", async () => {
     const droppedBytes = [7, 8, 9];
     await set(LEGACY_PROJECT_KEY, await legacyMonolithWithDroppedClip(droppedBytes));
