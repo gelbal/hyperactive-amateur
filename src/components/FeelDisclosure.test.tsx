@@ -156,4 +156,36 @@ describe("FeelDisclosure", () => {
 
     expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
   });
+
+  it("Scratch looks and is disabled while a take runs or an export renders", () => {
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    const scratch = screen.getByLabelText("Scratch: start fresh");
+    expect(scratch).toBeEnabled();
+    expect(scratch).toHaveClass("disabled:opacity-30", "disabled:cursor-not-allowed");
+
+    act(() => useAppStore.getState().actions.setRecordingState("countdown", 0));
+    expect(scratch).toBeDisabled();
+
+    act(() => useAppStore.getState().actions.setRecordingState("idle", null));
+    expect(scratch).toBeEnabled();
+
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+    expect(scratch).toBeDisabled();
+  });
+
+  it("an armed Scratch cannot be confirmed once a take starts", () => {
+    useAppStore.getState().actions.setBpm(140);
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    fireEvent.click(screen.getByLabelText("Scratch: start fresh"));
+
+    act(() => useAppStore.getState().actions.setRecordingState("recording", 0));
+    const confirm = screen.getByLabelText("Confirm scratch");
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+
+    expect(useAppStore.getState().project.bpm).toBe(140);
+    act(() => useAppStore.getState().actions.setRecordingState("idle", null));
+  });
 });

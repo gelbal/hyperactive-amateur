@@ -13,6 +13,7 @@ import type {
   Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
+import { isAutoSaveStarted } from "../lib/autoSave";
 import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
@@ -753,6 +754,10 @@ export const useAppStore = create<AppStore>((set) => ({
     scratch: () => {
       const state = useAppStore.getState();
       if (state.playback.isExporting) return;
+      // A take in flight owns the recording slice and its stream; resetting
+      // under it would reopen the audible gate and land the take in the
+      // fresh project.
+      if (state.recording.state !== "idle") return;
       // Revoke object URLs on every existing clip.
       for (const track of state.project.tracks) {
         if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
@@ -771,7 +776,10 @@ export const useAppStore = create<AppStore>((set) => ({
         },
       });
       // Wipe the persisted record; subsequent edits will write a fresh one.
-      void clearProject().catch(() => undefined);
+      // Only once autosave owns writes: after a load that failed, the saved
+      // record is exactly what autosave-off protects, so Scratch resets the
+      // session and leaves the bytes where they are.
+      if (isAutoSaveStarted()) void clearProject().catch(() => undefined);
     },
 
     reset: () =>

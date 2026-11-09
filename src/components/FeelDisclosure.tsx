@@ -119,6 +119,11 @@ interface ScratchControlProps {
 // already a transient surface.
 function ScratchControl({ onScratched }: ScratchControlProps) {
   const [armed, setArmed] = useState(false);
+  // The store refuses Scratch while an export renders or a take runs; the
+  // buttons must look it too.
+  const frozen = useAppStore(
+    (s) => s.playback.isExporting || s.recording.state !== "idle",
+  );
 
   useEffect(() => {
     if (!armed) return;
@@ -130,9 +135,10 @@ function ScratchControl({ onScratched }: ScratchControlProps) {
     return (
       <button
         type="button"
+        disabled={frozen}
         onClick={() => setArmed(true)}
         aria-label="Scratch: start fresh"
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded text-zinc-300 hover:bg-zinc-800 border border-zinc-800"
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded text-zinc-300 hover:bg-zinc-800 border border-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         <Trash2 size={14} />
         Scratch
@@ -157,8 +163,9 @@ function ScratchControl({ onScratched }: ScratchControlProps) {
             setArmed(false);
             onScratched();
           }}
+          disabled={frozen}
           aria-label="Confirm scratch"
-          className="flex-1 px-3 py-2 text-sm rounded bg-red-600 hover:bg-red-500 text-white font-medium"
+          className="flex-1 px-3 py-2 text-sm rounded bg-red-600 hover:bg-red-500 text-white font-medium disabled:opacity-30 disabled:cursor-not-allowed"
         >
           Yes, scratch it
         </button>

@@ -16,6 +16,8 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { __resetMediaForTesting } from "../lib/media";
+import { clearProject, loadProject, saveProject } from "../lib/persistence";
+import { startAutoSave, stopAutoSave } from "../lib/autoSave";
 import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
 import type { Clip } from "../types";
 import { selectEditorOpen, useAppStore } from "./useAppStore";
@@ -300,6 +302,55 @@ describe("useAppStore", () => {
     expect(tracks[0].stop).toHaveBeenCalledTimes(1);
     expect(tracks[1].stop).toHaveBeenCalledTimes(1);
     expect(get().media.stream).toBeNull();
+  });
+
+  it("scratch is a no-op while a recording flow is active", () => {
+    get().actions.setTrackClip(0, makeClip());
+    get().actions.setBpm(140);
+    get().actions.setRecordingState("countdown", 1);
+
+    get().actions.scratch();
+
+    expect(get().project.bpm).toBe(140);
+    expect(get().project.tracks[0].clip).not.toBeNull();
+    expect(get().recording.state).toBe("countdown");
+    expect(get().recording.activeTrackId).toBe(1);
+  });
+
+  describe("scratch and the saved project", () => {
+    beforeEach(async () => {
+      stopAutoSave();
+      await clearProject();
+    });
+
+    afterEach(async () => {
+      stopAutoSave();
+      await clearProject();
+    });
+
+    it("clears the saved project once autosave is running", async () => {
+      get().actions.setBpm(140);
+      await saveProject(get());
+      startAutoSave();
+
+      get().actions.scratch();
+
+      await vi.waitFor(async () => {
+        expect(await loadProject()).toBeNull();
+      });
+    });
+
+    it("keeps the saved project when autosave never started (the load failed)", async () => {
+      get().actions.setBpm(140);
+      await saveProject(get());
+
+      get().actions.scratch();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(get().project.bpm).toBe(90);
+      const saved = await loadProject();
+      expect(saved?.bpm).toBe(140);
+    });
   });
 
   it("applyPattern only writes rows whose length matches the current stepCount", () => {
