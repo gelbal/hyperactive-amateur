@@ -47,7 +47,9 @@ export function initTransport(): void {
   scheduledEventId = transport.scheduleRepeat((time) => {
     const stepCount = useAppStore.getState().project.stepCount;
     const stepIndex = stepCounter % stepCount;
-    stepCounter += 1;
+    // Wrap at the current length, so adding or removing steps mid-loop
+    // keeps the position instead of jumping by whole bars.
+    stepCounter = stepIndex + 1;
 
     onStep(stepIndex, time);
 

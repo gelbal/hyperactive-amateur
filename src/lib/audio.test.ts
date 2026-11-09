@@ -184,6 +184,21 @@ describe("audio: per-step trigger logic", () => {
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
   });
 
+  it("keeps the loop position when steps are added during playback", () => {
+    initTransport();
+    useAppStore.getState().actions.toggleStep(2, 5);
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+    // One full 16-step bar, then steps 0-4 of the next.
+    for (let i = 0; i < 21; i += 1) cb?.(i);
+    synthInstances[2].triggerAttackRelease.mockClear();
+
+    useAppStore.getState().actions.extendSteps();
+    cb?.(21);
+
+    // The next tick is step 5 of the longer loop, not step 21 % 20.
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 21, 1);
+  });
+
   it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {
     initTransport();
     expect(synthInstances).toHaveLength(8);
