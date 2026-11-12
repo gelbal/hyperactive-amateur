@@ -19,11 +19,14 @@ import { useSpacebarPlayToggle } from "./lib/useSpacebarPlayToggle";
 import { useKeyboardTriggers } from "./lib/useKeyboardTriggers";
 import { rehydrateFromStorage } from "./lib/rehydrate";
 import { shutdownAutoSave, startAutoSave } from "./lib/autoSave";
+import { claimProjectWriter } from "./lib/projectLock";
 import { installVisibilityListener } from "./lib/streamLifecycle";
 import { captureInstallPrompt, getStorageDurability } from "./lib/install";
 import { getLogs, LOG_EVENTS, logger, type LogEntry } from "./lib/logger";
 
 const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
+const OTHER_COPY_OPEN_COPY =
+  "Your project is open in another tab or window — recordings here won't be saved.";
 const LOG_PANEL_FLAG = "halogs";
 
 function logPanelRequested(): boolean {
@@ -38,6 +41,7 @@ function logPanelRequested(): boolean {
 export function App() {
   const [hydrating, setHydrating] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [otherCopyOpen, setOtherCopyOpen] = useState(false);
   const clipCount = useAppStore(selectClipCount);
   const isPlaying = useAppStore((s) => s.playback.isPlaying);
   // Open from the first clip, and still open after the last clip is deleted:
@@ -66,8 +70,16 @@ export function App() {
     // Only a load that still fails after its bounded retries keeps autosave
     // off: a transient read failure followed by a successful write would
     // otherwise replace a good project with an empty one.
-    rehydrateFromStorage()
-      .then(() => {
+    // Only the copy that owns the project loads it: loading can write too
+    // (heal, migrate, quarantine), and a second copy's saves would delete the
+    // owner's recordings. A second copy starts empty with autosave off.
+    claimProjectWriter()
+      .then(async (isWriter) => {
+        if (!isWriter) {
+          if (!cancelled) setOtherCopyOpen(true);
+          return;
+        }
+        await rehydrateFromStorage();
         if (!cancelled) startAutoSave();
       })
       .catch((err: unknown) => {
@@ -163,7 +175,12 @@ export function App() {
           <div className="text-zinc-500 text-sm">Loading project…</div>
         ) : (
           <>
-            {loadFailed && <LoadFailedNotice />}
+            {loadFailed && (
+              <SavingOffNotice label="Saved project could not be opened" message={LOAD_FAILED_COPY} />
+            )}
+            {otherCopyOpen && (
+              <SavingOffNotice label="Project open in another tab" message={OTHER_COPY_OPEN_COPY} />
+            )}
             <Viewport />
             {editorOpen ? (
               <PadGrid />
@@ -212,17 +229,18 @@ function LogPanel() {
   );
 }
 
-// The one message the app keeps: without it the user would record a whole
-// session into nothing. It names the consequence and the next action.
-function LoadFailedNotice() {
+// The one message the app keeps, shown whenever autosave stays off: without
+// it the user would record a whole session into nothing. It names the
+// consequence and the next action.
+function SavingOffNotice({ label, message }: { label: string; message: string }) {
   return (
     <section
-      aria-label="Saved project could not be opened"
+      aria-label={label}
       className="w-full max-w-3xl border border-amber-500/40 bg-amber-950/30 px-3 py-3 text-amber-100 sm:px-4"
     >
       <div className="flex items-center gap-3">
         <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" aria-hidden />
-        <p className="min-w-0 flex-1 text-sm">{LOAD_FAILED_COPY}</p>
+        <p className="min-w-0 flex-1 text-sm">{message}</p>
         <button
           type="button"
           onClick={() => location.reload()}

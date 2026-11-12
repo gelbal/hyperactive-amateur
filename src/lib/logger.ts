@@ -41,6 +41,7 @@ export const LOG_EVENTS = {
   RECOVERY_MIGRATION_FAILED: "recovery.migration-failed",
   RECOVERY_QUARANTINED: "recovery.quarantined",
   RECOVERY_LOAD_FAILED: "recovery.load-failed",
+  PROJECT_LOCK_FAILED: "project.lock-failed",
   VIDEO_DRAW_ERROR: "video.draw-error",
   COVER_FAILED: "cover.failed",
   COVER_LATE: "cover.late",
