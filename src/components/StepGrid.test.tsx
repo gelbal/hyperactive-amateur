@@ -126,6 +126,19 @@ describe("StepGrid", () => {
     expect(removeButtons[1].className).toContain("opacity-0");
   });
 
+  it("a double-click on a block's minus removes that one block, not the next as well", () => {
+    render(<StepGrid />);
+    const minus = screen.getByLabelText("Remove steps 1-4");
+    fireEvent.mouseEnter(minus.parentElement as HTMLElement);
+
+    // Headers are keyed by index: after the first click this same button
+    // stands for the next block, still hovered under the pointer.
+    fireEvent.click(minus, { detail: 1 });
+    fireEvent.click(minus, { detail: 2 });
+
+    expect(useAppStore.getState().project.stepCount).toBe(12);
+  });
+
   it("scroll container has min-w-0 so it actually scrolls instead of overflowing the parent", () => {
     const { container } = render(<StepGrid />);
     // The scroll pane is the flex-1 child that wraps all the cells. min-w-0
@@ -148,6 +161,9 @@ describe("StepGrid", () => {
     expect(screen.getByRole("button", { name: /add 4 more steps/i })).toBeDisabled();
     for (const btn of screen.getAllByLabelText(/^Remove steps \d+-\d+$/)) {
       expect(btn).toBeDisabled();
+      // Touch shows the minus at 60% all the time; disabled it must dim
+      // further so it reads as frozen, not live.
+      expect(btn).toHaveClass("any-pointer-coarse:disabled:opacity-30");
     }
   });
 

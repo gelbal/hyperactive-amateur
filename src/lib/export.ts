@@ -238,7 +238,6 @@ export async function exportSong(
     return new Blob(chunks, { type: recorder.mimeType || mimeType });
   } finally {
     if (progressTimer) clearInterval(progressTimer);
-    await wakeLock?.release();
     if (ownsExportSession) {
       unregisterExportSession?.();
       if (recorder && recorder.state !== "inactive") {
@@ -252,6 +251,9 @@ export async function exportSong(
       useAppStore.getState().actions.setIsExporting(false);
       exportStream?.cleanup();
     }
+    // Last: the release awaits browser promises, and the app's freeze and
+    // transport must not wait on them.
+    await wakeLock?.release();
   }
 }
 

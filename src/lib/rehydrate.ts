@@ -562,6 +562,10 @@ export async function rehydrateFromStorage(options: RehydrateOptions = {}): Prom
       }
       const audioUnavailable = clip?.audioStatus === "unavailable";
       const wasMutedByRepair = pt.mutedByRepair ?? false;
+      // A healed clip no longer needs the repair's mute, and neither does a
+      // clip this load dropped: the empty track plays its kit voice, as
+      // after a Re-record or Delete.
+      const releasesRepairMute = healedAudio || !clip;
       return {
         id: pt.id,
         clip,
@@ -569,12 +573,14 @@ export async function rehydrateFromStorage(options: RehydrateOptions = {}): Prom
         steps: [...pt.steps],
         volume: pt.volume,
         // Healing releases only a repair-owned mute; user mutes stay put.
-        muted: audioUnavailable ? true : (healedAudio && wasMutedByRepair ? false : pt.muted),
+        muted: audioUnavailable
+          ? true
+          : (releasesRepairMute && wasMutedByRepair ? false : pt.muted),
         // The repair owns the mute when it flipped it on; a mute the user
         // already held (or re-applied after a repair) stays user-owned.
         mutedByRepair: audioUnavailable
           ? (pt.muted ? wasMutedByRepair : true)
-          : (healedAudio ? false : wasMutedByRepair),
+          : (releasesRepairMute ? false : wasMutedByRepair),
         tag: clip ? pt.tag : null,
         showVideo: pt.showVideo,
         ...(pt.voice ? { voice: pt.voice } : {}),

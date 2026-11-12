@@ -184,6 +184,21 @@ describe("audio: per-step trigger logic", () => {
     expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 0, 1);
   });
 
+  it("keeps the loop position when steps are added during playback", () => {
+    initTransport();
+    useAppStore.getState().actions.toggleStep(2, 5);
+    const cb = transportMock.scheduleRepeat.mock.calls[0]?.[0];
+    // One full 16-step bar, then steps 0-4 of the next.
+    for (let i = 0; i < 21; i += 1) cb?.(i);
+    synthInstances[2].triggerAttackRelease.mockClear();
+
+    useAppStore.getState().actions.extendSteps();
+    cb?.(21);
+
+    // The next tick is step 5 of the longer loop, not step 21 % 20.
+    expect(synthInstances[2].triggerAttackRelease).toHaveBeenCalledWith("16n", 21, 1);
+  });
+
   it("builds the eight kit voices on initTransport, sends the track volume as velocity, disposes them on reset", () => {
     initTransport();
     expect(synthInstances).toHaveLength(8);
@@ -466,5 +481,34 @@ describe("audio: per-step trigger logic", () => {
 
     actions.setTrackVolume(0, 0);
     expect(playerInstances[0].volume.value).toBe(-Infinity);
+  });
+
+  it("keeps a clip's player when only its metadata changes, and rebuilds it for a new take", () => {
+    initTransport();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, makeClip());
+    expect(playerInstances).toHaveLength(1);
+
+    // The poster frame lands after the take: the Clip object is rebuilt
+    // around the same decoded audio, and a sounding hit must not be cut.
+    actions.setTrackPoster(0, new Blob([new Uint8Array([9])], { type: "image/jpeg" }));
+    expect(playerInstances).toHaveLength(1);
+    expect(playerInstances[0].dispose).not.toHaveBeenCalled();
+
+    actions.setTrackClip(0, makeClip());
+    expect(playerInstances).toHaveLength(2);
+    expect(playerInstances[0].dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds a player when a repair-state clip's audio is restored", () => {
+    initTransport();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, { ...makeClip(), audioBuffer: null, audioStatus: "unavailable" });
+    expect(playerInstances).toHaveLength(0);
+
+    const brokenClip = useAppStore.getState().project.tracks[0].clip ?? undefined;
+    actions.restoreTrackAudio(0, { duration: 1, sampleRate: 48000 } as AudioBuffer, null, brokenClip);
+
+    expect(playerInstances).toHaveLength(1);
   });
 });

@@ -4,6 +4,11 @@ import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 
 const audioMocks = vi.hoisted(() => ({ stopPlayback: vi.fn() }));
 vi.mock("../lib/audio", () => ({ stopPlayback: audioMocks.stopPlayback }));
+const aiMocks = vi.hoisted(() => ({ varyPattern: vi.fn() }));
+vi.mock("../lib/aiSuggest", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/aiSuggest")>()),
+  varyPattern: aiMocks.varyPattern,
+}));
 
 import { FeelDisclosure } from "./FeelDisclosure";
 import { useAppStore } from "../store/useAppStore";
@@ -155,5 +160,54 @@ describe("FeelDisclosure", () => {
     fireEvent.click(screen.getByLabelText("Confirm scratch"));
 
     expect(audioMocks.stopPlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("the Feel button does not close the panel while a variation is in flight", () => {
+    aiMocks.varyPattern.mockReturnValue(new Promise(() => undefined));
+    act(() => {
+      for (let i = 0; i < 4; i++) useAppStore.getState().actions.setTrackClip(i, makeClip());
+      useAppStore.getState().actions.toggleStep(0, 0);
+    });
+    render(<FeelDisclosure />);
+    const feel = screen.getByLabelText(FEEL_LABEL);
+    fireEvent.click(feel);
+    fireEvent.click(screen.getByLabelText("Busier"));
+
+    // Closing would unmount the variation mid-call: its result would land
+    // with no Undo toast to take it back.
+    fireEvent.click(feel);
+    expect(screen.getByRole("dialog", { name: "Feel controls" })).toBeInTheDocument();
+  });
+
+  it("Scratch looks and is disabled while a take runs or an export renders", () => {
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    const scratch = screen.getByLabelText("Scratch: start fresh");
+    expect(scratch).toBeEnabled();
+    expect(scratch).toHaveClass("disabled:opacity-30", "disabled:cursor-not-allowed");
+
+    act(() => useAppStore.getState().actions.setRecordingState("countdown", 0));
+    expect(scratch).toBeDisabled();
+
+    act(() => useAppStore.getState().actions.setRecordingState("idle", null));
+    expect(scratch).toBeEnabled();
+
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+    expect(scratch).toBeDisabled();
+  });
+
+  it("an armed Scratch cannot be confirmed once a take starts", () => {
+    useAppStore.getState().actions.setBpm(140);
+    render(<FeelDisclosure />);
+    fireEvent.click(screen.getByLabelText(FEEL_LABEL));
+    fireEvent.click(screen.getByLabelText("Scratch: start fresh"));
+
+    act(() => useAppStore.getState().actions.setRecordingState("recording", 0));
+    const confirm = screen.getByLabelText("Confirm scratch");
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+
+    expect(useAppStore.getState().project.bpm).toBe(140);
+    act(() => useAppStore.getState().actions.setRecordingState("idle", null));
   });
 });

@@ -16,6 +16,8 @@ vi.mock("../lib/audioLifecycle", () => ({
 
 import { registerStreamLifecycle } from "../lib/streamLifecycle";
 import { __resetMediaForTesting } from "../lib/media";
+import { clearProject, loadProject, saveProject } from "../lib/persistence";
+import { startAutoSave, stopAutoSave } from "../lib/autoSave";
 import { AUDIO_DEVICE_STORAGE_KEY, VIDEO_DEVICE_STORAGE_KEY } from "./initialState";
 import type { Clip } from "../types";
 import { selectEditorOpen, useAppStore } from "./useAppStore";
@@ -302,6 +304,55 @@ describe("useAppStore", () => {
     expect(get().media.stream).toBeNull();
   });
 
+  it("scratch is a no-op while a recording flow is active", () => {
+    get().actions.setTrackClip(0, makeClip());
+    get().actions.setBpm(140);
+    get().actions.setRecordingState("countdown", 1);
+
+    get().actions.scratch();
+
+    expect(get().project.bpm).toBe(140);
+    expect(get().project.tracks[0].clip).not.toBeNull();
+    expect(get().recording.state).toBe("countdown");
+    expect(get().recording.activeTrackId).toBe(1);
+  });
+
+  describe("scratch and the saved project", () => {
+    beforeEach(async () => {
+      stopAutoSave();
+      await clearProject();
+    });
+
+    afterEach(async () => {
+      stopAutoSave();
+      await clearProject();
+    });
+
+    it("clears the saved project once autosave is running", async () => {
+      get().actions.setBpm(140);
+      await saveProject(get());
+      startAutoSave();
+
+      get().actions.scratch();
+
+      await vi.waitFor(async () => {
+        expect(await loadProject()).toBeNull();
+      });
+    });
+
+    it("keeps the saved project when autosave never started (the load failed)", async () => {
+      get().actions.setBpm(140);
+      await saveProject(get());
+
+      get().actions.scratch();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(get().project.bpm).toBe(90);
+      const saved = await loadProject();
+      expect(saved?.bpm).toBe(140);
+    });
+  });
+
   it("applyPattern only writes rows whose length matches the current stepCount", () => {
     const valid = Array.from({ length: 8 }, (_, i) =>
       Array.from({ length: 16 }, (_, j) => i === 0 && j === 0),
@@ -374,6 +425,24 @@ describe("useAppStore", () => {
     expect(get().project.tracks[0].clip).toBeNull();
     expect(get().session.recordingStationDismissed).toBe(false);
     revoke.mockRestore();
+  });
+
+  it("Re-record and Delete wait for an idle take: they would mount or unmount the station under it", () => {
+    const clip = makeClip();
+    get().actions.setTrackClip(2, clip);
+    get().actions.dismissRecordingStation();
+    get().actions.setRecordingState("recording", 0);
+
+    get().actions.clearTrackClip(2);
+    expect(get().project.tracks[2].clip).toBe(clip);
+    expect(get().session.recordingStationDismissed).toBe(true);
+
+    get().actions.deleteTrackClip(2);
+    expect(get().project.tracks[2].clip).toBe(clip);
+
+    get().actions.setRecordingState("idle", null);
+    get().actions.deleteTrackClip(2);
+    expect(get().project.tracks[2].clip).toBeNull();
   });
 
   it("setTrackClip revokes the previous clip's poster URL when replaced", () => {
@@ -726,6 +795,35 @@ describe("useAppStore", () => {
     expect(applied).toBe(false);
     expect(get().project.tracks[0].steps.every(Boolean)).toBe(false);
     expect(get().session.projectRevision).toBeGreaterThan(revision);
+  });
+
+  it("system tag writes do not invalidate a pending AI pattern apply (auto-tag racing Suggest)", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    // Auto-tag results from freshly recorded clips land while Suggest is in
+    // flight; they write with source "system" plus a reasoning string.
+    // Neither is a user edit of the beat, so the captured revision must
+    // still be current when the pattern arrives.
+    get().actions.setTrackTag(0, "kick", "system");
+    get().actions.setTrackTagReasoning(0, "low percussive thump");
+    get().actions.setTrackTagReasoning(0, null);
+    expect(get().session.projectRevision).toBe(revision);
+
+    const applied = get().actions.applyPatternIfCurrent(grid, revision, 16);
+
+    expect(applied).toBe(true);
+    expect(get().project.tracks[0].steps.every(Boolean)).toBe(true);
+  });
+
+  it("user tag picks still invalidate a pending AI pattern apply", () => {
+    const revision = get().session.projectRevision;
+    const grid = Array.from({ length: 8 }, () => Array.from({ length: 16 }, () => true));
+
+    get().actions.setTrackTag(0, "kick", "user");
+
+    expect(get().session.projectRevision).toBeGreaterThan(revision);
+    expect(get().actions.applyPatternIfCurrent(grid, revision, 16)).toBe(false);
   });
 
   describe("restoreTrackAudio", () => {

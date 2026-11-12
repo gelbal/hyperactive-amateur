@@ -89,6 +89,13 @@ export function saveNow(): Promise<boolean> {
   return requestSave().then(() => true);
 }
 
+// True once a load has resolved and autosave owns writes. Before that (the
+// load has not settled, or it failed after its retries) nothing may write or
+// clear the saved project.
+export function isAutoSaveStarted(): boolean {
+  return unsubscribe !== null;
+}
+
 export function flushPending(): boolean {
   const hasPendingSave = timer !== null || dirtyWhileRecording;
   if (!hasPendingSave) return false;

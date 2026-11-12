@@ -208,6 +208,33 @@ describe("videoEngine integration", () => {
     toneHarness.transport.reset();
   });
 
+  it("keeps a track's video element when only clip metadata changes, and replaces it for a new take", () => {
+    initVideoEngine();
+    const actions = useAppStore.getState().actions;
+    actions.setTrackClip(0, makeClip(1));
+    actions.setTrackClip(1, { ...makeClip(2), audioBuffer: null, audioStatus: "unavailable" });
+    const [first, second] = Array.from(document.querySelectorAll("video"));
+    expect(first.src).toBe("blob:test/1");
+
+    // Poster attach and audio repair rebuild the Clip around the same url;
+    // recreating the element would drop its decoded frames mid-playback.
+    actions.setTrackPoster(0, new Blob([new Uint8Array([9])], { type: "image/jpeg" }));
+    const brokenClip = useAppStore.getState().project.tracks[1].clip ?? undefined;
+    actions.restoreTrackAudio(1, { duration: 1, sampleRate: 48000 } as AudioBuffer, null, brokenClip);
+
+    const afterMetadata = Array.from(document.querySelectorAll("video"));
+    expect(afterMetadata).toHaveLength(2);
+    expect(afterMetadata[0]).toBe(first);
+    expect(afterMetadata[1]).toBe(second);
+    expect(first.isConnected).toBe(true);
+
+    actions.setTrackClip(0, makeClip(3));
+    const afterRetake = Array.from(document.querySelectorAll("video"));
+    expect(afterRetake).toHaveLength(2);
+    expect(first.isConnected).toBe(false);
+    expect(afterRetake.some((video) => video.src === "blob:test/3")).toBe(true);
+  });
+
   it("live trigger while not playing immediately becomes the displayed event (so pad clicks show video)", () => {
     setClipForTrack(3, makeClip(2));
     expect(useAppStore.getState().playback.isPlaying).toBe(false);

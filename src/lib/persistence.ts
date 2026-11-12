@@ -145,9 +145,7 @@ interface CachedBlobReference {
   ref: string;
 }
 
-type TrackBlobReferenceCache = { blobRevision: number } & Partial<
-  Record<BlobField, CachedBlobReference>
->;
+type TrackBlobReferenceCache = Partial<Record<BlobField, CachedBlobReference>>;
 
 const blobReferenceCache = new Map<number, TrackBlobReferenceCache>();
 
@@ -194,11 +192,12 @@ function cachedBlobReference(
   field: BlobField,
   blob: Blob,
 ): string | undefined {
-  const cachedTrack = blobReferenceCache.get(track.id);
-  const cached = cachedTrack?.[field];
-  if (!cached) return undefined;
-  const blobRevision = track.blobRevision ?? 0;
-  if (cachedTrack.blobRevision === blobRevision || cached.blob === blob) return cached.ref;
+  const cached = blobReferenceCache.get(track.id)?.[field];
+  // Trusted by blob identity only: blobs are immutable, so the same object
+  // is the same bytes. A matching revision is not proof — a Scratch racing
+  // an in-flight save can leave an entry whose revision a later take
+  // reaches again, and that take's bytes would never be written.
+  if (cached && cached.blob === blob) return cached.ref;
   return undefined;
 }
 
@@ -290,9 +289,7 @@ async function buildMetadataRecord(
   const blobReferences = new Map<number, TrackBlobReferenceCache>();
   const tracks = await Promise.all(
     rawTracks.map(async (track): Promise<PersistedTrackV2> => {
-      const nextTrackCache: TrackBlobReferenceCache = {
-        blobRevision: track.blobRevision ?? 0,
-      };
+      const nextTrackCache: TrackBlobReferenceCache = {};
       const clipBlobRef = await blobReference(
         track,
         "clipBlob",
@@ -472,7 +469,7 @@ async function resolveMetadataRecord(metadata: PersistedProjectV2): Promise<Pers
         "posterBlob",
         missingBlobs,
       );
-      const nextTrackCache: TrackBlobReferenceCache = { blobRevision: 0 };
+      const nextTrackCache: TrackBlobReferenceCache = {};
       const refs: Record<BlobField, string | undefined> = {
         clipBlob: track.clipBlobRef,
         audioBlob: track.audioBlobRef,

@@ -2,6 +2,7 @@
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { RetagAllControl } from "./RetagAllControl";
+import { useAppStore } from "../store/useAppStore";
 import { GeminiOfflineError } from "../lib/aiErrors";
 import type { RetagResult } from "../lib/retagAll";
 
@@ -88,5 +89,15 @@ describe("RetagAllControl", () => {
     expect(button).not.toBeDisabled();
     fireEvent.click(button);
     expect(onRetag).toHaveBeenCalledTimes(1);
+  });
+
+  it("is frozen while an export renders: every tag write would be refused", () => {
+    render(<RetagAllControl clipsCount={3} />);
+    const button = screen.getByRole("button", { name: /re-tag/i });
+    expect(button).not.toBeDisabled();
+
+    act(() => useAppStore.getState().actions.setIsExporting(true));
+    expect(button).toBeDisabled();
+    act(() => useAppStore.getState().actions.setIsExporting(false));
   });
 });

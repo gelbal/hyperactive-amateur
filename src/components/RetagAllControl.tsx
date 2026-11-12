@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Wand2, X } from "lucide-react";
 import { retagAllClips, type RetagResult } from "../lib/retagAll";
+import { useAppStore } from "../store/useAppStore";
 import { GeminiOfflineError } from "../lib/aiErrors";
 import { AI_OFFLINE_COPY, aiOfflineHint } from "../lib/aiOffline";
 
@@ -25,8 +26,11 @@ export function RetagAllControl({ clipsCount, onRetag, onBusyChange }: Props) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  // Export freezes tag writes, so every result would be refused; the button
+  // must look frozen too.
+  const isExporting = useAppStore((s) => s.playback.isExporting);
 
-  const disabled = clipsCount < MIN_CLIPS || busy;
+  const disabled = clipsCount < MIN_CLIPS || busy || isExporting;
 
   // Abort any in-flight retag if the popover (and so this component) goes
   // away while the model is still working.

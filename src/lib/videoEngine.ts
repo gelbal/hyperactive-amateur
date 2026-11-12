@@ -118,6 +118,12 @@ export function setClipForTrack(trackId: number, clip: Clip | null): void {
   metadataReady.set(trackId, false);
 }
 
+// Same recording, rebuilt Clip: keep the element, take the latest trims.
+function refreshTrims(trackId: number, clip: Clip): void {
+  if (!videos.has(trackId)) return;
+  trims.set(trackId, { startMs: clip.trimStartMs, endMs: clip.trimEndMs });
+}
+
 function isSameBoundary(left: number, right: number): boolean {
   return Math.abs(left - right) < 0.000001;
 }
@@ -619,7 +625,16 @@ export function initVideoEngine(): void {
     for (const track of state.project.tracks) {
       next.set(track.id, track.clip);
       const prev = lastClips.get(track.id) ?? null;
-      if (track.clip !== prev) setClipForTrack(track.id, track.clip);
+      if (track.clip === prev) continue;
+      // Keyed on the recording's url, not the Clip object: a poster frame or
+      // healed audio rebuilds the Clip around the same video, and recreating
+      // the element would drop its decoded frames mid-playback. Trims are
+      // metadata, so they follow the latest Clip either way.
+      if (track.clip && prev && track.clip.url === prev.url) {
+        refreshTrims(track.id, track.clip);
+      } else {
+        setClipForTrack(track.id, track.clip);
+      }
     }
     lastClips = next;
   });

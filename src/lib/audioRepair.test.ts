@@ -193,6 +193,24 @@ describe("initAudioRepair", () => {
     detach();
   });
 
+  it("retries when an export that held the first unlock releases playback", async () => {
+    seedRepairTrack(0, makeRepairClip());
+    const detach = initAudioRepair();
+
+    // Render is the first audible action: audio starts running while the
+    // export owns playback, so that pass is skipped.
+    useAppStore.getState().actions.setIsExporting(true);
+    useAppStore.getState().actions.setAudioState("running");
+    await Promise.resolve();
+    expect(audioMocks.decodeAudioData).not.toHaveBeenCalled();
+
+    useAppStore.getState().actions.setIsExporting(false);
+    await vi.waitFor(() => {
+      expect(useAppStore.getState().project.tracks[0].clip?.audioStatus).toBe("ok");
+    });
+    detach();
+  });
+
   it("stops reacting after detach", async () => {
     seedRepairTrack(0, makeRepairClip());
     const detach = initAudioRepair();

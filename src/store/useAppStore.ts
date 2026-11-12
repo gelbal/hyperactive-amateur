@@ -13,6 +13,7 @@ import type {
   Vibe,
 } from "../types";
 import { clearProject } from "../lib/persistence";
+import { isAutoSaveStarted } from "../lib/autoSave";
 import { acquireRecordingStream, isAcquireInFlight } from "../lib/media";
 import { releaseMediaStream } from "../lib/streamLifecycle";
 import {
@@ -402,9 +403,13 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }),
 
+    // Re-record and Delete wait for an idle take: each opens or closes the
+    // recording station, whose mount or unmount would stop the stream the
+    // take is capturing from.
     clearTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
+        if (state.recording.state !== "idle") return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (previous && previous.url) URL.revokeObjectURL(previous.url);
         if (previous && previous.posterUrl) URL.revokeObjectURL(previous.posterUrl);
@@ -450,6 +455,7 @@ export const useAppStore = create<AppStore>((set) => ({
     deleteTrackClip: (trackId) =>
       set((state) => {
         if (state.playback.isExporting) return state;
+        if (state.recording.state !== "idle") return state;
         const previous = state.project.tracks[trackId]?.clip;
         if (!previous) return state;
         if (previous.url) URL.revokeObjectURL(previous.url);
@@ -532,9 +538,19 @@ export const useAppStore = create<AppStore>((set) => ({
         if (wouldClearReasoning) {
           project = { ...project, tagReasoning: omitKey(project.tagReasoning, trackId) };
         }
-        return { project, session: bumpProjectRevision(session) };
+        // Only user picks invalidate pending AI pattern applies. System
+        // (auto-tag) writes race the Suggest round-trip on a fresh project —
+        // bumping here made the first Suggest after recording reject its own
+        // response ("Beat changed while Gemini was thinking").
+        return {
+          project,
+          session: source === "user" ? bumpProjectRevision(session) : session,
+        };
       }),
 
+    // Reasoning strings are only ever written by the auto-tag pipeline
+    // (applyClassifiedTag), so they never bump projectRevision: a system
+    // write landing mid-flight must not invalidate a pending pattern apply.
     setTrackTagReasoning: (trackId, reasoning) =>
       set((state) => {
         if (state.playback.isExporting) return state;
@@ -543,7 +559,6 @@ export const useAppStore = create<AppStore>((set) => ({
           if (!(trackId in current)) return state;
           return {
             project: { ...state.project, tagReasoning: omitKey(current, trackId) },
-            session: bumpProjectRevision(state.session),
           };
         }
         if (current[trackId] === reasoning) return state;
@@ -552,7 +567,6 @@ export const useAppStore = create<AppStore>((set) => ({
             ...state.project,
             tagReasoning: { ...current, [trackId]: reasoning },
           },
-          session: bumpProjectRevision(state.session),
         };
       }),
 
@@ -745,6 +759,10 @@ export const useAppStore = create<AppStore>((set) => ({
     scratch: () => {
       const state = useAppStore.getState();
       if (state.playback.isExporting) return;
+      // A take in flight owns the recording slice and its stream; resetting
+      // under it would reopen the audible gate and land the take in the
+      // fresh project.
+      if (state.recording.state !== "idle") return;
       // Revoke object URLs on every existing clip.
       for (const track of state.project.tracks) {
         if (track.clip?.url) URL.revokeObjectURL(track.clip.url);
@@ -763,7 +781,10 @@ export const useAppStore = create<AppStore>((set) => ({
         },
       });
       // Wipe the persisted record; subsequent edits will write a fresh one.
-      void clearProject().catch(() => undefined);
+      // Only once autosave owns writes: after a load that failed, the saved
+      // record is exactly what autosave-off protects, so Scratch resets the
+      // session and leaves the bytes where they are.
+      if (isAutoSaveStarted()) void clearProject().catch(() => undefined);
     },
 
     reset: () =>
