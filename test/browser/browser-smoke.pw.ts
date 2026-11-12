@@ -385,6 +385,32 @@ test("boots production app and reloads offline from the service worker", async (
   await expect(page.getByRole("button", { name: "Enable camera & mic" })).toBeVisible();
 });
 
+test("a second open copy leaves the saved project to the first until the first closes", async ({
+  page,
+  context,
+}) => {
+  const otherCopyNotice = (copy: Page) => copy.getByLabel("Project open in another tab");
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+
+  const second = await context.newPage();
+  await second.goto("/", { waitUntil: "domcontentloaded" });
+  await waitForApp(second);
+  await expect(otherCopyNotice(second)).toBeVisible();
+  await expect(otherCopyNotice(page)).toHaveCount(0);
+
+  // A reload hands the project from the outgoing page to its successor.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForApp(page);
+  await expect(otherCopyNotice(page)).toHaveCount(0);
+
+  // Once the owner closes, the other copy takes over on its next reload.
+  await page.close();
+  await second.reload({ waitUntil: "domcontentloaded" });
+  await waitForApp(second);
+  await expect(otherCopyNotice(second)).toHaveCount(0);
+});
+
 test("shows no transport before the first clip and suspends camera on hide", async ({
   page,
   context,

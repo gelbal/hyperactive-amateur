@@ -1,4 +1,4 @@
-// ABOUTME: App tests — autosave starts after every load that resolves; a rejected load shows one line.
+// ABOUTME: App tests — autosave starts after every load that resolves; a rejected load or a second open copy shows one line.
 // ABOUTME: The shell keeps safe-area padding; no storage or recovery banners render.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,10 @@ const rehydrateMocks = vi.hoisted(() => ({
 const autoSaveMocks = vi.hoisted(() => ({
   startAutoSave: vi.fn(),
   shutdownAutoSave: vi.fn(),
+}));
+
+const projectLockMocks = vi.hoisted(() => ({
+  claimProjectWriter: vi.fn(),
 }));
 
 vi.mock("./lib/audio", () => ({ initTransport: vi.fn() }));
@@ -25,6 +29,9 @@ vi.mock("./lib/rehydrate", () => ({
 vi.mock("./lib/autoSave", () => ({
   startAutoSave: autoSaveMocks.startAutoSave,
   shutdownAutoSave: autoSaveMocks.shutdownAutoSave,
+}));
+vi.mock("./lib/projectLock", () => ({
+  claimProjectWriter: projectLockMocks.claimProjectWriter,
 }));
 vi.mock("./lib/useSpacebarPlayToggle", () => ({ useSpacebarPlayToggle: vi.fn() }));
 vi.mock("./lib/useKeyboardTriggers", () => ({ useKeyboardTriggers: vi.fn() }));
@@ -44,6 +51,8 @@ import { useAppStore } from "./store/useAppStore";
 import { clearLogs, getLogs, LOG_EVENTS } from "./lib/logger";
 
 const LOAD_FAILED_COPY = "Couldn't open your saved project — recordings won't be saved.";
+const OTHER_COPY_OPEN_COPY =
+  "Your project is open in another tab or window — recordings here won't be saved.";
 
 function seedClips(count: number): void {
   act(() => {
@@ -84,6 +93,7 @@ describe("App autosave gating", () => {
       degraded: false,
       warnings: [],
     });
+    projectLockMocks.claimProjectWriter.mockResolvedValue(true);
   });
 
   it("keeps safe-area padding and dynamic viewport height on the shell", async () => {
@@ -283,6 +293,47 @@ describe("App autosave gating", () => {
     expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
     expect(screen.getByText(LOAD_FAILED_COPY)).toBeInTheDocument();
     expect(getLogs().some((entry) => entry.event === LOG_EVENTS.RECOVERY_LOAD_FAILED)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("loads only after this copy claims the project", async () => {
+    let grantClaim: (isWriter: boolean) => void = () => undefined;
+    projectLockMocks.claimProjectWriter.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        grantClaim = resolve;
+      }),
+    );
+
+    await renderApp();
+
+    expect(rehydrateMocks.rehydrateFromStorage).not.toHaveBeenCalled();
+    expect(screen.getByText("Loading project…")).toBeInTheDocument();
+
+    await act(async () => {
+      grantClaim(true);
+    });
+
+    expect(rehydrateMocks.rehydrateFromStorage).toHaveBeenCalledTimes(1);
+    expect(autoSaveMocks.startAutoSave).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(OTHER_COPY_OPEN_COPY)).not.toBeInTheDocument();
+  });
+
+  it("a second open copy neither loads nor saves the project, and says so in one line", async () => {
+    projectLockMocks.claimProjectWriter.mockResolvedValue(false);
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+
+    await renderApp();
+
+    expect(rehydrateMocks.rehydrateFromStorage).not.toHaveBeenCalled();
+    expect(autoSaveMocks.startAutoSave).not.toHaveBeenCalled();
+    expect(screen.queryByText("Loading project…")).not.toBeInTheDocument();
+    expect(screen.getByText(OTHER_COPY_OPEN_COPY)).toBeInTheDocument();
+    expect(screen.queryByText(LOAD_FAILED_COPY)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
 
